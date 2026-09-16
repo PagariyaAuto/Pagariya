@@ -1,6 +1,7 @@
 import { Link, router } from "expo-router";
 import { useState } from "react";
 import {
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -20,24 +21,107 @@ export default function Login() {
   const [showResend, setShowResend] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
+  // =========================
+  // POPUP STATE
+  // =========================
+
+  const [popupVisible, setPopupVisible] = useState(false);
+  const [popupTitle, setPopupTitle] = useState("");
+  const [popupMessage, setPopupMessage] = useState("");
+  const [popupType, setPopupType] = useState<"success" | "error">("error");
+
+  // =========================
+  // VALIDATION
+  // =========================
+
+  const isEmailValid =
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
+  const isPasswordValid = password.length >= 6;
+
+  const canLogin =
+    email.trim() !== "" &&
+    isEmailValid &&
+    password !== "" &&
+    isPasswordValid;
+
+  // =========================
+  // SHOW POPUP
+  // =========================
+
+  const showPopup = (
+    title: string,
+    message: string,
+    type: "success" | "error" = "error"
+  ) => {
+    setPopupTitle(title);
+    setPopupMessage(message);
+    setPopupType(type);
+    setPopupVisible(true);
+  };
+
+  // =========================
+  // LOGIN
+  // =========================
+
   const handleLogin = async () => {
     setErrorMessage("");
     setSuccessMessage("");
     setShowResend(false);
 
-    if (!email.trim() || !password) {
-      setErrorMessage("Please enter your email and password.");
+    // Email validation
+    if (!email.trim()) {
+      showPopup(
+        "Login Warning",
+        "Please enter your email address.",
+        "error"
+      );
       return;
     }
 
+    if (!isEmailValid) {
+      showPopup(
+        "Login Warning",
+        "Please enter a valid email address.",
+        "error"
+      );
+      return;
+    }
+
+    // Password validation
+    if (!password) {
+      showPopup(
+        "Login Warning",
+        "Please enter your password.",
+        "error"
+      );
+      return;
+    }
+
+    if (!isPasswordValid) {
+      showPopup(
+        "Login Warning",
+        "Password must contain at least 6 characters.",
+        "error"
+      );
+      return;
+    }
+
+    // Start loading
     setLoading(true);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    // Login with Supabase
+    const { data, error } =
+      await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
     setLoading(false);
+
+    // =========================
+    // LOGIN ERROR
+    // =========================
 
     if (error) {
       const message = error.message.toLowerCase();
@@ -47,10 +131,18 @@ export default function Login() {
         message.includes("email not confirmed") ||
         message.includes("email_not_confirmed")
       ) {
-        setErrorMessage(
-          "Your email address has not been verified yet."
-        );
+        const msg =
+          "Your email address has not been verified yet.";
+
+        setErrorMessage(msg);
         setShowResend(true);
+
+        showPopup(
+          "Email Verification Required",
+          "Please verify your email address before logging in.",
+          "error"
+        );
+
         return;
       }
 
@@ -59,27 +151,63 @@ export default function Login() {
         message.includes("invalid login credentials") ||
         message.includes("invalid credentials")
       ) {
-        setErrorMessage("Incorrect email or password.");
+        const msg = "Incorrect email or password.";
+
+        setErrorMessage(msg);
+
+        showPopup(
+          "Login Failed",
+          "Incorrect email or password.",
+          "error"
+        );
+
         return;
       }
 
-      // Any other Supabase error
+      // Other Supabase errors
       setErrorMessage(error.message);
+
+      showPopup(
+        "Login Failed",
+        error.message,
+        "error"
+      );
+
       return;
     }
 
-    // Login successful
+    // =========================
+    // LOGIN SUCCESSFUL
+    // =========================
+
     if (data.session) {
       router.replace("/");
     }
   };
+
+  // =========================
+  // RESEND CONFIRMATION EMAIL
+  // =========================
 
   const handleResendConfirmation = async () => {
     setErrorMessage("");
     setSuccessMessage("");
 
     if (!email.trim()) {
-      setErrorMessage("Please enter your email address first.");
+      showPopup(
+        "Email Required",
+        "Please enter your email address first.",
+        "error"
+      );
+      return;
+    }
+
+    if (!isEmailValid) {
+      showPopup(
+        "Invalid Email",
+        "Please enter a valid email address.",
+        "error"
+      );
       return;
     }
 
@@ -94,6 +222,13 @@ export default function Login() {
 
     if (error) {
       setErrorMessage(error.message);
+
+      showPopup(
+        "Unable to Send Email",
+        error.message,
+        "error"
+      );
+
       return;
     }
 
@@ -102,21 +237,39 @@ export default function Login() {
     setSuccessMessage(
       "A new confirmation email has been sent. Please check your inbox."
     );
+
+    showPopup(
+      "Confirmation Email Sent",
+      "A new confirmation email has been sent. Please check your inbox and confirm your email address.",
+      "success"
+    );
   };
+
+  // =========================
+  // UI
+  // =========================
 
   return (
     <View style={styles.container}>
-      <Text style={styles.logo}>Pagaria</Text>
 
+      {/* LOGO */}
+      <Text style={styles.logo}>Pagariya</Text>
+
+      {/* TITLE */}
       <Text style={styles.title}>Login</Text>
 
       <Text style={styles.subtitle}>
-        Login to your Pagaria account
+        Login to your Pagariya account
       </Text>
 
       {/* EMAIL */}
       <TextInput
-        style={styles.input}
+        style={[
+          styles.input,
+          email.length > 0 &&
+            !isEmailValid &&
+            styles.inputError,
+        ]}
         placeholder="Email"
         value={email}
         onChangeText={(text) => {
@@ -130,9 +283,28 @@ export default function Login() {
         autoCorrect={false}
       />
 
+      {/* EMAIL WARNING */}
+      {email.length > 0 && !isEmailValid && (
+        <Text style={styles.fieldWarning}>
+          ⚠ Please enter a valid email address.
+        </Text>
+      )}
+
+      {/* EMAIL SUCCESS */}
+      {email.length > 0 && isEmailValid && (
+        <Text style={styles.fieldSuccess}>
+          ✓ Email looks valid.
+        </Text>
+      )}
+
       {/* PASSWORD */}
       <TextInput
-        style={styles.input}
+        style={[
+          styles.input,
+          password.length > 0 &&
+            !isPasswordValid &&
+            styles.inputError,
+        ]}
         placeholder="Password"
         value={password}
         onChangeText={(text) => {
@@ -144,7 +316,21 @@ export default function Login() {
         secureTextEntry
       />
 
-      {/* ERROR MESSAGE */}
+      {/* PASSWORD WARNING */}
+      {password.length > 0 && !isPasswordValid && (
+        <Text style={styles.fieldWarning}>
+          ⚠ Password must contain at least 6 characters.
+        </Text>
+      )}
+
+      {/* PASSWORD SUCCESS */}
+      {password.length >= 6 && (
+        <Text style={styles.fieldSuccess}>
+          ✓ Password length is valid.
+        </Text>
+      )}
+
+      {/* GENERAL ERROR */}
       {errorMessage !== "" && (
         <View style={styles.errorBox}>
           <Text style={styles.errorTitle}>
@@ -157,7 +343,7 @@ export default function Login() {
         </View>
       )}
 
-      {/* RESEND CONFIRMATION */}
+      {/* EMAIL VERIFICATION */}
       {showResend && (
         <View style={styles.warningBox}>
           <Text style={styles.warningTitle}>
@@ -165,7 +351,8 @@ export default function Login() {
           </Text>
 
           <Text style={styles.warningText}>
-            Please verify your email address before logging in.
+            Please verify your email address before
+            logging in.
           </Text>
 
           <Pressable
@@ -182,7 +369,7 @@ export default function Login() {
         </View>
       )}
 
-      {/* SUCCESS MESSAGE */}
+      {/* SUCCESS */}
       {successMessage !== "" && (
         <View style={styles.successBox}>
           <Text style={styles.successText}>
@@ -195,10 +382,11 @@ export default function Login() {
       <Pressable
         style={[
           styles.button,
-          loading && styles.buttonDisabled,
+          (!canLogin || loading) &&
+            styles.buttonDisabled,
         ]}
         onPress={handleLogin}
-        disabled={loading}
+        disabled={!canLogin || loading}
       >
         <Text style={styles.buttonText}>
           {loading ? "Logging in..." : "Login"}
@@ -207,16 +395,12 @@ export default function Login() {
 
       {/* FORGOT PASSWORD */}
       <Pressable
-        style={styles.forgotButton}
-        onPress={() => {
-          setErrorMessage(
-            "Password reset will be added next."
-          );
-        }}
-      >
-        <Text style={styles.forgotText}>
-          Forgot Password?
-        </Text>
+          style={styles.forgotButton}
+          onPress={() => router.push("/forgot-password")}
+        >
+          <Text style={styles.forgotText}>
+            Forgot Password?
+          </Text>
       </Pressable>
 
       {/* REGISTER */}
@@ -230,9 +414,62 @@ export default function Login() {
           Create Account
         </Link>
       </View>
+
+      {/* =========================
+          CUSTOM POPUP
+          ========================= */}
+
+      <Modal
+        visible={popupVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPopupVisible(false)}
+      >
+        <View style={styles.popupOverlay}>
+
+          <View style={styles.popupContainer}>
+
+            {/* POPUP TITLE */}
+            <Text
+              style={[
+                styles.popupTitle,
+                popupType === "error"
+                  ? styles.popupErrorTitle
+                  : styles.popupSuccessTitle,
+              ]}
+            >
+              {popupTitle}
+            </Text>
+
+            {/* POPUP MESSAGE */}
+            <Text style={styles.popupMessage}>
+              {popupMessage}
+            </Text>
+
+            {/* POPUP BUTTON */}
+            <Pressable
+              style={styles.popupButton}
+              onPress={() => {
+                setPopupVisible(false);
+              }}
+            >
+              <Text style={styles.popupButtonText}>
+                OK
+              </Text>
+            </Pressable>
+
+          </View>
+
+        </View>
+      </Modal>
+
     </View>
   );
 }
+
+// =========================
+// STYLES
+// =========================
 
 const styles = StyleSheet.create({
   container: {
@@ -267,8 +504,26 @@ const styles = StyleSheet.create({
     borderColor: "#ddd",
     borderRadius: 10,
     paddingHorizontal: 15,
-    marginBottom: 15,
+    marginBottom: 8,
     fontSize: 16,
+  },
+
+  inputError: {
+    borderColor: "#ff6b6b",
+  },
+
+  fieldWarning: {
+    fontSize: 13,
+    color: "#d97706",
+    marginBottom: 10,
+    marginLeft: 3,
+  },
+
+  fieldSuccess: {
+    fontSize: 13,
+    color: "#16803c",
+    marginBottom: 10,
+    marginLeft: 3,
   },
 
   button: {
@@ -281,7 +536,7 @@ const styles = StyleSheet.create({
   },
 
   buttonDisabled: {
-    opacity: 0.6,
+    opacity: 0.4,
   },
 
   buttonText: {
@@ -373,6 +628,70 @@ const styles = StyleSheet.create({
   },
 
   link: {
+    fontWeight: "bold",
+  },
+
+  // =========================
+  // CUSTOM POPUP
+  // =========================
+
+  popupOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 25,
+  },
+
+  popupContainer: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 25,
+    elevation: 10,
+
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+  },
+
+  popupTitle: {
+    fontSize: 21,
+    fontWeight: "bold",
+    marginBottom: 12,
+  },
+
+  popupSuccessTitle: {
+    color: "#2e7d32",
+  },
+
+  popupErrorTitle: {
+    color: "#d32f2f",
+  },
+
+  popupMessage: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#444",
+    marginBottom: 22,
+  },
+
+  popupButton: {
+    height: 48,
+    backgroundColor: "#111",
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  popupButtonText: {
+    color: "#fff",
+    fontSize: 16,
     fontWeight: "bold",
   },
 });
