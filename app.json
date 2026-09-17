@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "pagariya",
-    "slug": "pagaria2",
+    "slug": "pagariya-bodyshop",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -42,8 +42,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "7c7bac72-cd07-45fa-9a04-103a12c9d70a"
+        "projectId": "7d36a918-57ab-4265-9f90-0e540370d0ee"
       }
-    }
+    },
+    "owner": "pagariyaauto"
   }
 }
