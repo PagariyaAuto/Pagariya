@@ -1,14 +1,30 @@
 import { Link, router } from "expo-router";
 import { useState } from "react";
+
 import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { SafeAreaView } from "react-native-safe-area-context";
+
 import { supabase } from "../../lib/supabase";
+
+import {
+  colors,
+  radius,
+  spacing,
+  typography,
+} from "../theme";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -69,7 +85,6 @@ export default function Login() {
     setSuccessMessage("");
     setShowResend(false);
 
-    // Email validation
     if (!email.trim()) {
       showPopup(
         "Login Warning",
@@ -88,7 +103,6 @@ export default function Login() {
       return;
     }
 
-    // Password validation
     if (!password) {
       showPopup(
         "Login Warning",
@@ -107,10 +121,8 @@ export default function Login() {
       return;
     }
 
-    // Start loading
     setLoading(true);
 
-    // Login with Supabase
     const { data, error } =
       await supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -250,220 +262,413 @@ export default function Login() {
   // =========================
 
   return (
-    <View style={styles.container}>
-
-      {/* LOGO */}
-      <Text style={styles.logo}>Pagariya</Text>
-
-      {/* TITLE */}
-      <Text style={styles.title}>Login</Text>
-
-      <Text style={styles.subtitle}>
-        Login to your Pagariya account
-      </Text>
-
-      {/* EMAIL */}
-      <TextInput
-        style={[
-          styles.input,
-          email.length > 0 &&
-            !isEmailValid &&
-            styles.inputError,
-        ]}
-        placeholder="Email"
-        value={email}
-        onChangeText={(text) => {
-          setEmail(text);
-          setErrorMessage("");
-          setSuccessMessage("");
-          setShowResend(false);
-        }}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-
-      {/* EMAIL WARNING */}
-      {email.length > 0 && !isEmailValid && (
-        <Text style={styles.fieldWarning}>
-          ⚠ Please enter a valid email address.
-        </Text>
-      )}
-
-      {/* EMAIL SUCCESS */}
-      {email.length > 0 && isEmailValid && (
-        <Text style={styles.fieldSuccess}>
-          ✓ Email looks valid.
-        </Text>
-      )}
-
-      {/* PASSWORD */}
-      <TextInput
-        style={[
-          styles.input,
-          password.length > 0 &&
-            !isPasswordValid &&
-            styles.inputError,
-        ]}
-        placeholder="Password"
-        value={password}
-        onChangeText={(text) => {
-          setPassword(text);
-          setErrorMessage("");
-          setSuccessMessage("");
-          setShowResend(false);
-        }}
-        secureTextEntry
-      />
-
-      {/* PASSWORD WARNING */}
-      {password.length > 0 && !isPasswordValid && (
-        <Text style={styles.fieldWarning}>
-          ⚠ Password must contain at least 6 characters.
-        </Text>
-      )}
-
-      {/* PASSWORD SUCCESS */}
-      {password.length >= 6 && (
-        <Text style={styles.fieldSuccess}>
-          ✓ Password length is valid.
-        </Text>
-      )}
-
-      {/* GENERAL ERROR */}
-      {errorMessage !== "" && (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorTitle}>
-            ❌ Login Failed
-          </Text>
-
-          <Text style={styles.errorText}>
-            {errorMessage}
-          </Text>
-        </View>
-      )}
-
-      {/* EMAIL VERIFICATION */}
-      {showResend && (
-        <View style={styles.warningBox}>
-          <Text style={styles.warningTitle}>
-            Email verification required
-          </Text>
-
-          <Text style={styles.warningText}>
-            Please verify your email address before
-            logging in.
-          </Text>
-
-          <Pressable
-            style={styles.resendButton}
-            onPress={handleResendConfirmation}
-            disabled={resending}
-          >
-            <Text style={styles.resendText}>
-              {resending
-                ? "Sending..."
-                : "Resend Confirmation Email"}
-            </Text>
-          </Pressable>
-        </View>
-      )}
-
-      {/* SUCCESS */}
-      {successMessage !== "" && (
-        <View style={styles.successBox}>
-          <Text style={styles.successText}>
-            ✓ {successMessage}
-          </Text>
-        </View>
-      )}
-
-      {/* LOGIN BUTTON */}
-      <Pressable
-        style={[
-          styles.button,
-          (!canLogin || loading) &&
-            styles.buttonDisabled,
-        ]}
-        onPress={handleLogin}
-        disabled={!canLogin || loading}
+    <SafeAreaView
+      style={styles.container}
+      edges={["top", "bottom"]}
+    >
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : undefined
+        }
       >
-        <Text style={styles.buttonText}>
-          {loading ? "Logging in..." : "Login"}
-        </Text>
-      </Pressable>
-
-      {/* FORGOT PASSWORD */}
-      <Pressable
-          style={styles.forgotButton}
-          onPress={() => router.push("/forgot-password")}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.forgotText}>
-            Forgot Password?
-          </Text>
-      </Pressable>
+          {/* BRAND HEADER */}
 
-      {/* REGISTER */}
-      <View style={styles.registerRow}>
-        <Text>Don't have an account? </Text>
+          <View style={styles.brandSection}>
+            <View style={styles.logoContainer}>
+              <Text style={styles.logoText}>P</Text>
+            </View>
 
-        <Link
-          href="/register"
-          style={styles.link}
-        >
-          Create Account
-        </Link>
-      </View>
-
-      {/* =========================
-          CUSTOM POPUP
-          ========================= */}
-
-      <Modal
-        visible={popupVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPopupVisible(false)}
-      >
-        <View style={styles.popupOverlay}>
-
-          <View style={styles.popupContainer}>
-
-            {/* POPUP TITLE */}
-            <Text
-              style={[
-                styles.popupTitle,
-                popupType === "error"
-                  ? styles.popupErrorTitle
-                  : styles.popupSuccessTitle,
-              ]}
-            >
-              {popupTitle}
+            <Text style={styles.logo}>
+              Pagariya
             </Text>
 
-            {/* POPUP MESSAGE */}
-            <Text style={styles.popupMessage}>
-              {popupMessage}
+            <Text style={styles.brandSubtitle}>
+              Workshop Management
             </Text>
-
-            {/* POPUP BUTTON */}
-            <Pressable
-              style={styles.popupButton}
-              onPress={() => {
-                setPopupVisible(false);
-              }}
-            >
-              <Text style={styles.popupButtonText}>
-                OK
-              </Text>
-            </Pressable>
-
           </View>
 
-        </View>
-      </Modal>
+          {/* LOGIN CARD */}
 
-    </View>
+          <View style={styles.card}>
+            <Text style={styles.title}>
+              Welcome Back
+            </Text>
+
+            <Text style={styles.subtitle}>
+              Login to your Pagariya account
+            </Text>
+
+            {/* EMAIL */}
+
+            <Text style={styles.fieldLabel}>
+              Email Address *
+            </Text>
+
+            <View
+              style={[
+                styles.inputContainer,
+                email.length > 0 &&
+                  !isEmailValid &&
+                  styles.inputError,
+                email.length > 0 &&
+                  isEmailValid &&
+                  styles.inputValid,
+              ]}
+            >
+              <Ionicons
+                name="mail-outline"
+                size={20}
+                color={
+                  email.length > 0 && !isEmailValid
+                    ? colors.danger
+                    : colors.textLight
+                }
+                style={styles.inputIcon}
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your email address"
+                placeholderTextColor={colors.textLight}
+                value={email}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  setErrorMessage("");
+                  setSuccessMessage("");
+                  setShowResend(false);
+                }}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              {email.length > 0 &&
+                isEmailValid && (
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={20}
+                    color={colors.success}
+                  />
+                )}
+            </View>
+
+            {/* EMAIL WARNING */}
+
+            {email.length > 0 &&
+              !isEmailValid && (
+                <Text style={styles.fieldWarning}>
+                  Please enter a valid email address.
+                </Text>
+              )}
+
+            {/* EMAIL SUCCESS */}
+
+            {email.length > 0 &&
+              isEmailValid && (
+                <Text style={styles.fieldSuccess}>
+                  Email looks valid.
+                </Text>
+              )}
+
+            {/* PASSWORD */}
+
+            <View style={styles.passwordLabelRow}>
+              <Text style={styles.fieldLabel}>
+                Password *
+              </Text>
+            </View>
+
+            <View
+              style={[
+                styles.inputContainer,
+                password.length > 0 &&
+                  !isPasswordValid &&
+                  styles.inputError,
+                password.length >= 6 &&
+                  styles.inputValid,
+              ]}
+            >
+              <Ionicons
+                name="lock-closed-outline"
+                size={20}
+                color={colors.textLight}
+                style={styles.inputIcon}
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your password"
+                placeholderTextColor={colors.textLight}
+                value={password}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  setErrorMessage("");
+                  setSuccessMessage("");
+                  setShowResend(false);
+                }}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              {password.length >= 6 && (
+                <Ionicons
+                  name="checkmark-circle"
+                  size={20}
+                  color={colors.success}
+                />
+              )}
+            </View>
+
+            {/* PASSWORD WARNING */}
+
+            {password.length > 0 &&
+              !isPasswordValid && (
+                <Text style={styles.fieldWarning}>
+                  Password must contain at least 6 characters.
+                </Text>
+              )}
+
+            {/* PASSWORD SUCCESS */}
+
+            {password.length >= 6 && (
+              <Text style={styles.fieldSuccess}>
+                Password length is valid.
+              </Text>
+            )}
+
+            {/* GENERAL ERROR */}
+
+            {errorMessage !== "" && (
+              <View style={styles.errorBox}>
+                <View style={styles.messageIcon}>
+                  <Ionicons
+                    name="alert-circle-outline"
+                    size={20}
+                    color={colors.danger}
+                  />
+                </View>
+
+                <View style={styles.messageContent}>
+                  <Text style={styles.errorTitle}>
+                    Login Failed
+                  </Text>
+
+                  <Text style={styles.errorText}>
+                    {errorMessage}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* EMAIL VERIFICATION */}
+
+            {showResend && (
+              <View style={styles.warningBox}>
+                <View style={styles.messageIcon}>
+                  <Ionicons
+                    name="mail-unread-outline"
+                    size={20}
+                    color={colors.warning}
+                  />
+                </View>
+
+                <View style={styles.messageContent}>
+                  <Text style={styles.warningTitle}>
+                    Email verification required
+                  </Text>
+
+                  <Text style={styles.warningText}>
+                    Please verify your email address before logging in.
+                  </Text>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.resendButton,
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={handleResendConfirmation}
+                    disabled={resending}
+                  >
+                    <Text style={styles.resendText}>
+                      {resending
+                        ? "Sending..."
+                        : "Resend Confirmation Email"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+
+            {/* SUCCESS */}
+
+            {successMessage !== "" && (
+              <View style={styles.successBox}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={20}
+                  color={colors.success}
+                />
+
+                <Text style={styles.successText}>
+                  {successMessage}
+                </Text>
+              </View>
+            )}
+
+            {/* LOGIN BUTTON */}
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.button,
+                (!canLogin || loading) &&
+                  styles.buttonDisabled,
+                pressed &&
+                  canLogin &&
+                  !loading &&
+                  styles.buttonPressed,
+              ]}
+              onPress={handleLogin}
+              disabled={!canLogin || loading}
+            >
+              {loading ? (
+                <View style={styles.buttonLoading}>
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.white}
+                  />
+
+                  <Text style={styles.buttonText}>
+                    Logging in...
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.buttonText}>
+                    Login
+                  </Text>
+
+                  <Ionicons
+                    name="arrow-forward"
+                    size={19}
+                    color={colors.white}
+                  />
+                </>
+              )}
+            </Pressable>
+
+            {/* FORGOT PASSWORD */}
+
+            <Pressable
+              style={styles.forgotButton}
+              onPress={() =>
+                router.push("/forgot-password")
+              }
+            >
+              <Text style={styles.forgotText}>
+                Forgot Password?
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* REGISTER */}
+
+          <View style={styles.registerRow}>
+            <Text style={styles.registerText}>
+              Don't have an account?
+            </Text>
+
+            <Link
+              href="/register"
+              style={styles.link}
+            >
+              Create Account
+            </Link>
+          </View>
+
+          {/* FOOTER */}
+
+          <Text style={styles.footer}>
+            Pagariya Auto
+          </Text>
+        </ScrollView>
+
+        {/* CUSTOM POPUP */}
+
+        <Modal
+          visible={popupVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() =>
+            setPopupVisible(false)
+          }
+        >
+          <View style={styles.popupOverlay}>
+            <View style={styles.popupContainer}>
+              <View
+                style={[
+                  styles.popupIcon,
+                  popupType === "error"
+                    ? styles.popupErrorIcon
+                    : styles.popupSuccessIcon,
+                ]}
+              >
+                <Ionicons
+                  name={
+                    popupType === "error"
+                      ? "alert-circle-outline"
+                      : "checkmark-circle-outline"
+                  }
+                  size={28}
+                  color={
+                    popupType === "error"
+                      ? colors.danger
+                      : colors.success
+                  }
+                />
+              </View>
+
+              <Text
+                style={[
+                  styles.popupTitle,
+                  popupType === "error"
+                    ? styles.popupErrorTitle
+                    : styles.popupSuccessTitle,
+                ]}
+              >
+                {popupTitle}
+              </Text>
+
+              <Text style={styles.popupMessage}>
+                {popupMessage}
+              </Text>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.popupButton,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={() => {
+                  setPopupVisible(false);
+                }}
+              >
+                <Text style={styles.popupButtonText}>
+                  OK
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -474,165 +679,341 @@ export default function Login() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.background,
+  },
+
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxl,
+  },
+
+  // =========================
+  // BRAND
+  // =========================
+
+  brandSection: {
+    alignItems: "center",
+    marginBottom: spacing.xl,
+  },
+
+  logoContainer: {
+    width: 58,
+    height: 58,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primary,
+    alignItems: "center",
     justifyContent: "center",
-    padding: 25,
-    backgroundColor: "#fff",
+
+    shadowColor: colors.black,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+
+  logoText: {
+    fontSize: 30,
+    fontWeight: "800",
+    color: colors.white,
   },
 
   logo: {
-    fontSize: 36,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 40,
+    fontSize: 27,
+    fontWeight: "700",
+    color: colors.text,
+    marginTop: spacing.sm,
+  },
+
+  brandSubtitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+
+  // =========================
+  // CARD
+  // =========================
+
+  card: {
+    width: "100%",
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+
+    shadowColor: colors.black,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
 
   title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    marginBottom: 8,
+    ...typography.heading,
+    fontSize: 24,
+    color: colors.text,
+    marginBottom: spacing.xs,
   },
 
   subtitle: {
-    fontSize: 16,
-    color: "#666",
-    marginBottom: 25,
+    ...typography.body,
+    color: colors.textSecondary,
+    marginBottom: spacing.xl,
   },
 
-  input: {
-    height: 52,
+  // =========================
+  // INPUTS
+  // =========================
+
+  fieldLabel: {
+    ...typography.bodyMedium,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+
+  passwordLabelRow: {
+    marginTop: spacing.sm,
+  },
+
+  inputContainer: {
+    minHeight: 52,
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 10,
-    paddingHorizontal: 15,
-    marginBottom: 8,
-    fontSize: 16,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
   },
 
   inputError: {
-    borderColor: "#ff6b6b",
+    borderColor: colors.danger,
+    backgroundColor: colors.dangerLight,
+  },
+
+  inputValid: {
+    borderColor: colors.success,
+  },
+
+  inputIcon: {
+    marginRight: spacing.sm,
+  },
+
+  input: {
+    flex: 1,
+    minHeight: 50,
+    fontSize: 15,
+    color: colors.text,
   },
 
   fieldWarning: {
-    fontSize: 13,
-    color: "#d97706",
-    marginBottom: 10,
-    marginLeft: 3,
+    ...typography.caption,
+    color: colors.warning,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    marginLeft: 2,
   },
 
   fieldSuccess: {
-    fontSize: 13,
-    color: "#16803c",
-    marginBottom: 10,
-    marginLeft: 3,
+    ...typography.caption,
+    color: colors.success,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    marginLeft: 2,
   },
 
-  button: {
-    height: 52,
-    backgroundColor: "#111",
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 15,
-  },
-
-  buttonDisabled: {
-    opacity: 0.4,
-  },
-
-  buttonText: {
-    color: "#fff",
-    fontSize: 17,
-    fontWeight: "bold",
-  },
+  // =========================
+  // ERROR
+  // =========================
 
   errorBox: {
-    marginBottom: 10,
-    padding: 14,
+    flexDirection: "row",
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: "#ffb3b3",
-    borderRadius: 10,
-    backgroundColor: "#fff0f0",
+    borderColor: colors.danger,
+    borderRadius: radius.md,
+    backgroundColor: colors.dangerLight,
+  },
+
+  messageIcon: {
+    marginRight: spacing.sm,
+    paddingTop: 1,
+  },
+
+  messageContent: {
+    flex: 1,
   },
 
   errorTitle: {
-    fontSize: 15,
-    fontWeight: "bold",
-    marginBottom: 4,
+    ...typography.bodyMedium,
+    color: colors.danger,
+    marginBottom: 3,
   },
 
   errorText: {
-    fontSize: 14,
-    color: "#555",
+    ...typography.caption,
+    color: colors.textSecondary,
+    lineHeight: 19,
   },
 
+  // =========================
+  // WARNING
+  // =========================
+
   warningBox: {
-    marginBottom: 10,
-    padding: 15,
+    flexDirection: "row",
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: "#f0c36d",
-    borderRadius: 10,
-    backgroundColor: "#fff8e7",
+    borderColor: colors.warning,
+    borderRadius: radius.md,
+    backgroundColor: colors.warningLight,
   },
 
   warningTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    marginBottom: 5,
+    ...typography.bodyMedium,
+    color: colors.text,
+    marginBottom: 4,
   },
 
   warningText: {
-    fontSize: 14,
-    color: "#555",
-    marginBottom: 12,
+    ...typography.caption,
+    color: colors.textSecondary,
+    lineHeight: 19,
+    marginBottom: spacing.md,
   },
 
   resendButton: {
-    height: 45,
-    backgroundColor: "#111",
-    borderRadius: 8,
+    minHeight: 44,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
     justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: spacing.md,
   },
 
   resendText: {
-    color: "#fff",
-    fontWeight: "bold",
+    ...typography.button,
+    color: colors.white,
   },
 
+  // =========================
+  // SUCCESS
+  // =========================
+
   successBox: {
-    marginBottom: 10,
-    padding: 14,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: "#a8d5ba",
-    borderRadius: 10,
-    backgroundColor: "#eefaf2",
+    borderColor: colors.success,
+    borderRadius: radius.md,
+    backgroundColor: colors.successLight,
   },
 
   successText: {
-    fontSize: 14,
+    flex: 1,
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginLeft: spacing.sm,
+    lineHeight: 19,
   },
 
+  // =========================
+  // BUTTON
+  // =========================
+
+  button: {
+    minHeight: 52,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: "row",
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+
+  buttonDisabled: {
+    backgroundColor: colors.primary,
+    opacity: 0.45,
+  },
+
+  buttonPressed: {
+    opacity: 0.8,
+  },
+
+  buttonText: {
+    ...typography.button,
+    color: colors.white,
+    marginRight: spacing.sm,
+  },
+
+  buttonLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  // =========================
+  // FORGOT PASSWORD
+  // =========================
+
   forgotButton: {
-    alignSelf: "flex-end",
-    marginTop: 15,
+    alignSelf: "center",
+    marginTop: spacing.lg,
+    paddingVertical: spacing.xs,
   },
 
   forgotText: {
-    fontWeight: "bold",
+    ...typography.bodyMedium,
+    color: colors.primary,
   },
+
+  // =========================
+  // REGISTER
+  // =========================
 
   registerRow: {
     flexDirection: "row",
     justifyContent: "center",
-    marginTop: 30,
+    alignItems: "center",
+    marginTop: spacing.xl,
+  },
+
+  registerText: {
+    ...typography.body,
+    color: colors.textSecondary,
   },
 
   link: {
-    fontWeight: "bold",
+    ...typography.bodyMedium,
+    color: colors.primary,
+    marginLeft: spacing.xs,
+  },
+
+  footer: {
+    ...typography.caption,
+    color: colors.textLight,
+    textAlign: "center",
+    marginTop: spacing.xl,
   },
 
   // =========================
-  // CUSTOM POPUP
+  // POPUP
   // =========================
 
   popupOverlay: {
@@ -640,58 +1021,77 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
-    padding: 25,
+    padding: spacing.xl,
   },
 
   popupContainer: {
     width: "100%",
     maxWidth: 400,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 25,
-    elevation: 10,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    alignItems: "center",
 
-    shadowColor: "#000",
+    shadowColor: colors.black,
     shadowOffset: {
       width: 0,
-      height: 4,
+      height: 6,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+
+  popupIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: radius.round,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.md,
+  },
+
+  popupErrorIcon: {
+    backgroundColor: colors.dangerLight,
+  },
+
+  popupSuccessIcon: {
+    backgroundColor: colors.successLight,
   },
 
   popupTitle: {
-    fontSize: 21,
-    fontWeight: "bold",
-    marginBottom: 12,
-  },
-
-  popupSuccessTitle: {
-    color: "#2e7d32",
+    ...typography.heading,
+    textAlign: "center",
+    marginBottom: spacing.sm,
   },
 
   popupErrorTitle: {
-    color: "#d32f2f",
+    color: colors.danger,
+  },
+
+  popupSuccessTitle: {
+    color: colors.success,
   },
 
   popupMessage: {
-    fontSize: 15,
+    ...typography.body,
     lineHeight: 22,
-    color: "#444",
-    marginBottom: 22,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginBottom: spacing.xl,
   },
 
   popupButton: {
-    height: 48,
-    backgroundColor: "#111",
-    borderRadius: 10,
+    width: "100%",
+    minHeight: 48,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
     justifyContent: "center",
     alignItems: "center",
   },
 
   popupButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
+    ...typography.button,
+    color: colors.white,
   },
 });

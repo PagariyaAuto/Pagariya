@@ -1,14 +1,30 @@
 import { router } from "expo-router";
 import { useState } from "react";
+
 import {
-    Modal,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
+
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { SafeAreaView } from "react-native-safe-area-context";
+
 import { supabase } from "../../lib/supabase";
+
+import {
+  colors,
+  radius,
+  spacing,
+  typography,
+} from "../theme";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -17,10 +33,14 @@ export default function ForgotPassword() {
   const [popupVisible, setPopupVisible] = useState(false);
   const [popupTitle, setPopupTitle] = useState("");
   const [popupMessage, setPopupMessage] = useState("");
-  const [popupType, setPopupType] = useState<"success" | "error">("error");
+  const [popupType, setPopupType] = useState<
+    "success" | "error"
+  >("error");
 
   const isEmailValid =
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+      email.trim()
+    );
 
   const showPopup = (
     title: string,
@@ -83,257 +103,582 @@ Please check your email and open the link to create a new password.`,
   };
 
   return (
-    <View style={styles.container}>
-
-      <Text style={styles.logo}>Pagariya</Text>
-
-      <Text style={styles.title}>
-        Forgot Password
-      </Text>
-
-      <Text style={styles.subtitle}>
-        Enter your registered email address and we will
-        send you a password reset link.
-      </Text>
-
-      <TextInput
-        style={[
-          styles.input,
-          email.length > 0 && !isEmailValid && styles.inputError,
-        ]}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-
-      {email.length > 0 && !isEmailValid && (
-        <Text style={styles.fieldWarning}>
-          ⚠ Please enter a valid email address.
-        </Text>
-      )}
-
-      {email.length > 0 && isEmailValid && (
-        <Text style={styles.fieldSuccess}>
-          ✓ Email looks valid.
-        </Text>
-      )}
-
-      <Pressable
-        style={[
-          styles.button,
-          (!isEmailValid || loading) && styles.buttonDisabled,
-        ]}
-        onPress={handleSendReset}
-        disabled={!isEmailValid || loading}
+    <SafeAreaView
+      style={styles.container}
+      edges={["top", "bottom"]}
+    >
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : undefined
+        }
       >
-        <Text style={styles.buttonText}>
-          {loading ? "Sending..." : "Send Reset Link"}
-        </Text>
-      </Pressable>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* BRAND HEADER */}
 
-      <Pressable
-        style={styles.backButton}
-        onPress={() => router.replace("/login")}
-      >
-        <Text style={styles.backText}>
-          ← Back to Login
-        </Text>
-      </Pressable>
+          <View style={styles.brandSection}>
+            <View style={styles.logoContainer}>
+              <Text style={styles.logoText}>
+                P
+              </Text>
+            </View>
 
-      {/* CUSTOM POPUP */}
+            <Text style={styles.logo}>
+              Pagariya
+            </Text>
 
-      <Modal
-        visible={popupVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPopupVisible(false)}
-      >
-        <View style={styles.popupOverlay}>
-          <View style={styles.popupContainer}>
+            <Text style={styles.brandSubtitle}>
+              Workshop Management
+            </Text>
+          </View>
 
-            <Text
+          {/* MAIN CARD */}
+
+          <View style={styles.card}>
+            <View style={styles.titleIcon}>
+              <Ionicons
+                name="lock-open-outline"
+                size={26}
+                color={colors.primary}
+              />
+            </View>
+
+            <Text style={styles.title}>
+              Forgot Password?
+            </Text>
+
+            <Text style={styles.subtitle}>
+              Enter your registered email address and
+              we'll send you a password reset link.
+            </Text>
+
+            {/* EMAIL */}
+
+            <Text style={styles.fieldLabel}>
+              Email Address *
+            </Text>
+
+            <View
               style={[
-                styles.popupTitle,
-                popupType === "error"
-                  ? styles.popupErrorTitle
-                  : styles.popupSuccessTitle,
+                styles.inputContainer,
+                email.length > 0 &&
+                  !isEmailValid &&
+                  styles.inputError,
+                email.length > 0 &&
+                  isEmailValid &&
+                  styles.inputValid,
               ]}
             >
-              {popupTitle}
-            </Text>
+              <Ionicons
+                name="mail-outline"
+                size={20}
+                color={
+                  email.length > 0 &&
+                  !isEmailValid
+                    ? colors.danger
+                    : colors.textLight
+                }
+                style={styles.inputIcon}
+              />
 
-            <Text style={styles.popupMessage}>
-              {popupMessage}
-            </Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your registered email"
+                placeholderTextColor={colors.textLight}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              {email.length > 0 &&
+                isEmailValid && (
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={20}
+                    color={colors.success}
+                  />
+                )}
+            </View>
+
+            {/* EMAIL WARNING */}
+
+            {email.length > 0 &&
+              !isEmailValid && (
+                <Text style={styles.fieldWarning}>
+                  Please enter a valid email address.
+                </Text>
+              )}
+
+            {/* EMAIL SUCCESS */}
+
+            {email.length > 0 &&
+              isEmailValid && (
+                <Text style={styles.fieldSuccess}>
+                  Email looks valid.
+                </Text>
+              )}
+
+            {/* SEND BUTTON */}
 
             <Pressable
-              style={styles.popupButton}
-              onPress={() => {
-                setPopupVisible(false);
-
-                if (popupType === "success") {
-                  router.replace("/login");
-                }
-              }}
+              style={({ pressed }) => [
+                styles.button,
+                (!isEmailValid || loading) &&
+                  styles.buttonDisabled,
+                pressed &&
+                  isEmailValid &&
+                  !loading &&
+                  styles.buttonPressed,
+              ]}
+              onPress={handleSendReset}
+              disabled={!isEmailValid || loading}
             >
-              <Text style={styles.popupButtonText}>
-                OK
-              </Text>
+              {loading ? (
+                <View style={styles.buttonLoading}>
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.white}
+                  />
+
+                  <Text style={styles.buttonText}>
+                    Sending...
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.buttonText}>
+                    Send Reset Link
+                  </Text>
+
+                  <Ionicons
+                    name="arrow-forward"
+                    size={19}
+                    color={colors.white}
+                  />
+                </>
+              )}
             </Pressable>
 
-          </View>
-        </View>
-      </Modal>
+            {/* BACK TO LOGIN */}
 
-    </View>
+            <Pressable
+              style={styles.backButton}
+              onPress={() =>
+                router.replace("/login")
+              }
+            >
+              <Ionicons
+                name="arrow-back"
+                size={18}
+                color={colors.primary}
+              />
+
+              <Text style={styles.backText}>
+                Back to Login
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* FOOTER */}
+
+          <Text style={styles.footer}>
+            Pagariya Auto
+          </Text>
+        </ScrollView>
+
+        {/* =========================
+            CUSTOM POPUP
+            ========================= */}
+
+        <Modal
+          visible={popupVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() =>
+            setPopupVisible(false)
+          }
+        >
+          <View style={styles.popupOverlay}>
+            <View style={styles.popupContainer}>
+              <View
+                style={[
+                  styles.popupIcon,
+                  popupType === "error"
+                    ? styles.popupErrorIcon
+                    : styles.popupSuccessIcon,
+                ]}
+              >
+                <Ionicons
+                  name={
+                    popupType === "error"
+                      ? "alert-circle-outline"
+                      : "checkmark-circle-outline"
+                  }
+                  size={28}
+                  color={
+                    popupType === "error"
+                      ? colors.danger
+                      : colors.success
+                  }
+                />
+              </View>
+
+              <Text
+                style={[
+                  styles.popupTitle,
+                  popupType === "error"
+                    ? styles.popupErrorTitle
+                    : styles.popupSuccessTitle,
+                ]}
+              >
+                {popupTitle}
+              </Text>
+
+              <Text style={styles.popupMessage}>
+                {popupMessage}
+              </Text>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.popupButton,
+                  pressed &&
+                    styles.buttonPressed,
+                ]}
+                onPress={() => {
+                  setPopupVisible(false);
+
+                  if (
+                    popupType === "success"
+                  ) {
+                    router.replace("/login");
+                  }
+                }}
+              >
+                <Text style={styles.popupButtonText}>
+                  OK
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.background,
+  },
+
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxl,
+  },
+
+  // =========================
+  // BRAND
+  // =========================
+
+  brandSection: {
+    alignItems: "center",
+    marginBottom: spacing.xl,
+  },
+
+  logoContainer: {
+    width: 58,
+    height: 58,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primary,
+    alignItems: "center",
     justifyContent: "center",
-    padding: 25,
-    backgroundColor: "#fff",
+
+    shadowColor: colors.black,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+
+  logoText: {
+    fontSize: 30,
+    fontWeight: "800",
+    color: colors.white,
   },
 
   logo: {
-    fontSize: 36,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 40,
+    fontSize: 27,
+    fontWeight: "700",
+    color: colors.text,
+    marginTop: spacing.sm,
+  },
+
+  brandSubtitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+
+  // =========================
+  // CARD
+  // =========================
+
+  card: {
+    width: "100%",
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+
+    shadowColor: colors.black,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+
+  titleIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.md,
   },
 
   title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    marginBottom: 8,
+    ...typography.heading,
+    fontSize: 24,
+    color: colors.text,
+    marginBottom: spacing.sm,
   },
 
   subtitle: {
-    fontSize: 16,
-    color: "#666",
-    marginBottom: 25,
+    ...typography.body,
+    color: colors.textSecondary,
     lineHeight: 22,
+    marginBottom: spacing.xl,
   },
 
-  input: {
-    height: 52,
+  // =========================
+  // INPUT
+  // =========================
+
+  fieldLabel: {
+    ...typography.bodyMedium,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+
+  inputContainer: {
+    minHeight: 52,
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 10,
-    paddingHorizontal: 15,
-    marginBottom: 8,
-    fontSize: 16,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
   },
 
   inputError: {
-    borderColor: "#ff6b6b",
+    borderColor: colors.danger,
+    backgroundColor: colors.dangerLight,
+  },
+
+  inputValid: {
+    borderColor: colors.success,
+  },
+
+  inputIcon: {
+    marginRight: spacing.sm,
+  },
+
+  input: {
+    flex: 1,
+    minHeight: 50,
+    fontSize: 15,
+    color: colors.text,
   },
 
   fieldWarning: {
-    fontSize: 13,
-    color: "#d97706",
-    marginBottom: 10,
-    marginLeft: 3,
+    ...typography.caption,
+    color: colors.warning,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    marginLeft: 2,
   },
 
   fieldSuccess: {
-    fontSize: 13,
-    color: "#16803c",
-    marginBottom: 10,
-    marginLeft: 3,
+    ...typography.caption,
+    color: colors.success,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    marginLeft: 2,
   },
 
+  // =========================
+  // BUTTON
+  // =========================
+
   button: {
-    height: 52,
-    backgroundColor: "#111",
-    borderRadius: 10,
+    minHeight: 52,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
     justifyContent: "center",
     alignItems: "center",
-    marginTop: 15,
+    flexDirection: "row",
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
 
   buttonDisabled: {
-    opacity: 0.4,
+    opacity: 0.45,
+  },
+
+  buttonPressed: {
+    opacity: 0.8,
   },
 
   buttonText: {
-    color: "#fff",
-    fontSize: 17,
-    fontWeight: "bold",
+    ...typography.button,
+    color: colors.white,
+    marginRight: spacing.sm,
   },
 
+  buttonLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  // =========================
+  // BACK
+  // =========================
+
   backButton: {
-    alignSelf: "center",
-    marginTop: 25,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: spacing.lg,
+    paddingVertical: spacing.xs,
   },
 
   backText: {
-    fontWeight: "bold",
-    fontSize: 15,
+    ...typography.bodyMedium,
+    color: colors.primary,
+    marginLeft: spacing.xs,
   },
+
+  // =========================
+  // FOOTER
+  // =========================
+
+  footer: {
+    ...typography.caption,
+    color: colors.textLight,
+    textAlign: "center",
+    marginTop: spacing.xl,
+  },
+
+  // =========================
+  // POPUP
+  // =========================
 
   popupOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
-    padding: 25,
+    padding: spacing.xl,
   },
 
   popupContainer: {
     width: "100%",
     maxWidth: 400,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 25,
-    elevation: 10,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    alignItems: "center",
 
-    shadowColor: "#000",
+    shadowColor: colors.black,
     shadowOffset: {
       width: 0,
-      height: 4,
+      height: 6,
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+
+  popupIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: radius.round,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.md,
+  },
+
+  popupErrorIcon: {
+    backgroundColor: colors.dangerLight,
+  },
+
+  popupSuccessIcon: {
+    backgroundColor: colors.successLight,
   },
 
   popupTitle: {
-    fontSize: 21,
-    fontWeight: "bold",
-    marginBottom: 12,
-  },
-
-  popupSuccessTitle: {
-    color: "#2e7d32",
+    ...typography.heading,
+    textAlign: "center",
+    marginBottom: spacing.sm,
   },
 
   popupErrorTitle: {
-    color: "#d32f2f",
+    color: colors.danger,
+  },
+
+  popupSuccessTitle: {
+    color: colors.success,
   },
 
   popupMessage: {
-    fontSize: 15,
+    ...typography.body,
     lineHeight: 22,
-    color: "#444",
-    marginBottom: 22,
+    color: colors.textSecondary,
+    textAlign: "center",
+    marginBottom: spacing.xl,
   },
 
   popupButton: {
-    height: 48,
-    backgroundColor: "#111",
-    borderRadius: 10,
+    width: "100%",
+    minHeight: 48,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
     justifyContent: "center",
     alignItems: "center",
   },
 
   popupButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
+    ...typography.button,
+    color: colors.white,
   },
 });
