@@ -107,6 +107,12 @@ export default function TabsLayout() {
           href: null,
         }}
       />
+      <Tabs.Screen
+        name="work/floor-incharge"
+        options={{
+          href: null,
+        }}
+      />
     </Tabs>
     
     

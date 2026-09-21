@@ -1,3 +1,4 @@
+
 import { Ionicons } from "@expo/vector-icons";
 import {
   Image,
@@ -12,6 +13,7 @@ type PhotoItem = {
   uri: string;
   status: "pending" | "uploading" | "uploaded" | "failed";
   progress?: number;
+  storagePath?: string;
 };
 
 type PhotoGalleryProps = {
@@ -21,9 +23,13 @@ type PhotoGalleryProps = {
   onRemovePhoto: (id: string) => void;
   onViewPhoto: (photo: PhotoItem) => void;
 
-  // When true, photos can only be viewed.
-  // Add / Remove controls are hidden.
+  // When true, photos can only be viewed,
+  // except for the optional CEO Admin delete control.
   readOnly?: boolean;
+
+  // Allows an authorized user to delete uploaded photos.
+  canDeleteUploaded?: boolean;
+  onDeleteUploadedPhoto?: (photo: PhotoItem) => void;
 };
 
 export default function PhotoGallery({
@@ -33,27 +39,23 @@ export default function PhotoGallery({
   onRemovePhoto,
   onViewPhoto,
   readOnly = false,
+  canDeleteUploaded = false,
+  onDeleteUploadedPhoto,
 }: PhotoGalleryProps) {
   const canAddMore =
     !readOnly &&
-    (maxPhotos === undefined ||
-      photos.length < maxPhotos);
+    (maxPhotos === undefined || photos.length < maxPhotos);
 
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>
-            Vehicle Photos
-          </Text>
+          <Text style={styles.title}>Vehicle Photos</Text>
 
           <Text style={styles.subtitle}>
             {photos.length}
-            {maxPhotos
-              ? ` / ${maxPhotos}`
-              : ""}{" "}
-            photos
+            {maxPhotos ? ` / ${maxPhotos}` : ""} photos
           </Text>
         </View>
 
@@ -64,17 +66,9 @@ export default function PhotoGallery({
             onPress={onAddPhoto}
             activeOpacity={0.8}
           >
-            <Ionicons
-              name="add"
-              size={20}
-              color="#FFFFFF"
-            />
+            <Ionicons name="add" size={20} color="#FFFFFF" />
 
-            <Text
-              style={styles.addButtonText}
-            >
-              Add Photo
-            </Text>
+            <Text style={styles.addButtonText}>Add Photo</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -83,9 +77,7 @@ export default function PhotoGallery({
       {photos.length === 0 ? (
         readOnly ? (
           <View style={styles.emptyReadOnlyBox}>
-            <View
-              style={styles.emptyReadOnlyIcon}
-            >
+            <View style={styles.emptyReadOnlyIcon}>
               <Ionicons
                 name="images-outline"
                 size={28}
@@ -93,15 +85,11 @@ export default function PhotoGallery({
               />
             </View>
 
-            <Text
-              style={styles.emptyReadOnlyTitle}
-            >
+            <Text style={styles.emptyReadOnlyTitle}>
               No survey photos
             </Text>
 
-            <Text
-              style={styles.emptyReadOnlyText}
-            >
+            <Text style={styles.emptyReadOnlyText}>
               No photos were uploaded during the survey.
             </Text>
           </View>
@@ -111,9 +99,7 @@ export default function PhotoGallery({
             onPress={onAddPhoto}
             activeOpacity={0.8}
           >
-            <View
-              style={styles.cameraCircle}
-            >
+            <View style={styles.cameraCircle}>
               <Ionicons
                 name="camera-outline"
                 size={28}
@@ -121,15 +107,11 @@ export default function PhotoGallery({
               />
             </View>
 
-            <Text
-              style={styles.emptyTitle}
-            >
+            <Text style={styles.emptyTitle}>
               Add vehicle photos
             </Text>
 
-            <Text
-              style={styles.emptyText}
-            >
+            <Text style={styles.emptyText}>
               Take a photo or choose one from your gallery
             </Text>
           </TouchableOpacity>
@@ -137,36 +119,26 @@ export default function PhotoGallery({
       ) : (
         <View style={styles.grid}>
           {photos.map((photo) => (
-            <TouchableOpacity
-              key={photo.id}
-              style={styles.photoContainer}
-              onPress={() =>
-                onViewPhoto(photo)
-              }
-              activeOpacity={0.9}
-            >
-              <Image
-                source={{
-                  uri: photo.uri,
-                }}
-                style={styles.photo}
-              />
+            <View key={photo.id} style={styles.photoContainer}>
+              {/* Tap photo to view */}
+              <TouchableOpacity
+                style={styles.photoTouchable}
+                onPress={() => onViewPhoto(photo)}
+                activeOpacity={0.9}
+              >
+                <Image
+                  source={{ uri: photo.uri }}
+                  style={styles.photo}
+                />
+              </TouchableOpacity>
 
-              {/* Remove button */}
+              {/* Remove pending or failed draft photo */}
               {!readOnly &&
-                (photo.status ===
-                  "pending" ||
-                  photo.status ===
-                    "failed") && (
+                (photo.status === "pending" ||
+                  photo.status === "failed") && (
                   <TouchableOpacity
-                    style={
-                      styles.removeButton
-                    }
-                    onPress={() =>
-                      onRemovePhoto(
-                        photo.id
-                      )
-                    }
+                    style={styles.removeButton}
+                    onPress={() => onRemovePhoto(photo.id)}
                     hitSlop={{
                       top: 10,
                       bottom: 10,
@@ -182,45 +154,53 @@ export default function PhotoGallery({
                   </TouchableOpacity>
                 )}
 
+              {/* Delete uploaded photo — shown only when enabled */}
+              {readOnly &&
+                canDeleteUploaded &&
+                photo.status === "uploaded" &&
+                onDeleteUploadedPhoto && (
+                  <TouchableOpacity
+                    style={styles.deleteUploadedButton}
+                    onPress={() => onDeleteUploadedPhoto(photo)}
+                    hitSlop={{
+                      top: 10,
+                      bottom: 10,
+                      left: 10,
+                      right: 10,
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Delete uploaded photo"
+                  >
+                    <Ionicons
+                      name="trash-outline"
+                      size={15}
+                      color="#FFFFFF"
+                    />
+                  </TouchableOpacity>
+                )}
+
               {/* Uploading overlay */}
-              {photo.status ===
-                "uploading" && (
-                <View
-                  style={
-                    styles.uploadingOverlay
-                  }
-                >
+              {photo.status === "uploading" && (
+                <View style={styles.uploadingOverlay}>
                   <Ionicons
                     name="cloud-upload-outline"
                     size={24}
                     color="#FFFFFF"
                   />
 
-                  <Text
-                    style={
-                      styles.uploadingText
-                    }
-                  >
+                  <Text style={styles.uploadingText}>
                     Uploading
                   </Text>
 
-                  {photo.progress !==
-                    undefined && (
-                    <View
-                      style={
-                        styles.progressBackground
-                      }
-                    >
+                  {photo.progress !== undefined && (
+                    <View style={styles.progressBackground}>
                       <View
                         style={[
                           styles.progressFill,
                           {
                             width: `${Math.max(
                               0,
-                              Math.min(
-                                100,
-                                photo.progress
-                              )
+                              Math.min(100, photo.progress)
                             )}%`,
                           },
                         ]}
@@ -231,13 +211,8 @@ export default function PhotoGallery({
               )}
 
               {/* Uploaded badge */}
-              {photo.status ===
-                "uploaded" && (
-                <View
-                  style={
-                    styles.uploadedBadge
-                  }
-                >
+              {photo.status === "uploaded" && (
+                <View style={styles.uploadedBadge}>
                   <Ionicons
                     name="checkmark"
                     size={13}
@@ -247,48 +222,27 @@ export default function PhotoGallery({
               )}
 
               {/* Failed badge */}
-              {photo.status ===
-                "failed" && (
-                <View
-                  style={
-                    styles.failedOverlay
-                  }
-                >
+              {photo.status === "failed" && (
+                <View style={styles.failedOverlay}>
                   <Ionicons
                     name="alert-circle-outline"
                     size={22}
                     color="#FFFFFF"
                   />
 
-                  <Text
-                    style={
-                      styles.failedText
-                    }
-                  >
-                    Failed
-                  </Text>
+                  <Text style={styles.failedText}>Failed</Text>
                 </View>
               )}
-            </TouchableOpacity>
+            </View>
           ))}
         </View>
       )}
 
       {/* Upload information */}
       {!readOnly &&
-        photos.some(
-          (photo) =>
-            photo.status ===
-            "uploading"
-        ) && (
-          <View
-            style={styles.uploadInfo}
-          >
-            <View
-              style={
-                styles.uploadInfoIcon
-              }
-            >
+        photos.some((photo) => photo.status === "uploading") && (
+          <View style={styles.uploadInfo}>
+            <View style={styles.uploadInfoIcon}>
               <Ionicons
                 name="cloud-upload-outline"
                 size={20}
@@ -296,24 +250,12 @@ export default function PhotoGallery({
               />
             </View>
 
-            <View
-              style={
-                styles.uploadInfoContent
-              }
-            >
-              <Text
-                style={
-                  styles.uploadInfoTitle
-                }
-              >
+            <View style={styles.uploadInfoContent}>
+              <Text style={styles.uploadInfoTitle}>
                 Uploading photos...
               </Text>
 
-              <Text
-                style={
-                  styles.uploadInfoText
-                }
-              >
+              <Text style={styles.uploadInfoText}>
                 Please keep this screen open
               </Text>
             </View>
@@ -322,9 +264,7 @@ export default function PhotoGallery({
 
       {/* Tap hint */}
       {photos.length > 0 && (
-        <Text style={styles.hint}>
-          Tap a photo to view it
-        </Text>
+        <Text style={styles.hint}>Tap a photo to view it</Text>
       )}
     </View>
   );
@@ -452,6 +392,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#F3F4F6",
   },
 
+  photoTouchable: {
+    width: "100%",
+    height: "100%",
+  },
+
   photo: {
     width: "100%",
     height: "100%",
@@ -464,10 +409,22 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor:
-      "rgba(0,0,0,0.65)",
+    backgroundColor: "rgba(0,0,0,0.65)",
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  deleteUploadedButton: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 25,
+    height: 25,
+    borderRadius: 13,
+    backgroundColor: "rgba(220,38,38,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2,
   },
 
   uploadingOverlay: {
@@ -476,8 +433,7 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     bottom: 0,
-    backgroundColor:
-      "rgba(0,0,0,0.48)",
+    backgroundColor: "rgba(0,0,0,0.48)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -493,8 +449,7 @@ const styles = StyleSheet.create({
     width: "65%",
     height: 4,
     borderRadius: 2,
-    backgroundColor:
-      "rgba(255,255,255,0.35)",
+    backgroundColor: "rgba(255,255,255,0.35)",
     marginTop: 8,
     overflow: "hidden",
   },
@@ -523,8 +478,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     paddingVertical: 6,
-    backgroundColor:
-      "rgba(220,38,38,0.85)",
+    backgroundColor: "rgba(220,38,38,0.85)",
     alignItems: "center",
   },
 
