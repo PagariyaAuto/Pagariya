@@ -8,10 +8,9 @@ import {
   View,
 } from "react-native";
 
-import { SafeAreaView } from "react-native-safe-area-context";
-
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { router } from "expo-router";
+import { Redirect, router } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   colors,
@@ -73,13 +72,19 @@ export default function HomeScreen() {
       setProfile(data);
     } catch (error) {
       console.log("Load home profile error:", error);
+
+      // Prevent the Home screen from remaining in a loading state
+      // if the profile request unexpectedly fails.
+      setProfile({
+        name: null,
+        role: "user",
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const displayName =
-    profile?.name?.trim() || "User";
+  const displayName = profile?.name?.trim() || "User";
 
   const displayRole = profile?.role
     ? profile.role
@@ -91,16 +96,6 @@ export default function HomeScreen() {
 
   const getPendingSections = (): DashboardSection[] => {
     switch (role) {
-      case "watchman":
-        return [
-          {
-            icon: "log-in-outline",
-            title: "Gate Operations",
-            subtitle:
-              "Manage vehicle arrival, gate out and returns",
-          },
-        ];
-
       case "advisor":
         return [
           {
@@ -178,6 +173,7 @@ export default function HomeScreen() {
 
   const pendingSections = getPendingSections();
 
+  // Display a spinner only while the profile is being fetched.
   if (loading) {
     return (
       <SafeAreaView
@@ -198,6 +194,25 @@ export default function HomeScreen() {
     );
   }
 
+  /*
+   * ROLE-BASED DASHBOARD REDIRECTS
+   *
+   * Watchman has a completely separate dashboard.
+   * The old Home dashboard should never render Watchman-specific
+   * cards, buttons or navigation.
+   */
+  if (profile?.role === "watchman") {
+    return <Redirect href="/(tabs)/watchman" />;
+  }
+
+  // Redirect Advisors and CEO Admins without rendering the old dashboard.
+  if (
+    profile?.role === "advisor" ||
+    profile?.role === "ceo_admin"
+  ) {
+    return <Redirect href="/(tabs)/advisor" />;
+  }
+
   return (
     <SafeAreaView
       style={styles.container}
@@ -208,7 +223,6 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* HEADER */}
-
         <View style={styles.header}>
           <View style={styles.headerText}>
             <Text style={styles.greeting}>
@@ -226,9 +240,9 @@ export default function HomeScreen() {
 
           <Pressable
             style={styles.profileButton}
-            onPress={() =>
-              router.push("/(tabs)/profile")
-            }
+            onPress={() => router.push("/(tabs)/profile")}
+            accessibilityRole="button"
+            accessibilityLabel="Open profile"
           >
             <Ionicons
               name="person-outline"
@@ -239,34 +253,38 @@ export default function HomeScreen() {
         </View>
 
         {/* TODAY'S OVERVIEW */}
-
         <Text style={styles.sectionTitle}>
           Today's Overview
         </Text>
 
         <AppCard style={styles.overviewCard}>
           <OverviewItem
-            icon="log-in-outline"
-            label="Gate In"
+            icon="clipboard-outline"
+            label="Pending Survey"
+            enabled={true}
+            onPress={() => router.push("/(tabs)/work")}
           />
 
           <View style={styles.overviewDivider} />
 
           <OverviewItem
-            icon="log-out-outline"
-            label="Gate Out"
+            icon="checkmark-circle-outline"
+            label="Pending Approval"
+            enabled={true}
+            onPress={() => router.push("/(tabs)/work")}
           />
 
           <View style={styles.overviewDivider} />
 
           <OverviewItem
-            icon="return-down-back-outline"
-            label="Returned"
+            icon="car-outline"
+            label="Work"
+            enabled={true}
+            onPress={() => router.push("/(tabs)/work")}
           />
         </AppCard>
 
         {/* PENDING WORK */}
-
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>
             Pending Work
@@ -283,30 +301,22 @@ export default function HomeScreen() {
             icon={section.icon}
             title={section.title}
             subtitle={section.subtitle}
-            onPress={() =>
-              role === "watchman"
-                ? router.push("/(tabs)/gate-in")
-                : router.push("/(tabs)/work")
-            }
+            onPress={() => router.push("/(tabs)/work")}
           />
         ))}
 
         {/* QUICK ACTIONS */}
-
         <Text style={styles.sectionTitle}>
           Quick Actions
         </Text>
 
         {/* NEW JOB CARD */}
-
         <Pressable
           style={({ pressed }) => [
             styles.actionCard,
             pressed && styles.actionPressed,
           ]}
-          onPress={() =>
-            router.push("/(tabs)/vehicles")
-          }
+          onPress={() => router.push("/(tabs)/vehicles")}
         >
           <View style={styles.actionIcon}>
             <Ionicons
@@ -334,15 +344,12 @@ export default function HomeScreen() {
         </Pressable>
 
         {/* MASTER DATA */}
-
         <Pressable
           style={({ pressed }) => [
             styles.actionCard,
             pressed && styles.actionPressed,
           ]}
-          onPress={() =>
-            router.push("/(tabs)/master-data")
-          }
+          onPress={() => router.push("/(tabs)/master-data")}
         >
           <View style={styles.actionIcon}>
             <Ionicons
@@ -358,8 +365,7 @@ export default function HomeScreen() {
             </Text>
 
             <Text style={styles.actionSubtitle}>
-              Manage models, insurance, business and MI
-              types
+              Manage models, insurance, business and MI types
             </Text>
           </View>
 
@@ -377,14 +383,29 @@ export default function HomeScreen() {
 type OverviewItemProps = {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  enabled: boolean;
+  onPress: () => void;
 };
 
 function OverviewItem({
   icon,
   label,
+  enabled,
+  onPress,
 }: OverviewItemProps) {
   return (
-    <View style={styles.overviewItem}>
+    <Pressable
+      style={({ pressed }) => [
+        styles.overviewItem,
+        !enabled && styles.overviewItemDisabled,
+        pressed && enabled && styles.overviewItemPressed,
+      ]}
+      onPress={onPress}
+      disabled={!enabled}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${label}`}
+      accessibilityState={{ disabled: !enabled }}
+    >
       <View style={styles.overviewIcon}>
         <Ionicons
           name={icon}
@@ -393,14 +414,12 @@ function OverviewItem({
         />
       </View>
 
-      <Text style={styles.overviewValue}>
-        —
-      </Text>
+      <Text style={styles.overviewValue}>—</Text>
 
       <Text style={styles.overviewLabel}>
         {label}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -424,6 +443,8 @@ function PendingCard({
         pressed && styles.pendingPressed,
       ]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${subtitle}`}
     >
       <View style={styles.pendingIcon}>
         <Ionicons
@@ -540,6 +561,18 @@ const styles = StyleSheet.create({
   overviewItem: {
     flex: 1,
     alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+  },
+
+  overviewItemDisabled: {
+    opacity: 0.55,
+  },
+
+  overviewItemPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.97 }],
   },
 
   overviewIcon: {

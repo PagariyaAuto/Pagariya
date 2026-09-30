@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -6,10 +7,8 @@ import {
   View,
 } from "react-native";
 
-import { SafeAreaView } from "react-native-safe-area-context";
-
-
 import { router } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   colors,
@@ -28,13 +27,11 @@ export default function Index() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (event === "SIGNED_OUT" || !session?.user) {
-          router.replace("/login");
-        }
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session?.user) {
+        router.replace("/login");
       }
-    );
+    });
 
     return () => {
       subscription.unsubscribe();
@@ -70,7 +67,12 @@ export default function Index() {
         return;
       }
 
-      router.replace("/(tabs)");
+      // Redirect users according to their role
+      if (data.role === "advisor") {
+        router.replace("/(tabs)/advisor");
+      } else {
+        router.replace("/(tabs)");
+      }
     } catch (error) {
       console.log("Check user error:", error);
       router.replace("/login");
@@ -81,7 +83,10 @@ export default function Index() {
 
   if (checking) {
     return (
-      <SafeAreaView style={styles.container}  edges={["top", "bottom"]}>
+      <SafeAreaView
+        style={styles.container}
+        edges={["top", "bottom"]}
+      >
         <View style={styles.content}>
           {/* APP ICON */}
           <View style={styles.logoContainer}>
@@ -89,9 +94,7 @@ export default function Index() {
           </View>
 
           {/* APP NAME */}
-          <Text style={styles.appName}>
-            Pagariya
-          </Text>
+          <Text style={styles.appName}>Pagariya</Text>
 
           <Text style={styles.tagline}>
             Workshop Management

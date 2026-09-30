@@ -1,0 +1,195 @@
+
+import { StyleSheet, Text, View } from "react-native";
+import { colors, spacing, typography } from "../../../../theme";
+
+export type VehicleDetails = {
+  id?: string;
+  vehicle_no?: string | null;
+  current_stage?: string | null;
+  current_assigned_to?: string | null;
+  customer_name?: string | null;
+  customer_mobile?: string | null;
+  model?: string | null;
+  arena_nexa?: string | null;
+  vehicle_type?: string | null;
+};
+
+type VehicleDetailsCardProps = {
+  vehicle: VehicleDetails | null;
+};
+
+function displayValue(value?: string | null) {
+  return value?.trim() || "—";
+}
+
+function DetailItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.detailItem}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+    </View>
+  );
+}
+
+export default function VehicleDetailsCard({
+  vehicle,
+}: VehicleDetailsCardProps) {
+  const vehicleNumber = displayValue(vehicle?.vehicle_no);
+  const vehicleMake = displayValue(vehicle?.arena_nexa);
+  const vehicleModel = displayValue(vehicle?.model);
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.header}>
+        <View style={styles.iconBadge}>
+          <Text style={styles.iconText}>🚘</Text>
+        </View>
+
+        <View style={styles.headerText}>
+          <Text style={styles.title}>Vehicle Details</Text>
+          <Text style={styles.subtitle}>
+            Vehicle information for this survey
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.registrationBox}>
+        <Text style={styles.registrationLabel}>VEHICLE REGISTRATION</Text>
+        <Text style={styles.registrationNumber}>{vehicleNumber}</Text>
+        <Text style={styles.registrationHint}>
+          {vehicleMake !== "—" && vehicleModel !== "—"
+            ? `${vehicleMake} · ${vehicleModel}`
+            : vehicleMake !== "—"
+              ? vehicleMake
+              : vehicleModel !== "—"
+                ? vehicleModel
+                : "Make and model not available"}
+        </Text>
+      </View>
+
+      <View style={styles.detailsGrid}>
+        <DetailItem label="Vehicle type" value={displayValue(vehicle?.vehicle_type)} />
+        <DetailItem label="Make / brand" value={vehicleMake} />
+        <DetailItem label="Model" value={vehicleModel} />
+        <DetailItem
+          label="Current stage"
+          value={displayValue(vehicle?.current_stage)}
+        />
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: 22,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    shadowColor: "#172033",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 3,
+  },
+
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: spacing.md,
+  },
+
+  iconBadge: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.background,
+    marginRight: spacing.md,
+  },
+
+  iconText: {
+    fontSize: 23,
+  },
+
+  headerText: {
+    flex: 1,
+  },
+
+  title: {
+    ...typography.heading,
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+
+  subtitle: {
+    ...typography.caption,
+    color: colors.textLight,
+    marginTop: 3,
+  },
+
+  registrationBox: {
+    backgroundColor: colors.primary,
+    borderRadius: 18,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+  },
+
+  registrationLabel: {
+    color: "#FFE5E7",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.4,
+    marginBottom: 7,
+  },
+
+  registrationNumber: {
+    color: "#FFFFFF",
+    fontSize: 25,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+
+  registrationHint: {
+    color: "#FFFFFF",
+    opacity: 0.88,
+    fontSize: 13,
+    fontWeight: "500",
+    marginTop: 5,
+  },
+
+  detailsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginHorizontal: -6,
+  },
+
+  detailItem: {
+    width: "50%",
+    paddingHorizontal: 6,
+    paddingVertical: spacing.sm,
+  },
+
+  detailLabel: {
+    ...typography.caption,
+    color: colors.textLight,
+    marginBottom: 5,
+  },
+
+  detailValue: {
+    ...typography.bodyMedium,
+    color: colors.text,
+    fontWeight: "700",
+  },
+});

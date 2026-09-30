@@ -55,7 +55,7 @@ export default function WorkScreen() {
           return;
 
         case "advisor":
-          setMessage("Your Advisor work screen will be added separately.");
+          router.replace("/(tabs)/advisor");
           return;
 
         case "supervisor":

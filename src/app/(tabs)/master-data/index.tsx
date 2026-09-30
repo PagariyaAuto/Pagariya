@@ -28,119 +28,155 @@ export default function MasterData() {
   return (
     <SafeAreaView
       style={styles.container}
-      edges={["top", "bottom"]}
+      edges={["top", "left", "right", "bottom"]}
     >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* HEADER */}
+      <View style={styles.screen}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* HEADER */}
 
-        <View style={styles.header}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.backButton,
-              pressed && styles.pressed,
-            ]}
-            onPress={() => router.back()}
-          >
-            <Ionicons
-              name="arrow-back-outline"
-              size={22}
-              color={colors.text}
-            />
-          </Pressable>
+          <View style={styles.header}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.backButton,
+                pressed && styles.pressed,
+              ]}
+              onPress={() => router.back()}
+            >
+              <Ionicons
+                name="arrow-back-outline"
+                size={22}
+                color={colors.text}
+              />
+            </Pressable>
 
-          <View style={styles.headerText}>
-            <Text style={styles.title}>
+            <View style={styles.headerText}>
+              <Text style={styles.title}>Master Data</Text>
+
+              <Text style={styles.subtitle}>
+                Manage data used throughout Pagariya
+              </Text>
+            </View>
+          </View>
+
+          {/* INFO */}
+
+          <View style={styles.infoCard}>
+            <View style={styles.infoIconContainer}>
+              <Ionicons
+                name="settings-outline"
+                size={22}
+                color={colors.primary}
+              />
+            </View>
+
+            <View style={styles.infoContent}>
+              <Text style={styles.infoTitle}>
+                Master Data Management
+              </Text>
+
+              <Text style={styles.infoText}>
+                Add and manage common information used when
+                creating job cards and handling workshop operations.
+              </Text>
+            </View>
+          </View>
+
+          {/* SECTION */}
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>
               Master Data
             </Text>
 
-            <Text style={styles.subtitle}>
-              Manage data used throughout Pagariya
+            <Text style={styles.sectionSubtitle}>
+              Select what you want to manage
             </Text>
           </View>
-        </View>
 
-        {/* INFO */}
+          {/* VEHICLE MODELS */}
 
-        <View style={styles.infoCard}>
-          <View style={styles.infoIconContainer}>
-            <Ionicons
-              name="settings-outline"
-              size={22}
-              color={colors.primary}
-            />
-          </View>
+          <MasterCard
+            icon="car-outline"
+            title="Vehicle Models"
+            subtitle="Manage vehicle models and Arena / Nexa"
+            onPress={() =>
+              router.push(
+                "/(tabs)/master-data/vehicle-models"
+              )
+            }
+          />
 
-          <View style={styles.infoContent}>
-            <Text style={styles.infoTitle}>
-              Master Data Management
-            </Text>
+          {/* INSURANCE COMPANIES */}
 
-            <Text style={styles.infoText}>
-              Add and manage common information used when
-              creating job cards and handling workshop operations.
-            </Text>
-          </View>
-        </View>
+          <MasterCard
+            icon="business-outline"
+            title="Insurance Companies"
+            subtitle="Manage insurance companies"
+            onPress={() =>
+              router.push(
+                "/(tabs)/master-data/insurance-companies"
+              )
+            }
+          />
 
-        {/* SECTION */}
+          {/* BUSINESS / CLAIM TYPES */}
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            Master Data
-          </Text>
+          <MasterCard
+            icon="document-text-outline"
+            title="Business / Claim Types"
+            subtitle="Manage CNT, PNPL and other types"
+            onPress={() =>
+              router.push(
+                "/(tabs)/master-data/business-types"
+              )
+            }
+          />
 
-          <Text style={styles.sectionSubtitle}>
-            Select what you want to manage
-          </Text>
-        </View>
+          {/* MI / NON-MI */}
 
-        {/* VEHICLE MODELS */}
+          <MasterCard
+            icon="construct-outline"
+            title="MI / NON-MI"
+            subtitle="Manage MI classification"
+            onPress={() =>
+              router.push(
+                "/(tabs)/master-data/mi-types"
+              )
+            }
+          />
 
-        <MasterCard
-          icon="car-outline"
-          title="Vehicle Models"
-          subtitle="Manage vehicle models and Arena / Nexa"
-          onPress={() =>
-            router.push("/(tabs)/master-data/vehicle-models")
-          }
-        />
+          {/* USERS */}
 
-        {/* INSURANCE COMPANIES */}
+          <MasterCard
+            icon="people-outline"
+            title="Users"
+            subtitle="Manage users and their system roles"
+            onPress={() =>
+              router.push(
+                "/(tabs)/master-data/users"
+              )
+            }
+          />
 
-        <MasterCard
-          icon="business-outline"
-          title="Insurance Companies"
-          subtitle="Manage insurance companies"
-          onPress={() =>
-            router.push("/(tabs)/master-data/insurance-companies")
-          }
-        />
+          {/* DOCUMENT MASTER */}
 
-        {/* BUSINESS / CLAIM TYPES */}
-
-        <MasterCard
-          icon="document-text-outline"
-          title="Business / Claim Types"
-          subtitle="Manage CNT, PNPL and other types"
-          onPress={() =>
-            router.push("/(tabs)/master-data/business-types")
-          }
-        />
-
-        {/* MI / NON-MI */}
-
-        <MasterCard
-          icon="construct-outline"
-          title="MI / NON-MI"
-          subtitle="Manage MI classification"
-          onPress={() =>
-            router.push("/(tabs)/master-data/mi-types")
-          }
-        />
-      </ScrollView>
+          <MasterCard
+            icon="documents-outline"
+            title="Document Master"
+            subtitle="Manage document requirements by workflow stage"
+            onPress={() =>
+              router.push(
+                "/(tabs)/master-data/document-master"
+              )
+            }
+          />
+        </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -204,6 +240,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+
+  screen: {
+    flex: 1,
+  },
+
+  scrollView: {
+    flex: 1,
   },
 
   scrollContent: {

@@ -1,6 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { supabase } from "../../../../lib/supabase";
 import {
   colors,
   radius,
@@ -20,20 +21,28 @@ import {
   typography,
 } from "../../../theme";
 
-import { supabase } from "../../../../lib/supabase";
-
 type VehicleModel = {
   id: string;
   name: string;
   arena_nexa: string;
   is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
+
+type FilterType =
+  | "All"
+  | "Arena"
+  | "Nexa"
+  | "Inactive";
 
 export default function VehicleModels() {
   const [models, setModels] = useState<VehicleModel[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState("");
+  const [activeFilter, setActiveFilter] =
+    useState<FilterType>("All");
 
   const [modalVisible, setModalVisible] = useState(false);
 
@@ -44,6 +53,15 @@ export default function VehicleModels() {
   const [arenaNexa, setArenaNexa] = useState("");
 
   const [saving, setSaving] = useState(false);
+
+  const [confirmModalVisible, setConfirmModalVisible] =
+    useState(false);
+
+  const [modelToDeactivate, setModelToDeactivate] =
+    useState<VehicleModel | null>(null);
+
+  const [changingStatus, setChangingStatus] =
+    useState(false);
 
   const [messageModalVisible, setMessageModalVisible] =
     useState(false);
@@ -65,11 +83,16 @@ export default function VehicleModels() {
 
       const { data, error } = await supabase
         .from("vehicle_models")
-        .select("*")
+        .select(
+          "id, name, arena_nexa, is_active, created_at, updated_at"
+        )
         .order("name", { ascending: true });
 
       if (error) {
-        console.log("Vehicle models error:", error.message);
+        console.log(
+          "Vehicle models error:",
+          error.message
+        );
 
         showMessage(
           "Error",
@@ -86,7 +109,7 @@ export default function VehicleModels() {
   };
 
   /* --------------------------------------------------
-     MESSAGE
+     MESSAGE POPUP
   -------------------------------------------------- */
 
   const showMessage = (
@@ -113,7 +136,9 @@ export default function VehicleModels() {
      OPEN EDIT MODAL
   -------------------------------------------------- */
 
-  const openEditModal = (model: VehicleModel) => {
+  const openEditModal = (
+    model: VehicleModel
+  ) => {
     setEditingModel(model);
     setModelName(model.name);
     setArenaNexa(model.arena_nexa);
@@ -121,10 +146,32 @@ export default function VehicleModels() {
   };
 
   /* --------------------------------------------------
+     CLOSE ADD / EDIT MODAL
+  -------------------------------------------------- */
+
+  const closeModal = () => {
+    if (saving) {
+      return;
+    }
+
+    setModalVisible(false);
+    setEditingModel(null);
+    setModelName("");
+    setArenaNexa("");
+  };
+
+  /* --------------------------------------------------
      SAVE MODEL
+     
+     UNIQUE COMBINATION:
+     name + arena_nexa
   -------------------------------------------------- */
 
   const saveModel = async () => {
+    if (saving) {
+      return;
+    }
+
     const trimmedName = modelName.trim();
 
     if (!trimmedName) {
@@ -136,10 +183,61 @@ export default function VehicleModels() {
       return;
     }
 
+    if (trimmedName.length > 100) {
+      showMessage(
+        "Invalid Name",
+        "Vehicle model name cannot exceed 100 characters."
+      );
+
+      return;
+    }
+
     if (!arenaNexa) {
       showMessage(
         "Required",
         "Please select Arena or Nexa."
+      );
+
+      return;
+    }
+
+    if (
+      arenaNexa !== "Arena" &&
+      arenaNexa !== "Nexa"
+    ) {
+      showMessage(
+        "Invalid Type",
+        "Please select either Arena or Nexa."
+      );
+
+      return;
+    }
+
+    /*
+     * IMPORTANT:
+     * Same model name is allowed in Arena and Nexa.
+     *
+     * Example:
+     * Baleno + Arena = allowed
+     * Baleno + Nexa  = allowed
+     *
+     * But:
+     * Baleno + Nexa + again = duplicate
+     */
+
+    const duplicateModel = models.find(
+      (model) =>
+        model.name.trim().toLowerCase() ===
+          trimmedName.toLowerCase() &&
+        model.arena_nexa.toLowerCase() ===
+          arenaNexa.toLowerCase() &&
+        model.id !== editingModel?.id
+    );
+
+    if (duplicateModel) {
+      showMessage(
+        "Already Exists",
+        `${trimmedName} is already available under ${arenaNexa}. Please use a different model name or select the other Arena/Nexa type.`
       );
 
       return;
@@ -163,10 +261,14 @@ export default function VehicleModels() {
             error.message
           );
 
+          /*
+           * PostgreSQL unique constraint:
+           * name + arena_nexa
+           */
           if (error.code === "23505") {
             showMessage(
               "Already Exists",
-              "A vehicle model with this name already exists."
+              `${trimmedName} is already available under ${arenaNexa}.`
             );
           } else {
             showMessage(
@@ -179,6 +281,9 @@ export default function VehicleModels() {
         }
 
         setModalVisible(false);
+        setEditingModel(null);
+        setModelName("");
+        setArenaNexa("");
 
         await loadModels();
 
@@ -192,6 +297,7 @@ export default function VehicleModels() {
           .insert({
             name: trimmedName,
             arena_nexa: arenaNexa,
+            is_active: true,
           });
 
         if (error) {
@@ -200,10 +306,14 @@ export default function VehicleModels() {
             error.message
           );
 
+          /*
+           * PostgreSQL unique constraint:
+           * name + arena_nexa
+           */
           if (error.code === "23505") {
             showMessage(
               "Already Exists",
-              "A vehicle model with this name already exists."
+              `${trimmedName} is already available under ${arenaNexa}.`
             );
           } else {
             showMessage(
@@ -216,12 +326,15 @@ export default function VehicleModels() {
         }
 
         setModalVisible(false);
+        setEditingModel(null);
+        setModelName("");
+        setArenaNexa("");
 
         await loadModels();
 
         showMessage(
           "Added",
-          "Vehicle model added successfully."
+          `${trimmedName} has been added under ${arenaNexa}.`
         );
       }
     } finally {
@@ -230,47 +343,190 @@ export default function VehicleModels() {
   };
 
   /* --------------------------------------------------
-     TOGGLE ACTIVE
+     OPEN DEACTIVATE CONFIRMATION
   -------------------------------------------------- */
 
-  const toggleActive = async (
+  const openDeactivateConfirmation = (
     model: VehicleModel
   ) => {
-    const newStatus = !model.is_active;
-
-    const { error } = await supabase
-      .from("vehicle_models")
-      .update({
-        is_active: newStatus,
-      })
-      .eq("id", model.id);
-
-    if (error) {
-      console.log(
-        "Toggle active error:",
-        error.message
-      );
-
-      showMessage(
-        "Error",
-        "Unable to change the model status."
-      );
-
-      return;
-    }
-
-    await loadModels();
+    setModelToDeactivate(model);
+    setConfirmModalVisible(true);
   };
 
   /* --------------------------------------------------
-     SEARCH
+     CLOSE CONFIRMATION
   -------------------------------------------------- */
 
-  const filteredModels = models.filter((model) =>
-    model.name
-      .toLowerCase()
-      .includes(search.trim().toLowerCase())
-  );
+  const closeConfirmModal = () => {
+    if (changingStatus) {
+      return;
+    }
+
+    setConfirmModalVisible(false);
+    setModelToDeactivate(null);
+  };
+
+  /* --------------------------------------------------
+     CONFIRM DEACTIVATE
+  -------------------------------------------------- */
+
+  const confirmDeactivate = async () => {
+    if (!modelToDeactivate || changingStatus) {
+      return;
+    }
+
+    setChangingStatus(true);
+
+    try {
+      const { error } = await supabase
+        .from("vehicle_models")
+        .update({
+          is_active: false,
+        })
+        .eq("id", modelToDeactivate.id);
+
+      if (error) {
+        console.log(
+          "Deactivate model error:",
+          error.message
+        );
+
+        showMessage(
+          "Error",
+          "Unable to deactivate the vehicle model."
+        );
+
+        return;
+      }
+
+      const modelName = modelToDeactivate.name;
+      const modelType =
+        modelToDeactivate.arena_nexa;
+
+      setConfirmModalVisible(false);
+      setModelToDeactivate(null);
+
+      await loadModels();
+
+      showMessage(
+        "Model Deactivated",
+        `${modelName} (${modelType}) is now inactive and will not be available for new vehicle entries. Historical records are not affected.`
+      );
+    } finally {
+      setChangingStatus(false);
+    }
+  };
+
+  /* --------------------------------------------------
+     ACTIVATE MODEL
+  -------------------------------------------------- */
+
+  const activateModel = async (
+    model: VehicleModel
+  ) => {
+    if (changingStatus) {
+      return;
+    }
+
+    setChangingStatus(true);
+
+    try {
+      const { error } = await supabase
+        .from("vehicle_models")
+        .update({
+          is_active: true,
+        })
+        .eq("id", model.id);
+
+      if (error) {
+        console.log(
+          "Activate model error:",
+          error.message
+        );
+
+        showMessage(
+          "Error",
+          "Unable to activate the vehicle model."
+        );
+
+        return;
+      }
+
+      await loadModels();
+
+      showMessage(
+        "Model Activated",
+        `${model.name} (${model.arena_nexa}) is now active and can be selected for new vehicle entries.`
+      );
+    } finally {
+      setChangingStatus(false);
+    }
+  };
+
+  /* --------------------------------------------------
+     FILTERED MODELS
+  -------------------------------------------------- */
+
+  const filteredModels = useMemo(() => {
+    const normalizedSearch = search
+      .trim()
+      .toLowerCase();
+
+    return models.filter((model) => {
+      const matchesSearch =
+        !normalizedSearch ||
+        model.name
+          .toLowerCase()
+          .includes(normalizedSearch) ||
+        model.arena_nexa
+          .toLowerCase()
+          .includes(normalizedSearch) ||
+        (model.is_active
+          ? "active"
+          : "inactive"
+        ).includes(normalizedSearch);
+
+      let matchesFilter = true;
+
+      if (activeFilter === "Arena") {
+        matchesFilter =
+          model.arena_nexa === "Arena";
+      }
+
+      if (activeFilter === "Nexa") {
+        matchesFilter =
+          model.arena_nexa === "Nexa";
+      }
+
+      if (activeFilter === "Inactive") {
+        matchesFilter = !model.is_active;
+      }
+
+      return matchesSearch && matchesFilter;
+    });
+  }, [models, search, activeFilter]);
+
+  /* --------------------------------------------------
+     SUMMARY COUNTS
+  -------------------------------------------------- */
+
+  const totalCount = models.length;
+
+  const activeCount = models.filter(
+    (model) => model.is_active
+  ).length;
+
+  const inactiveCount = models.filter(
+    (model) => !model.is_active
+  ).length;
+
+  const arenaCount = models.filter(
+    (model) => model.arena_nexa === "Arena"
+  ).length;
+
+  const nexaCount = models.filter(
+    (model) => model.arena_nexa === "Nexa"
+  ).length;
 
   /* --------------------------------------------------
      LOADING
@@ -331,6 +587,79 @@ export default function VehicleModels() {
           </View>
         </View>
 
+        {/* SUMMARY */}
+
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCard}>
+            <View
+              style={[
+                styles.summaryIcon,
+                styles.summaryTotalIcon,
+              ]}
+            >
+              <Ionicons
+                name="car-outline"
+                size={18}
+                color={colors.primary}
+              />
+            </View>
+
+            <Text style={styles.summaryValue}>
+              {totalCount}
+            </Text>
+
+            <Text style={styles.summaryLabel}>
+              Total
+            </Text>
+          </View>
+
+          <View style={styles.summaryCard}>
+            <View
+              style={[
+                styles.summaryIcon,
+                styles.summaryActiveIcon,
+              ]}
+            >
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={18}
+                color={colors.success}
+              />
+            </View>
+
+            <Text style={styles.summaryValue}>
+              {activeCount}
+            </Text>
+
+            <Text style={styles.summaryLabel}>
+              Active
+            </Text>
+          </View>
+
+          <View style={styles.summaryCard}>
+            <View
+              style={[
+                styles.summaryIcon,
+                styles.summaryInactiveIcon,
+              ]}
+            >
+              <Ionicons
+                name="close-circle-outline"
+                size={18}
+                color={colors.textSecondary}
+              />
+            </View>
+
+            <Text style={styles.summaryValue}>
+              {inactiveCount}
+            </Text>
+
+            <Text style={styles.summaryLabel}>
+              Inactive
+            </Text>
+          </View>
+        </View>
+
         {/* SEARCH */}
 
         <View style={styles.searchContainer}>
@@ -345,8 +674,10 @@ export default function VehicleModels() {
             style={styles.searchInput}
             value={search}
             onChangeText={setSearch}
-            placeholder="Search vehicle model..."
+            placeholder="Search model, Arena, Nexa..."
             placeholderTextColor={colors.textLight}
+            autoCapitalize="none"
+            autoCorrect={false}
           />
 
           {search.length > 0 && (
@@ -362,6 +693,96 @@ export default function VehicleModels() {
             </Pressable>
           )}
         </View>
+
+        {/* FILTER CHIPS */}
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+        >
+          <Pressable
+            style={[
+              styles.filterChip,
+              activeFilter === "All" &&
+                styles.filterChipSelected,
+            ]}
+            onPress={() => setActiveFilter("All")}
+          >
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "All" &&
+                  styles.filterTextSelected,
+              ]}
+            >
+              All {totalCount}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.filterChip,
+              activeFilter === "Arena" &&
+                styles.filterChipSelected,
+            ]}
+            onPress={() =>
+              setActiveFilter("Arena")
+            }
+          >
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "Arena" &&
+                  styles.filterTextSelected,
+              ]}
+            >
+              Arena {arenaCount}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.filterChip,
+              activeFilter === "Nexa" &&
+                styles.filterChipSelected,
+            ]}
+            onPress={() =>
+              setActiveFilter("Nexa")
+            }
+          >
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "Nexa" &&
+                  styles.filterTextSelected,
+              ]}
+            >
+              Nexa {nexaCount}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.filterChip,
+              activeFilter === "Inactive" &&
+                styles.filterChipSelectedInactive,
+            ]}
+            onPress={() =>
+              setActiveFilter("Inactive")
+            }
+          >
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "Inactive" &&
+                  styles.filterTextSelectedInactive,
+              ]}
+            >
+              Inactive {inactiveCount}
+            </Text>
+          </Pressable>
+        </ScrollView>
 
         {/* ADD BUTTON */}
 
@@ -394,10 +815,9 @@ export default function VehicleModels() {
             </Text>
 
             <Text style={styles.listSubtitle}>
-              {filteredModels.length} model
-              {filteredModels.length !== 1
-                ? "s"
-                : ""}
+              Showing {filteredModels.length} of{" "}
+              {models.length} model
+              {models.length !== 1 ? "s" : ""}
             </Text>
           </View>
         </View>
@@ -419,10 +839,32 @@ export default function VehicleModels() {
             </Text>
 
             <Text style={styles.emptyText}>
-              {search.trim()
-                ? "Try a different search."
+              {search.trim() ||
+              activeFilter !== "All"
+                ? "Try changing your search or filter."
                 : "Add your first vehicle model using the button above."}
             </Text>
+
+            {(search.trim() ||
+              activeFilter !== "All") && (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.clearFilterButton,
+                  pressed &&
+                    styles.buttonPressed,
+                ]}
+                onPress={() => {
+                  setSearch("");
+                  setActiveFilter("All");
+                }}
+              >
+                <Text
+                  style={styles.clearFilterText}
+                >
+                  Clear Filters
+                </Text>
+              </Pressable>
+            )}
           </View>
         ) : (
           filteredModels.map((model) => (
@@ -512,7 +954,8 @@ export default function VehicleModels() {
                 <Pressable
                   style={({ pressed }) => [
                     styles.editButton,
-                    pressed && styles.buttonPressed,
+                    pressed &&
+                      styles.buttonPressed,
                   ]}
                   onPress={() =>
                     openEditModal(model)
@@ -529,67 +972,81 @@ export default function VehicleModels() {
                   </Text>
                 </Pressable>
 
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.statusButton,
-                    model.is_active
-                      ? styles.deactivateButton
-                      : styles.activateButton,
-                    pressed && styles.buttonPressed,
-                  ]}
-                  onPress={() =>
-                    toggleActive(model)
-                  }
-                >
-                  <Ionicons
-                    name={
-                      model.is_active
-                        ? "power-outline"
-                        : "checkmark-outline"
-                    }
-                    size={17}
-                    color={
-                      model.is_active
-                        ? colors.danger
-                        : colors.success
-                    }
-                  />
-
-                  <Text
-                    style={[
-                      styles.statusButtonText,
-                      model.is_active
-                        ? styles.deactivateText
-                        : styles.activateText,
+                {model.is_active ? (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.statusButton,
+                      styles.deactivateButton,
+                      pressed &&
+                        styles.buttonPressed,
                     ]}
+                    onPress={() =>
+                      openDeactivateConfirmation(
+                        model
+                      )
+                    }
+                    disabled={changingStatus}
                   >
-                    {model.is_active
-                      ? "Deactivate"
-                      : "Activate"}
-                  </Text>
-                </Pressable>
+                    <Ionicons
+                      name="power-outline"
+                      size={17}
+                      color={colors.danger}
+                    />
+
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        styles.deactivateText,
+                      ]}
+                    >
+                      Deactivate
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.statusButton,
+                      styles.activateButton,
+                      pressed &&
+                        styles.buttonPressed,
+                    ]}
+                    onPress={() =>
+                      activateModel(model)
+                    }
+                    disabled={changingStatus}
+                  >
+                    <Ionicons
+                      name="checkmark-outline"
+                      size={17}
+                      color={colors.success}
+                    />
+
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        styles.activateText,
+                      ]}
+                    >
+                      Activate
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             </View>
           ))
         )}
       </ScrollView>
 
-      {/* --------------------------------------------------
-         ADD / EDIT MODAL
-      -------------------------------------------------- */}
+      {/* ADD / EDIT MODAL */}
 
       <Modal
         visible={modalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() =>
-          !saving && setModalVisible(false)
-        }
+        onRequestClose={closeModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            {/* MODAL HEADER */}
-
             <View style={styles.modalHeader}>
               <View style={styles.modalIconContainer}>
                 <Ionicons
@@ -615,10 +1072,7 @@ export default function VehicleModels() {
 
               <Pressable
                 style={styles.modalCloseButton}
-                onPress={() =>
-                  !saving &&
-                  setModalVisible(false)
-                }
+                onPress={closeModal}
                 disabled={saving}
               >
                 <Ionicons
@@ -628,8 +1082,6 @@ export default function VehicleModels() {
                 />
               </Pressable>
             </View>
-
-            {/* MODEL NAME */}
 
             <Text style={styles.fieldLabel}>
               Vehicle Model *
@@ -642,9 +1094,14 @@ export default function VehicleModels() {
               placeholder="Enter vehicle model"
               placeholderTextColor={colors.textLight}
               autoCapitalize="words"
+              autoCorrect={false}
+              maxLength={100}
+              editable={!saving}
             />
 
-            {/* ARENA / NEXA */}
+            <Text style={styles.characterCount}>
+              {modelName.length}/100
+            </Text>
 
             <Text style={styles.fieldLabel}>
               Arena / Nexa *
@@ -658,8 +1115,9 @@ export default function VehicleModels() {
                     styles.optionSelected,
                 ]}
                 onPress={() =>
-                  setArenaNexa("Arena")
+                  !saving && setArenaNexa("Arena")
                 }
+                disabled={saving}
               >
                 <Ionicons
                   name="business-outline"
@@ -689,8 +1147,9 @@ export default function VehicleModels() {
                     styles.optionSelected,
                 ]}
                 onPress={() =>
-                  setArenaNexa("Nexa")
+                  !saving && setArenaNexa("Nexa")
                 }
+                disabled={saving}
               >
                 <Ionicons
                   name="business-outline"
@@ -714,17 +1173,13 @@ export default function VehicleModels() {
               </Pressable>
             </View>
 
-            {/* MODAL ACTIONS */}
-
             <View style={styles.modalActions}>
               <Pressable
                 style={({ pressed }) => [
                   styles.cancelButton,
                   pressed && styles.buttonPressed,
                 ]}
-                onPress={() =>
-                  setModalVisible(false)
-                }
+                onPress={closeModal}
                 disabled={saving}
               >
                 <Text style={styles.cancelText}>
@@ -736,15 +1191,23 @@ export default function VehicleModels() {
                 style={({ pressed }) => [
                   styles.saveButton,
                   pressed && styles.buttonPressed,
+                  saving &&
+                    styles.saveButtonDisabled,
                 ]}
                 onPress={saveModel}
                 disabled={saving}
               >
                 {saving ? (
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.white}
-                  />
+                  <>
+                    <ActivityIndicator
+                      size="small"
+                      color={colors.white}
+                    />
+
+                    <Text style={styles.saveText}>
+                      Saving...
+                    </Text>
+                  </>
                 ) : (
                   <>
                     <Ionicons
@@ -770,9 +1233,116 @@ export default function VehicleModels() {
         </View>
       </Modal>
 
-      {/* --------------------------------------------------
-         MESSAGE MODAL
-      -------------------------------------------------- */}
+      {/* DEACTIVATE CONFIRMATION */}
+
+      <Modal
+        visible={confirmModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeConfirmModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmCard}>
+            <View style={styles.confirmIconContainer}>
+              <Ionicons
+                name="power-outline"
+                size={28}
+                color={colors.danger}
+              />
+            </View>
+
+            <Text style={styles.confirmTitle}>
+              Deactivate Vehicle Model?
+            </Text>
+
+            {modelToDeactivate && (
+              <View style={styles.modelPreview}>
+                <Ionicons
+                  name="car-outline"
+                  size={20}
+                  color={colors.primary}
+                />
+
+                <View style={styles.modelPreviewText}>
+                  <Text style={styles.modelPreviewName}>
+                    {modelToDeactivate.name}
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.modelPreviewCategory
+                    }
+                  >
+                    {modelToDeactivate.arena_nexa}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            <Text style={styles.confirmText}>
+              This model will no longer be available
+              when creating new vehicle entries.
+            </Text>
+
+            <Text style={styles.confirmNote}>
+              Historical records will not be affected.
+            </Text>
+
+            <View style={styles.confirmActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.confirmCancelButton,
+                  pressed &&
+                    styles.buttonPressed,
+                ]}
+                onPress={closeConfirmModal}
+                disabled={changingStatus}
+              >
+                <Text style={styles.confirmCancelText}>
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.confirmDeactivateButton,
+                  pressed &&
+                    styles.buttonPressed,
+                  changingStatus &&
+                    styles.saveButtonDisabled,
+                ]}
+                onPress={confirmDeactivate}
+                disabled={changingStatus}
+              >
+                {changingStatus ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.white}
+                  />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="power-outline"
+                      size={18}
+                      color={colors.white}
+                    />
+
+                    <Text
+                      style={
+                        styles.confirmDeactivateText
+                      }
+                    >
+                      Deactivate
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MESSAGE MODAL */}
 
       <Modal
         visible={messageModalVisible}
@@ -820,13 +1390,7 @@ export default function VehicleModels() {
   );
 }
 
-/* --------------------------------------------------
-   STYLES
--------------------------------------------------- */
-
 const styles = StyleSheet.create({
-  /* LOADING */
-
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -840,8 +1404,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
 
-  /* CONTAINER */
-
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -853,12 +1415,10 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
   },
 
-  /* HEADER */
-
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
   },
 
   backButton: {
@@ -892,7 +1452,55 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
 
-  /* SEARCH */
+  summaryRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+
+  summaryCard: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    alignItems: "center",
+  },
+
+  summaryIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.round,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+
+  summaryTotalIcon: {
+    backgroundColor: colors.primaryLight,
+  },
+
+  summaryActiveIcon: {
+    backgroundColor: colors.successLight,
+  },
+
+  summaryInactiveIcon: {
+    backgroundColor: colors.border,
+  },
+
+  summaryValue: {
+    ...typography.subheading,
+    color: colors.text,
+    fontSize: 19,
+  },
+
+  summaryLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
 
   searchContainer: {
     height: 50,
@@ -900,7 +1508,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
   },
@@ -921,7 +1529,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
 
-  /* ADD BUTTON */
+  filterRow: {
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingRight: spacing.md,
+    marginBottom: spacing.md,
+  },
+
+  filterChip: {
+    height: 36,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.round,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  filterChipSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+
+  filterChipSelectedInactive: {
+    backgroundColor: colors.textSecondary,
+    borderColor: colors.textSecondary,
+  },
+
+  filterText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textSecondary,
+  },
+
+  filterTextSelected: {
+    color: colors.white,
+  },
+
+  filterTextSelectedInactive: {
+    color: colors.white,
+  },
 
   addButton: {
     minHeight: 54,
@@ -953,8 +1601,6 @@ const styles = StyleSheet.create({
     opacity: 0.75,
   },
 
-  /* LIST HEADER */
-
   listHeader: {
     marginBottom: spacing.md,
   },
@@ -969,8 +1615,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
-
-  /* MODEL CARD */
 
   modelCard: {
     backgroundColor: colors.surface,
@@ -1030,8 +1674,6 @@ const styles = StyleSheet.create({
     marginLeft: 5,
   },
 
-  /* STATUS */
-
   statusBadge: {
     borderRadius: radius.round,
     paddingHorizontal: spacing.sm,
@@ -1067,8 +1709,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.divider,
     marginVertical: spacing.md,
   },
-
-  /* ACTIONS */
 
   actions: {
     flexDirection: "row",
@@ -1124,8 +1764,6 @@ const styles = StyleSheet.create({
     color: colors.success,
   },
 
-  /* EMPTY */
-
   emptyCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -1159,7 +1797,21 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 
-  /* MODAL */
+  clearFilterButton: {
+    height: 40,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.primaryLight,
+    borderRadius: radius.md,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: spacing.lg,
+  },
+
+  clearFilterText: {
+    ...typography.caption,
+    fontWeight: "600",
+    color: colors.primary,
+  },
 
   modalOverlay: {
     flex: 1,
@@ -1233,11 +1885,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     fontSize: 14,
     color: colors.text,
-    marginBottom: spacing.lg,
     backgroundColor: colors.background,
   },
 
-  /* OPTIONS */
+  characterCount: {
+    ...typography.caption,
+    color: colors.textLight,
+    textAlign: "right",
+    marginBottom: spacing.lg,
+  },
 
   optionRow: {
     flexDirection: "row",
@@ -1272,8 +1928,6 @@ const styles = StyleSheet.create({
     color: colors.white,
   },
 
-  /* MODAL ACTIONS */
-
   modalActions: {
     flexDirection: "row",
     gap: spacing.sm,
@@ -1304,13 +1958,122 @@ const styles = StyleSheet.create({
     flexDirection: "row",
   },
 
+  saveButtonDisabled: {
+    opacity: 0.7,
+  },
+
   saveText: {
     ...typography.button,
     color: colors.white,
     marginLeft: 5,
   },
 
-  /* MESSAGE MODAL */
+  confirmCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    alignItems: "center",
+  },
+
+  confirmIconContainer: {
+    width: 58,
+    height: 58,
+    borderRadius: radius.lg,
+    backgroundColor: colors.dangerLight,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: spacing.md,
+  },
+
+  confirmTitle: {
+    ...typography.subheading,
+    fontSize: 19,
+    color: colors.text,
+    textAlign: "center",
+    marginBottom: spacing.lg,
+  },
+
+  modelPreview: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+
+  modelPreviewText: {
+    marginLeft: spacing.sm,
+    flex: 1,
+  },
+
+  modelPreviewName: {
+    ...typography.bodyMedium,
+    color: colors.text,
+  },
+
+  modelPreviewCategory: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+
+  confirmText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    textAlign: "center",
+    lineHeight: 21,
+  },
+
+  confirmNote: {
+    ...typography.caption,
+    color: colors.textLight,
+    textAlign: "center",
+    marginTop: spacing.sm,
+    marginBottom: spacing.xl,
+  },
+
+  confirmActions: {
+    width: "100%",
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+
+  confirmCancelButton: {
+    flex: 1,
+    height: 48,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  confirmCancelText: {
+    ...typography.button,
+    color: colors.text,
+  },
+
+  confirmDeactivateButton: {
+    flex: 1,
+    height: 48,
+    borderRadius: radius.md,
+    backgroundColor: colors.danger,
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: "row",
+  },
+
+  confirmDeactivateText: {
+    ...typography.button,
+    color: colors.white,
+    marginLeft: 5,
+  },
 
   messageCard: {
     width: "100%",

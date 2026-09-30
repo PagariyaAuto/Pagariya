@@ -1,6 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -11,9 +11,9 @@ import {
   TextInput,
   View,
 } from "react-native";
-
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { supabase } from "../../../../lib/supabase";
 import {
   colors,
   radius,
@@ -21,35 +21,50 @@ import {
   typography,
 } from "../../../theme";
 
-import { supabase } from "../../../../lib/supabase";
-
 type InsuranceCompany = {
   id: string;
   name: string;
   is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
 
+type FilterType = "All" | "Active" | "Inactive";
+
+type PopupType = "success" | "error" | "warning" | "info";
+
 export default function InsuranceCompanies() {
-  const [companies, setCompanies] = useState<
-    InsuranceCompany[]
-  >([]);
-
+  const [companies, setCompanies] = useState<InsuranceCompany[]>([]);
   const [loading, setLoading] = useState(true);
+
   const [search, setSearch] = useState("");
+  const [activeFilter, setActiveFilter] =
+    useState<FilterType>("All");
 
-  const [modalVisible, setModalVisible] =
-    useState(false);
-
+  const [modalVisible, setModalVisible] = useState(false);
   const [editingCompany, setEditingCompany] =
     useState<InsuranceCompany | null>(null);
 
-  const [companyName, setCompanyName] =
-    useState("");
-
+  const [companyName, setCompanyName] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const [messageModalVisible, setMessageModalVisible] =
+  const [
+    confirmModalVisible,
+    setConfirmModalVisible,
+  ] = useState(false);
+
+  const [
+    companyToDeactivate,
+    setCompanyToDeactivate,
+  ] = useState<InsuranceCompany | null>(null);
+
+  const [changingStatus, setChangingStatus] =
     useState(false);
+
+  const [
+    messageModalVisible,
+    setMessageModalVisible,
+  ] = useState(false);
 
   const [messageTitle, setMessageTitle] =
     useState("");
@@ -57,9 +72,79 @@ export default function InsuranceCompanies() {
   const [messageText, setMessageText] =
     useState("");
 
+  const [messageType, setMessageType] =
+    useState<PopupType>("info");
+
   useEffect(() => {
     loadCompanies();
   }, []);
+
+  /* --------------------------------------------------
+     POPUP
+  -------------------------------------------------- */
+
+  const showMessage = (
+    title: string,
+    text: string,
+    type: PopupType = "info"
+  ) => {
+    setMessageTitle(title);
+    setMessageText(text);
+    setMessageType(type);
+    setMessageModalVisible(true);
+  };
+
+  const closeMessageModal = () => {
+    setMessageModalVisible(false);
+  };
+
+  const getPopupIcon = () => {
+    switch (messageType) {
+      case "success":
+        return "checkmark-circle-outline";
+
+      case "error":
+        return "alert-circle-outline";
+
+      case "warning":
+        return "warning-outline";
+
+      default:
+        return "information-circle-outline";
+    }
+  };
+
+  const getPopupColor = () => {
+    switch (messageType) {
+      case "success":
+        return colors.success;
+
+      case "error":
+        return colors.danger;
+
+      case "warning":
+        return colors.danger;
+
+      default:
+        return colors.primary;
+    }
+  };
+
+  const getPopupBackground = () => {
+    switch (messageType) {
+      case "success":
+        return colors.successLight;
+
+      case "error":
+        return colors.dangerLight;
+
+      case "warning":
+        return colors.dangerLight;
+
+      default:
+        return colors.primaryLight;
+    }
+  };
 
   /* --------------------------------------------------
      LOAD COMPANIES
@@ -71,8 +156,12 @@ export default function InsuranceCompanies() {
 
       const { data, error } = await supabase
         .from("insurance_companies")
-        .select("*")
-        .order("name", { ascending: true });
+        .select(
+          "id, name, is_active, created_at, updated_at"
+        )
+        .order("name", {
+          ascending: true,
+        });
 
       if (error) {
         console.log(
@@ -82,7 +171,8 @@ export default function InsuranceCompanies() {
 
         showMessage(
           "Error",
-          "Unable to load insurance companies."
+          "Unable to load insurance companies.",
+          "error"
         );
 
         return;
@@ -92,19 +182,6 @@ export default function InsuranceCompanies() {
     } finally {
       setLoading(false);
     }
-  };
-
-  /* --------------------------------------------------
-     MESSAGE
-  -------------------------------------------------- */
-
-  const showMessage = (
-    title: string,
-    text: string
-  ) => {
-    setMessageTitle(title);
-    setMessageText(text);
-    setMessageModalVisible(true);
   };
 
   /* --------------------------------------------------
@@ -130,16 +207,62 @@ export default function InsuranceCompanies() {
   };
 
   /* --------------------------------------------------
+     CLOSE ADD / EDIT MODAL
+  -------------------------------------------------- */
+
+  const closeModal = () => {
+    if (saving) {
+      return;
+    }
+
+    setModalVisible(false);
+    setEditingCompany(null);
+    setCompanyName("");
+  };
+
+  /* --------------------------------------------------
      SAVE COMPANY
   -------------------------------------------------- */
 
   const saveCompany = async () => {
+    if (saving) {
+      return;
+    }
+
     const trimmedName = companyName.trim();
 
     if (!trimmedName) {
       showMessage(
         "Required",
-        "Please enter the insurance company name."
+        "Please enter the insurance company name.",
+        "warning"
+      );
+
+      return;
+    }
+
+    if (trimmedName.length > 100) {
+      showMessage(
+        "Invalid Name",
+        "Insurance company name cannot exceed 100 characters.",
+        "warning"
+      );
+
+      return;
+    }
+
+    const duplicateCompany = companies.find(
+      (company) =>
+        company.name.trim().toLowerCase() ===
+          trimmedName.toLowerCase() &&
+        company.id !== editingCompany?.id
+    );
+
+    if (duplicateCompany) {
+      showMessage(
+        "Already Exists",
+        "An insurance company with this name already exists.",
+        "warning"
       );
 
       return;
@@ -165,12 +288,14 @@ export default function InsuranceCompanies() {
           if (error.code === "23505") {
             showMessage(
               "Already Exists",
-              "An insurance company with this name already exists."
+              "An insurance company with this name already exists.",
+              "warning"
             );
           } else {
             showMessage(
               "Error",
-              "Unable to update the insurance company."
+              "Unable to update the insurance company.",
+              "error"
             );
           }
 
@@ -178,18 +303,22 @@ export default function InsuranceCompanies() {
         }
 
         setModalVisible(false);
+        setEditingCompany(null);
+        setCompanyName("");
 
         await loadCompanies();
 
         showMessage(
           "Updated",
-          "Insurance company updated successfully."
+          "Insurance company updated successfully.",
+          "success"
         );
       } else {
         const { error } = await supabase
           .from("insurance_companies")
           .insert({
             name: trimmedName,
+            is_active: true,
           });
 
         if (error) {
@@ -201,12 +330,14 @@ export default function InsuranceCompanies() {
           if (error.code === "23505") {
             showMessage(
               "Already Exists",
-              "An insurance company with this name already exists."
+              "An insurance company with this name already exists.",
+              "warning"
             );
           } else {
             showMessage(
               "Error",
-              "Unable to add the insurance company."
+              "Unable to add the insurance company.",
+              "error"
             );
           }
 
@@ -214,12 +345,15 @@ export default function InsuranceCompanies() {
         }
 
         setModalVisible(false);
+        setEditingCompany(null);
+        setCompanyName("");
 
         await loadCompanies();
 
         showMessage(
           "Added",
-          "Insurance company added successfully."
+          "Insurance company added successfully.",
+          "success"
         );
       }
     } finally {
@@ -228,48 +362,178 @@ export default function InsuranceCompanies() {
   };
 
   /* --------------------------------------------------
-     TOGGLE ACTIVE
+     OPEN DEACTIVATE CONFIRMATION
   -------------------------------------------------- */
 
-  const toggleActive = async (
+  const openDeactivateConfirmation = (
     company: InsuranceCompany
   ) => {
-    const newStatus = !company.is_active;
-
-    const { error } = await supabase
-      .from("insurance_companies")
-      .update({
-        is_active: newStatus,
-      })
-      .eq("id", company.id);
-
-    if (error) {
-      console.log(
-        "Toggle insurance company error:",
-        error.message
-      );
-
-      showMessage(
-        "Error",
-        "Unable to change the company status."
-      );
-
-      return;
-    }
-
-    await loadCompanies();
+    setCompanyToDeactivate(company);
+    setConfirmModalVisible(true);
   };
 
   /* --------------------------------------------------
-     SEARCH
+     CLOSE CONFIRMATION
   -------------------------------------------------- */
 
-  const filteredCompanies =
-    companies.filter((company) =>
-      company.name
-        .toLowerCase()
-        .includes(search.trim().toLowerCase())
-    );
+  const closeConfirmModal = () => {
+    if (changingStatus) {
+      return;
+    }
+
+    setConfirmModalVisible(false);
+    setCompanyToDeactivate(null);
+  };
+
+  /* --------------------------------------------------
+     CONFIRM DEACTIVATE
+  -------------------------------------------------- */
+
+  const confirmDeactivate = async () => {
+    if (
+      !companyToDeactivate ||
+      changingStatus
+    ) {
+      return;
+    }
+
+    setChangingStatus(true);
+
+    try {
+      const { error } = await supabase
+        .from("insurance_companies")
+        .update({
+          is_active: false,
+        })
+        .eq("id", companyToDeactivate.id);
+
+      if (error) {
+        console.log(
+          "Deactivate insurance company error:",
+          error.message
+        );
+
+        showMessage(
+          "Error",
+          "Unable to deactivate the insurance company.",
+          "error"
+        );
+
+        return;
+      }
+
+      const name = companyToDeactivate.name;
+
+      setConfirmModalVisible(false);
+      setCompanyToDeactivate(null);
+
+      await loadCompanies();
+
+      showMessage(
+        "Company Deactivated",
+        `${name} is now inactive and will not be available for new job cards. Historical records are not affected.`,
+        "success"
+      );
+    } finally {
+      setChangingStatus(false);
+    }
+  };
+
+  /* --------------------------------------------------
+     ACTIVATE COMPANY
+  -------------------------------------------------- */
+
+  const activateCompany = async (
+    company: InsuranceCompany
+  ) => {
+    if (changingStatus) {
+      return;
+    }
+
+    setChangingStatus(true);
+
+    try {
+      const { error } = await supabase
+        .from("insurance_companies")
+        .update({
+          is_active: true,
+        })
+        .eq("id", company.id);
+
+      if (error) {
+        console.log(
+          "Activate insurance company error:",
+          error.message
+        );
+
+        showMessage(
+          "Error",
+          "Unable to activate the insurance company.",
+          "error"
+        );
+
+        return;
+      }
+
+      await loadCompanies();
+
+      showMessage(
+        "Company Activated",
+        `${company.name} is now active and can be selected for new job cards.`,
+        "success"
+      );
+    } finally {
+      setChangingStatus(false);
+    }
+  };
+
+  /* --------------------------------------------------
+     FILTERED COMPANIES
+  -------------------------------------------------- */
+
+  const filteredCompanies = useMemo(() => {
+    const normalizedSearch = search
+      .trim()
+      .toLowerCase();
+
+    return companies.filter((company) => {
+      const matchesSearch =
+        !normalizedSearch ||
+        company.name
+          .toLowerCase()
+          .includes(normalizedSearch) ||
+        (company.is_active
+          ? "active"
+          : "inactive"
+        ).includes(normalizedSearch);
+
+      let matchesFilter = true;
+
+      if (activeFilter === "Active") {
+        matchesFilter = company.is_active;
+      }
+
+      if (activeFilter === "Inactive") {
+        matchesFilter = !company.is_active;
+      }
+
+      return matchesSearch && matchesFilter;
+    });
+  }, [companies, search, activeFilter]);
+
+  /* --------------------------------------------------
+     SUMMARY COUNTS
+  -------------------------------------------------- */
+
+  const totalCount = companies.length;
+
+  const activeCount = companies.filter(
+    (company) => company.is_active
+  ).length;
+
+  const inactiveCount = companies.filter(
+    (company) => !company.is_active
+  ).length;
 
   /* --------------------------------------------------
      LOADING
@@ -278,19 +542,17 @@ export default function InsuranceCompanies() {
   if (loading) {
     return (
       <SafeAreaView
-        style={styles.container}
+        style={styles.loadingContainer}
         edges={["top", "bottom"]}
       >
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator
-            size="large"
-            color={colors.primary}
-          />
+        <ActivityIndicator
+          size="large"
+          color={colors.primary}
+        />
 
-          <Text style={styles.loadingText}>
-            Loading insurance companies...
-          </Text>
-        </View>
+        <Text style={styles.loadingText}>
+          Loading insurance companies...
+        </Text>
       </SafeAreaView>
     );
   }
@@ -332,6 +594,79 @@ export default function InsuranceCompanies() {
           </View>
         </View>
 
+        {/* SUMMARY */}
+
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCard}>
+            <View
+              style={[
+                styles.summaryIcon,
+                styles.summaryTotalIcon,
+              ]}
+            >
+              <Ionicons
+                name="shield-checkmark-outline"
+                size={18}
+                color={colors.primary}
+              />
+            </View>
+
+            <Text style={styles.summaryValue}>
+              {totalCount}
+            </Text>
+
+            <Text style={styles.summaryLabel}>
+              Total
+            </Text>
+          </View>
+
+          <View style={styles.summaryCard}>
+            <View
+              style={[
+                styles.summaryIcon,
+                styles.summaryActiveIcon,
+              ]}
+            >
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={18}
+                color={colors.success}
+              />
+            </View>
+
+            <Text style={styles.summaryValue}>
+              {activeCount}
+            </Text>
+
+            <Text style={styles.summaryLabel}>
+              Active
+            </Text>
+          </View>
+
+          <View style={styles.summaryCard}>
+            <View
+              style={[
+                styles.summaryIcon,
+                styles.summaryInactiveIcon,
+              ]}
+            >
+              <Ionicons
+                name="close-circle-outline"
+                size={18}
+                color={colors.textSecondary}
+              />
+            </View>
+
+            <Text style={styles.summaryValue}>
+              {inactiveCount}
+            </Text>
+
+            <Text style={styles.summaryLabel}>
+              Inactive
+            </Text>
+          </View>
+        </View>
+
         {/* SEARCH */}
 
         <View style={styles.searchContainer}>
@@ -348,6 +683,8 @@ export default function InsuranceCompanies() {
             onChangeText={setSearch}
             placeholder="Search insurance company..."
             placeholderTextColor={colors.textLight}
+            autoCapitalize="none"
+            autoCorrect={false}
           />
 
           {search.length > 0 && (
@@ -363,6 +700,75 @@ export default function InsuranceCompanies() {
             </Pressable>
           )}
         </View>
+
+        {/* FILTER CHIPS */}
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+        >
+          <Pressable
+            style={[
+              styles.filterChip,
+              activeFilter === "All" &&
+                styles.filterChipSelected,
+            ]}
+            onPress={() => setActiveFilter("All")}
+          >
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "All" &&
+                  styles.filterTextSelected,
+              ]}
+            >
+              All {totalCount}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.filterChip,
+              activeFilter === "Active" &&
+                styles.filterChipSelected,
+            ]}
+            onPress={() =>
+              setActiveFilter("Active")
+            }
+          >
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "Active" &&
+                  styles.filterTextSelected,
+              ]}
+            >
+              Active {activeCount}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.filterChip,
+              activeFilter === "Inactive" &&
+                styles.filterChipSelectedInactive,
+            ]}
+            onPress={() =>
+              setActiveFilter("Inactive")
+            }
+          >
+            <Text
+              style={[
+                styles.filterText,
+                activeFilter === "Inactive" &&
+                  styles.filterTextSelectedInactive,
+              ]}
+            >
+              Inactive {inactiveCount}
+            </Text>
+          </Pressable>
+        </ScrollView>
 
         {/* ADD BUTTON */}
 
@@ -395,8 +801,9 @@ export default function InsuranceCompanies() {
             </Text>
 
             <Text style={styles.listSubtitle}>
-              {filteredCompanies.length} compan
-              {filteredCompanies.length !== 1
+              Showing {filteredCompanies.length} of{" "}
+              {companies.length} compan
+              {companies.length !== 1
                 ? "ies"
                 : "y"}
             </Text>
@@ -420,10 +827,32 @@ export default function InsuranceCompanies() {
             </Text>
 
             <Text style={styles.emptyText}>
-              {search.trim()
-                ? "Try a different search."
+              {search.trim() ||
+              activeFilter !== "All"
+                ? "Try changing your search or filter."
                 : "Add your first insurance company using the button above."}
             </Text>
+
+            {(search.trim() ||
+              activeFilter !== "All") && (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.clearFilterButton,
+                  pressed &&
+                    styles.buttonPressed,
+                ]}
+                onPress={() => {
+                  setSearch("");
+                  setActiveFilter("All");
+                }}
+              >
+                <Text
+                  style={styles.clearFilterText}
+                >
+                  Clear Filters
+                </Text>
+              </Pressable>
+            )}
           </View>
         ) : (
           filteredCompanies.map((company) => (
@@ -435,8 +864,6 @@ export default function InsuranceCompanies() {
                   styles.inactiveCard,
               ]}
             >
-              {/* COMPANY INFO */}
-
               <View style={styles.companyTop}>
                 <View style={styles.companyInfoRow}>
                   <View
@@ -467,8 +894,6 @@ export default function InsuranceCompanies() {
                     </View>
                   </View>
                 </View>
-
-                {/* STATUS */}
 
                 <View
                   style={[
@@ -509,8 +934,6 @@ export default function InsuranceCompanies() {
 
               <View style={styles.cardDivider} />
 
-              {/* ACTIONS */}
-
               <View style={styles.actions}>
                 <Pressable
                   style={({ pressed }) => [
@@ -532,45 +955,63 @@ export default function InsuranceCompanies() {
                   </Text>
                 </Pressable>
 
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.statusButton,
-                    company.is_active
-                      ? styles.deactivateButton
-                      : styles.activateButton,
-                    pressed && styles.buttonPressed,
-                  ]}
-                  onPress={() =>
-                    toggleActive(company)
-                  }
-                >
-                  <Ionicons
-                    name={
-                      company.is_active
-                        ? "power-outline"
-                        : "checkmark-outline"
-                    }
-                    size={17}
-                    color={
-                      company.is_active
-                        ? colors.danger
-                        : colors.success
-                    }
-                  />
-
-                  <Text
-                    style={[
-                      styles.statusButtonText,
-                      company.is_active
-                        ? styles.deactivateText
-                        : styles.activateText,
+                {company.is_active ? (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.statusButton,
+                      styles.deactivateButton,
+                      pressed && styles.buttonPressed,
                     ]}
+                    onPress={() =>
+                      openDeactivateConfirmation(
+                        company
+                      )
+                    }
+                    disabled={changingStatus}
                   >
-                    {company.is_active
-                      ? "Deactivate"
-                      : "Activate"}
-                  </Text>
-                </Pressable>
+                    <Ionicons
+                      name="power-outline"
+                      size={17}
+                      color={colors.danger}
+                    />
+
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        styles.deactivateText,
+                      ]}
+                    >
+                      Deactivate
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.statusButton,
+                      styles.activateButton,
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={() =>
+                      activateCompany(company)
+                    }
+                    disabled={changingStatus}
+                  >
+                    <Ionicons
+                      name="checkmark-outline"
+                      size={17}
+                      color={colors.success}
+                    />
+
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        styles.activateText,
+                      ]}
+                    >
+                      Activate
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             </View>
           ))
@@ -583,14 +1024,10 @@ export default function InsuranceCompanies() {
         visible={modalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() =>
-          !saving && setModalVisible(false)
-        }
+        onRequestClose={closeModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            {/* MODAL HEADER */}
-
             <View style={styles.modalHeader}>
               <View style={styles.modalIconContainer}>
                 <Ionicons
@@ -616,10 +1053,7 @@ export default function InsuranceCompanies() {
 
               <Pressable
                 style={styles.modalCloseButton}
-                onPress={() =>
-                  !saving &&
-                  setModalVisible(false)
-                }
+                onPress={closeModal}
                 disabled={saving}
               >
                 <Ionicons
@@ -629,8 +1063,6 @@ export default function InsuranceCompanies() {
                 />
               </Pressable>
             </View>
-
-            {/* COMPANY NAME */}
 
             <Text style={styles.fieldLabel}>
               Insurance Company *
@@ -643,9 +1075,14 @@ export default function InsuranceCompanies() {
               placeholder="Enter insurance company"
               placeholderTextColor={colors.textLight}
               autoCapitalize="words"
+              autoCorrect={false}
+              maxLength={100}
+              editable={!saving}
             />
 
-            {/* MODAL ACTIONS */}
+            <Text style={styles.characterCount}>
+              {companyName.length}/100
+            </Text>
 
             <View style={styles.modalActions}>
               <Pressable
@@ -653,9 +1090,7 @@ export default function InsuranceCompanies() {
                   styles.cancelButton,
                   pressed && styles.buttonPressed,
                 ]}
-                onPress={() =>
-                  setModalVisible(false)
-                }
+                onPress={closeModal}
                 disabled={saving}
               >
                 <Text style={styles.cancelText}>
@@ -667,15 +1102,23 @@ export default function InsuranceCompanies() {
                 style={({ pressed }) => [
                   styles.saveButton,
                   pressed && styles.buttonPressed,
+                  saving &&
+                    styles.saveButtonDisabled,
                 ]}
                 onPress={saveCompany}
                 disabled={saving}
               >
                 {saving ? (
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.white}
-                  />
+                  <>
+                    <ActivityIndicator
+                      size="small"
+                      color={colors.white}
+                    />
+
+                    <Text style={styles.saveText}>
+                      Saving...
+                    </Text>
+                  </>
                 ) : (
                   <>
                     <Ionicons
@@ -701,23 +1144,140 @@ export default function InsuranceCompanies() {
         </View>
       </Modal>
 
-      {/* MESSAGE MODAL */}
+      {/* DEACTIVATE CONFIRMATION */}
+
+      <Modal
+        visible={confirmModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeConfirmModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmCard}>
+            <View style={styles.confirmIconContainer}>
+              <Ionicons
+                name="power-outline"
+                size={28}
+                color={colors.danger}
+              />
+            </View>
+
+            <Text style={styles.confirmTitle}>
+              Deactivate Insurance Company?
+            </Text>
+
+            {companyToDeactivate && (
+              <View style={styles.companyPreview}>
+                <Ionicons
+                  name="shield-checkmark-outline"
+                  size={21}
+                  color={colors.primary}
+                />
+
+                <View style={styles.companyPreviewText}>
+                  <Text
+                    style={styles.companyPreviewName}
+                  >
+                    {companyToDeactivate.name}
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.companyPreviewCategory
+                    }
+                  >
+                    Insurance Company
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            <Text style={styles.confirmText}>
+              This company will no longer be available
+              when creating new job cards.
+            </Text>
+
+            <Text style={styles.confirmNote}>
+              Historical records will not be affected.
+            </Text>
+
+            <View style={styles.confirmActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.confirmCancelButton,
+                  pressed &&
+                    styles.buttonPressed,
+                ]}
+                onPress={closeConfirmModal}
+                disabled={changingStatus}
+              >
+                <Text style={styles.confirmCancelText}>
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.confirmDeactivateButton,
+                  pressed &&
+                    styles.buttonPressed,
+                  changingStatus &&
+                    styles.saveButtonDisabled,
+                ]}
+                onPress={confirmDeactivate}
+                disabled={changingStatus}
+              >
+                {changingStatus ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.white}
+                  />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="power-outline"
+                      size={18}
+                      color={colors.white}
+                    />
+
+                    <Text
+                      style={
+                        styles.confirmDeactivateText
+                      }
+                    >
+                      Deactivate
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* POPUP MESSAGE */}
 
       <Modal
         visible={messageModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() =>
-          setMessageModalVisible(false)
-        }
+        onRequestClose={closeMessageModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.messageCard}>
-            <View style={styles.messageIconContainer}>
+            <View
+              style={[
+                styles.messageIconContainer,
+                {
+                  backgroundColor:
+                    getPopupBackground(),
+                },
+              ]}
+            >
               <Ionicons
-                name="information-circle-outline"
-                size={28}
-                color={colors.primary}
+                name={getPopupIcon()}
+                size={29}
+                color={getPopupColor()}
               />
             </View>
 
@@ -732,11 +1292,12 @@ export default function InsuranceCompanies() {
             <Pressable
               style={({ pressed }) => [
                 styles.messageButton,
+                {
+                  backgroundColor: getPopupColor(),
+                },
                 pressed && styles.buttonPressed,
               ]}
-              onPress={() =>
-                setMessageModalVisible(false)
-              }
+              onPress={closeMessageModal}
             >
               <Text style={styles.messageButtonText}>
                 OK
@@ -754,8 +1315,6 @@ export default function InsuranceCompanies() {
 -------------------------------------------------- */
 
 const styles = StyleSheet.create({
-  /* LOADING */
-
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -769,8 +1328,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
 
-  /* CONTAINER */
-
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -782,12 +1339,10 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
   },
 
-  /* HEADER */
-
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
   },
 
   backButton: {
@@ -813,7 +1368,6 @@ const styles = StyleSheet.create({
   title: {
     ...typography.title,
     color: colors.text,
-    fontSize: 22,
   },
 
   subtitle: {
@@ -822,7 +1376,55 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
 
-  /* SEARCH */
+  summaryRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+
+  summaryCard: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    alignItems: "center",
+  },
+
+  summaryIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.round,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+
+  summaryTotalIcon: {
+    backgroundColor: colors.primaryLight,
+  },
+
+  summaryActiveIcon: {
+    backgroundColor: colors.successLight,
+  },
+
+  summaryInactiveIcon: {
+    backgroundColor: colors.border,
+  },
+
+  summaryValue: {
+    ...typography.subheading,
+    color: colors.text,
+    fontSize: 19,
+  },
+
+  summaryLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
 
   searchContainer: {
     height: 50,
@@ -830,7 +1432,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
   },
@@ -851,7 +1453,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
 
-  /* ADD BUTTON */
+  filterRow: {
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingRight: spacing.md,
+    marginBottom: spacing.md,
+  },
+
+  filterChip: {
+    height: 36,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.round,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  filterChipSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+
+  filterChipSelectedInactive: {
+    backgroundColor: colors.textSecondary,
+    borderColor: colors.textSecondary,
+  },
+
+  filterText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textSecondary,
+  },
+
+  filterTextSelected: {
+    color: colors.white,
+  },
+
+  filterTextSelectedInactive: {
+    color: colors.white,
+  },
 
   addButton: {
     minHeight: 54,
@@ -859,9 +1501,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     justifyContent: "center",
     alignItems: "center",
+    marginBottom: spacing.xl,
     flexDirection: "row",
     paddingHorizontal: spacing.lg,
-    marginBottom: spacing.xl,
   },
 
   addIcon: {
@@ -883,8 +1525,6 @@ const styles = StyleSheet.create({
     opacity: 0.75,
   },
 
-  /* LIST HEADER */
-
   listHeader: {
     marginBottom: spacing.md,
   },
@@ -899,8 +1539,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
-
-  /* COMPANY CARD */
 
   companyCard: {
     backgroundColor: colors.surface,
@@ -944,8 +1582,8 @@ const styles = StyleSheet.create({
 
   companyName: {
     ...typography.bodyMedium,
-    fontSize: 16,
     color: colors.text,
+    fontSize: 16,
   },
 
   typeRow: {
@@ -959,8 +1597,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginLeft: 5,
   },
-
-  /* STATUS */
 
   statusBadge: {
     borderRadius: radius.round,
@@ -997,8 +1633,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.divider,
     marginVertical: spacing.md,
   },
-
-  /* ACTIONS */
 
   actions: {
     flexDirection: "row",
@@ -1054,8 +1688,6 @@ const styles = StyleSheet.create({
     color: colors.success,
   },
 
-  /* EMPTY */
-
   emptyCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -1089,7 +1721,21 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 
-  /* MODAL */
+  clearFilterButton: {
+    height: 40,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.primaryLight,
+    borderRadius: radius.md,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: spacing.lg,
+  },
+
+  clearFilterText: {
+    ...typography.caption,
+    fontWeight: "600",
+    color: colors.primary,
+  },
 
   modalOverlay: {
     flex: 1,
@@ -1163,11 +1809,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     fontSize: 14,
     color: colors.text,
-    marginBottom: spacing.xl,
     backgroundColor: colors.background,
   },
 
-  /* MODAL ACTIONS */
+  characterCount: {
+    ...typography.caption,
+    color: colors.textLight,
+    textAlign: "right",
+    marginBottom: spacing.lg,
+  },
 
   modalActions: {
     flexDirection: "row",
@@ -1199,13 +1849,122 @@ const styles = StyleSheet.create({
     flexDirection: "row",
   },
 
+  saveButtonDisabled: {
+    opacity: 0.7,
+  },
+
   saveText: {
     ...typography.button,
     color: colors.white,
     marginLeft: 5,
   },
 
-  /* MESSAGE MODAL */
+  confirmCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    alignItems: "center",
+  },
+
+  confirmIconContainer: {
+    width: 58,
+    height: 58,
+    borderRadius: radius.lg,
+    backgroundColor: colors.dangerLight,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: spacing.md,
+  },
+
+  confirmTitle: {
+    ...typography.subheading,
+    fontSize: 19,
+    color: colors.text,
+    textAlign: "center",
+    marginBottom: spacing.lg,
+  },
+
+  companyPreview: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+
+  companyPreviewText: {
+    flex: 1,
+    marginLeft: spacing.sm,
+  },
+
+  companyPreviewName: {
+    ...typography.bodyMedium,
+    color: colors.text,
+  },
+
+  companyPreviewCategory: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+
+  confirmText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    textAlign: "center",
+    lineHeight: 21,
+  },
+
+  confirmNote: {
+    ...typography.caption,
+    color: colors.textLight,
+    textAlign: "center",
+    marginTop: spacing.sm,
+    marginBottom: spacing.xl,
+  },
+
+  confirmActions: {
+    width: "100%",
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+
+  confirmCancelButton: {
+    flex: 1,
+    height: 48,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  confirmCancelText: {
+    ...typography.button,
+    color: colors.text,
+  },
+
+  confirmDeactivateButton: {
+    flex: 1,
+    height: 48,
+    borderRadius: radius.md,
+    backgroundColor: colors.danger,
+    justifyContent: "center",
+    alignItems: "center",
+    flexDirection: "row",
+  },
+
+  confirmDeactivateText: {
+    ...typography.button,
+    color: colors.white,
+    marginLeft: 5,
+  },
 
   messageCard: {
     width: "100%",
@@ -1220,7 +1979,6 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: radius.lg,
-    backgroundColor: colors.primaryLight,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: spacing.md,
@@ -1245,7 +2003,6 @@ const styles = StyleSheet.create({
   messageButton: {
     width: "100%",
     height: 46,
-    backgroundColor: colors.primary,
     borderRadius: radius.md,
     justifyContent: "center",
     alignItems: "center",
