@@ -5,15 +5,16 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Modal, Platform, Pressable,
-  SafeAreaView,
+  Modal,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
-
+import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../../lib/supabase";
 import { colors, radius, spacing, typography } from "../../../theme";
 
@@ -108,9 +109,15 @@ function formatClaimDateTime(date: Date): string {
   const meridiem = hour >= 12 ? "PM" : "AM";
 
   hour = hour % 12;
-  if (hour === 0) hour = 12;
 
-  return `${day}/${month}/${year} ${String(hour).padStart(2, "0")}:${minute} ${meridiem}`;
+  if (hour === 0) {
+    hour = 12;
+  }
+
+  return `${day}/${month}/${year} ${String(hour).padStart(
+    2,
+    "0"
+  )}:${minute} ${meridiem}`;
 }
 
 function getCurrentClaimDateTime(): Date {
@@ -135,7 +142,13 @@ function parseClaimDateTime(value: string): string | null {
   const minute = Number(match[5]);
   const meridiem = match[6]?.toUpperCase() || null;
 
-  if (month < 1 || month > 12 || day < 1 || minute > 59) {
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    minute < 0 ||
+    minute > 59
+  ) {
     return null;
   }
 
@@ -154,17 +167,19 @@ function parseClaimDateTime(value: string): string | null {
   }
 
   // Claim Date & Time is entered in India Standard Time (IST, UTC+05:30).
-  const utcMillis = Date.UTC(
+  const utcMillis =
+    Date.UTC(year, month - 1, day, hour, minute) -
+    330 * 60 * 1000;
+
+  const date = new Date(utcMillis);
+
+  const calendarCheck = new Date(
     year,
     month - 1,
     day,
     hour,
     minute
-  ) - 330 * 60 * 1000;
-
-  const date = new Date(utcMillis);
-
-  const calendarCheck = new Date(year, month - 1, day, hour, minute);
+  );
 
   if (
     calendarCheck.getFullYear() !== year ||
@@ -189,6 +204,7 @@ function getWaitingTime(value: string | null) {
   }
 
   const diff = Math.max(0, Date.now() - start);
+
   const totalMinutes = Math.floor(
     diff / (1000 * 60)
   );
@@ -255,12 +271,8 @@ export default function ClaimIntimationFormScreen() {
   const [miType, setMiType] =
     useState<MiTypeRow | null>(null);
 
-  const [estimateId, setEstimateId] =
-    useState("");
-
-  const [claimNo, setClaimNo] =
-    useState("");
-
+  const [estimateId, setEstimateId] = useState("");
+  const [claimNo, setClaimNo] = useState("");
   const [claimIntimatedAt, setClaimIntimatedAt] =
     useState("");
 
@@ -273,8 +285,7 @@ export default function ClaimIntimationFormScreen() {
   const [showClaimTimePicker, setShowClaimTimePicker] =
     useState(false);
 
-  const [remarks, setRemarks] =
-    useState("");
+  const [remarks, setRemarks] = useState("");
 
   const [popup, setPopup] = useState<PopupState>({
     visible: false,
@@ -305,12 +316,16 @@ export default function ClaimIntimationFormScreen() {
 
   useEffect(() => {
     const now = getCurrentClaimDateTime();
+
     setClaimDateValue(now);
     setClaimIntimatedAt(formatClaimDateTime(now));
   }, []);
 
   const openClaimDatePicker = () => {
-    if (saving || Platform.OS === "web") return;
+    if (saving || Platform.OS === "web") {
+      return;
+    }
+
     setShowClaimDatePicker(true);
   };
 
@@ -325,10 +340,15 @@ export default function ClaimIntimationFormScreen() {
     }
 
     setClaimDateValue(selectedDate);
-    setClaimIntimatedAt(formatClaimDateTime(selectedDate));
+    setClaimIntimatedAt(
+      formatClaimDateTime(selectedDate)
+    );
 
     if (Platform.OS === "android") {
-      setTimeout(() => setShowClaimTimePicker(true), 150);
+      setTimeout(
+        () => setShowClaimTimePicker(true),
+        150
+      );
     }
   };
 
@@ -343,6 +363,7 @@ export default function ClaimIntimationFormScreen() {
     }
 
     const combined = new Date(claimDateValue);
+
     combined.setHours(
       selectedTime.getHours(),
       selectedTime.getMinutes(),
@@ -351,7 +372,9 @@ export default function ClaimIntimationFormScreen() {
     );
 
     setClaimDateValue(combined);
-    setClaimIntimatedAt(formatClaimDateTime(combined));
+    setClaimIntimatedAt(
+      formatClaimDateTime(combined)
+    );
   };
 
   const loadData = useCallback(async () => {
@@ -374,13 +397,15 @@ export default function ClaimIntimationFormScreen() {
       throw new Error("You are not logged in.");
     }
 
-    const { data: profileData, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("id, name, role")
-        .eq("id", user.id)
-        .eq("is_active", true)
-        .maybeSingle();
+    const {
+      data: profileData,
+      error: profileError,
+    } = await supabase
+      .from("profiles")
+      .select("id, name, role")
+      .eq("id", user.id)
+      .eq("is_active", true)
+      .maybeSingle();
 
     if (profileError) {
       throw profileError;
@@ -652,7 +677,9 @@ export default function ClaimIntimationFormScreen() {
     }
 
     const parsedClaimIntimatedAt =
-      parseClaimDateTime(cleanClaimIntimatedAt);
+      parseClaimDateTime(
+        cleanClaimIntimatedAt
+      );
 
     if (!parsedClaimIntimatedAt) {
       showPopup(
@@ -682,7 +709,8 @@ export default function ClaimIntimationFormScreen() {
             p_visit_id: visit.id,
             p_estimate_id: cleanEstimateId,
             p_claim_no: cleanClaimNo,
-            p_claim_intimated_at: parsedClaimIntimatedAt,
+            p_claim_intimated_at:
+              parsedClaimIntimatedAt,
             p_remarks:
               cleanRemarks || null,
           }
@@ -700,7 +728,9 @@ export default function ClaimIntimationFormScreen() {
       showPopup(
         "success",
         "Claim Intimation Completed",
-        `Claim Intimation has been completed for ${vehicle?.vehicle_no || "this vehicle"}.\n\nThe vehicle has moved to Pending Survey.`
+        `Claim Intimation has been completed for ${
+          vehicle?.vehicle_no || "this vehicle"
+        }.\n\nThe vehicle has moved to Pending Survey.`
       );
     } catch (error: any) {
       console.error(
@@ -746,7 +776,10 @@ export default function ClaimIntimationFormScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={["top", "bottom"]}
+      >
         <View style={styles.loadingContainer}>
           <ActivityIndicator
             size="large"
@@ -767,7 +800,10 @@ export default function ClaimIntimationFormScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={["top", "bottom"]}
+    >
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={
@@ -807,6 +843,11 @@ export default function ClaimIntimationFormScreen() {
               styles.scrollContent
             }
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={
+              Platform.OS === "ios"
+                ? "interactive"
+                : "on-drag"
+            }
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.vehicleCard}>
@@ -819,22 +860,18 @@ export default function ClaimIntimationFormScreen() {
                   />
                 </View>
 
-                <View
-                  style={styles.vehicleMain}
-                >
+                <View style={styles.vehicleMain}>
                   <Text
                     style={styles.vehicleNumber}
                   >
-                    {vehicle?.vehicle_no ||
-                      "—"}
+                    {vehicle?.vehicle_no || "—"}
                   </Text>
 
                   <Text
                     style={styles.customerName}
                     numberOfLines={1}
                   >
-                    {intake?.customer_name ||
-                      "—"}
+                    {intake?.customer_name || "—"}
                   </Text>
                 </View>
 
@@ -859,48 +896,42 @@ export default function ClaimIntimationFormScreen() {
                 <DetailItem
                   label="Customer Mobile"
                   value={
-                    intake?.customer_mobile ||
-                    "—"
+                    intake?.customer_mobile || "—"
                   }
                 />
 
                 <DetailItem
                   label="Vehicle Type"
                   value={
-                    intake?.vehicle_type ||
-                    "—"
+                    intake?.vehicle_type || "—"
                   }
                 />
 
                 <DetailItem
                   label="Arena / Nexa"
                   value={
-                    intake?.arena_nexa ||
-                    "—"
+                    intake?.arena_nexa || "—"
                   }
                 />
 
                 <DetailItem
                   label="Job Card"
                   value={
-                    intake?.job_card_no ||
-                    "—"
+                    intake?.job_card_no || "—"
                   }
                 />
 
                 <DetailItem
                   label="Insurance"
                   value={
-                    insuranceCompany?.name ||
-                    "—"
+                    insuranceCompany?.name || "—"
                   }
                 />
 
                 <DetailItem
                   label="MI / NON-MI"
                   value={
-                    miType?.name ||
-                    "—"
+                    miType?.name || "—"
                   }
                 />
               </View>
@@ -942,7 +973,8 @@ export default function ClaimIntimationFormScreen() {
               </Text>
 
               <Text style={styles.sectionSubtitle}>
-                Enter the insurance claim information to move this vehicle to Pending Survey.
+                Enter the insurance claim information
+                to move this vehicle to Pending Survey.
               </Text>
 
               <FormField
@@ -969,22 +1001,32 @@ export default function ClaimIntimationFormScreen() {
               <View style={styles.fieldContainer}>
                 <Text style={styles.fieldLabel}>
                   Claim Date & Time
-                  <Text style={styles.required}> *</Text>
+                  <Text style={styles.required}>
+                    {" "}
+                    *
+                  </Text>
                 </Text>
 
                 <Pressable
                   style={[
                     styles.inputContainer,
-                    saving && styles.inputContainerDisabled,
+                    saving &&
+                      styles.inputContainerDisabled,
                   ]}
-                  onPress={openClaimDatePicker}
-                  disabled={saving || Platform.OS === "web"}
+                  onPress={
+                    openClaimDatePicker
+                  }
+                  disabled={
+                    saving ||
+                    Platform.OS === "web"
+                  }
                 >
                   <Ionicons
                     name="calendar-outline"
                     size={20}
                     color={
-                      saving || Platform.OS === "web"
+                      saving ||
+                      Platform.OS === "web"
                         ? colors.textLight
                         : colors.textSecondary
                     }
@@ -996,14 +1038,17 @@ export default function ClaimIntimationFormScreen() {
                       styles.dateTimeValue,
                     ]}
                   >
-                    {claimIntimatedAt || "Loading current date & time..."}
+                    {claimIntimatedAt ||
+                      "Loading current date & time..."}
                   </Text>
 
                   {Platform.OS !== "web" && (
                     <Ionicons
                       name="chevron-down-outline"
                       size={18}
-                      color={colors.textSecondary}
+                      color={
+                        colors.textSecondary
+                      }
                     />
                   )}
                 </Pressable>
@@ -1015,23 +1060,37 @@ export default function ClaimIntimationFormScreen() {
                 </Text>
               </View>
 
-              {showClaimDatePicker && Platform.OS !== "web" && (
-                <NativeDateTimePicker
-                  value={claimDateValue}
-                  mode={Platform.OS === "ios" ? "datetime" : "date"}
-                  display={Platform.OS === "ios" ? "spinner" : "default"}
-                  onChange={handleClaimDateChange}
-                />
-              )}
+              {showClaimDatePicker &&
+                Platform.OS !== "web" && (
+                  <NativeDateTimePicker
+                    value={claimDateValue}
+                    mode={
+                      Platform.OS === "ios"
+                        ? "datetime"
+                        : "date"
+                    }
+                    display={
+                      Platform.OS === "ios"
+                        ? "spinner"
+                        : "default"
+                    }
+                    onChange={
+                      handleClaimDateChange
+                    }
+                  />
+                )}
 
-              {showClaimTimePicker && Platform.OS === "android" && (
-                <NativeDateTimePicker
-                  value={claimDateValue}
-                  mode="time"
-                  display="default"
-                  onChange={handleClaimTimeChange}
-                />
-              )}
+              {showClaimTimePicker &&
+                Platform.OS === "android" && (
+                  <NativeDateTimePicker
+                    value={claimDateValue}
+                    mode="time"
+                    display="default"
+                    onChange={
+                      handleClaimTimeChange
+                    }
+                  />
+                )}
 
               <FormField
                 label="Remarks"
@@ -1060,10 +1119,10 @@ export default function ClaimIntimationFormScreen() {
                   After completion
                 </Text>
 
-                <Text
-                  style={styles.infoText}
-                >
-                  The Claim Intimation stage will be completed and the vehicle will automatically move to Pending Survey.
+                <Text style={styles.infoText}>
+                  The Claim Intimation stage will be
+                  completed and the vehicle will
+                  automatically move to Pending Survey.
                 </Text>
               </View>
             </View>
@@ -1183,12 +1242,17 @@ function FormField({
   icon: keyof typeof Ionicons.glyphMap;
   editable?: boolean;
   multiline?: boolean;
-  autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoCapitalize?:
+    | "none"
+    | "sentences"
+    | "words"
+    | "characters";
 }) {
   return (
     <View style={styles.fieldContainer}>
       <Text style={styles.fieldLabel}>
         {label}
+
         {required && (
           <Text style={styles.required}>
             {" "}
@@ -1235,7 +1299,8 @@ function FormField({
           autoCorrect={false}
           style={[
             styles.input,
-            multiline && styles.multilineInput,
+            multiline &&
+              styles.multilineInput,
           ]}
         />
       </View>
@@ -1315,7 +1380,9 @@ function PopupModal({
             <Text
               style={styles.popupButtonText}
             >
-              {isSuccess ? "Continue" : "OK"}
+              {isSuccess
+                ? "Continue"
+                : "OK"}
             </Text>
           </Pressable>
         </View>
@@ -1354,11 +1421,15 @@ const styles = StyleSheet.create({
 
   header: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
+
+    // SafeAreaView already protects the top notch/status bar.
+    paddingTop: spacing.sm,
     paddingBottom: spacing.md,
+
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
+
     flexDirection: "row",
     alignItems: "center",
   },
@@ -1390,7 +1461,10 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     padding: spacing.lg,
-    paddingBottom: 40,
+
+    // Extra bottom space so the last button is never
+    // hidden behind the Android/iOS bottom system area.
+    paddingBottom: 48,
   },
 
   vehicleCard: {

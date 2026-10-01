@@ -7,6 +7,7 @@ import {
   type ColorValue,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 import { supabase } from "../../../lib/supabase";
 import { colors } from "../../theme";
 
@@ -42,6 +43,7 @@ export default function TabsLayout() {
             setRole(null);
             setLoadingRole(false);
           }
+
           return;
         }
 
@@ -52,7 +54,10 @@ export default function TabsLayout() {
           .single();
 
         if (error) {
-          console.error("Failed to load user role:", error);
+          console.error(
+            "Failed to load user role:",
+            error
+          );
 
           if (mounted) {
             setRole(null);
@@ -63,11 +68,17 @@ export default function TabsLayout() {
         }
 
         if (mounted) {
-          setRole((data?.role as UserRole) ?? null);
+          setRole(
+            (data?.role as UserRole) ?? null
+          );
+
           setLoadingRole(false);
         }
       } catch (error) {
-        console.error("Failed to load user role:", error);
+        console.error(
+          "Failed to load user role:",
+          error
+        );
 
         if (mounted) {
           setRole(null);
@@ -117,8 +128,11 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
 
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textLight,
+        tabBarActiveTintColor:
+          colors.primary,
+
+        tabBarInactiveTintColor:
+          colors.textLight,
 
         tabBarStyle: {
           height: 68 + bottomInset,
@@ -139,19 +153,28 @@ export default function TabsLayout() {
     >
       {/* =====================================================
           VISIBLE TABS
-          ORDER:
+
+          NORMAL USERS:
           HOME → VEHICLES → WORK → PROFILE
+
+          WATCHMAN:
+          HOME → PENDING ADVISOR → GATE OUT → PROFILE
       ====================================================== */}
 
-      {/* =========================
+      {/* =====================================================
           HOME
-      ========================== */}
+          VISIBLE FOR EVERYONE
+      ====================================================== */}
 
       <Tabs.Screen
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: ({ focused, color }) => (
+
+          tabBarIcon: ({
+            focused,
+            color,
+          }) => (
             <TabIcon
               focused={focused}
               activeIcon="home"
@@ -162,17 +185,24 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* =========================
+      {/* =====================================================
           VEHICLES
-          HIDDEN FOR WATCHMAN
-      ========================== */}
+          NORMAL USERS ONLY
+      ====================================================== */}
 
       <Tabs.Screen
         name="vehicle-management/index"
         options={{
-          href: isWatchman ? null : undefined,
+          href: isWatchman
+            ? null
+            : undefined,
+
           title: "Vehicles",
-          tabBarIcon: ({ focused, color }) => (
+
+          tabBarIcon: ({
+            focused,
+            color,
+          }) => (
             <TabIcon
               focused={focused}
               activeIcon="car"
@@ -183,17 +213,24 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* =========================
+      {/* =====================================================
           WORK
-          HIDDEN FOR WATCHMAN
-      ========================== */}
+          NORMAL USERS ONLY
+      ====================================================== */}
 
       <Tabs.Screen
         name="work"
         options={{
           title: "Work",
-          href: isWatchman ? null : undefined,
-          tabBarIcon: ({ focused, color }) => (
+
+          href: isWatchman
+            ? null
+            : undefined,
+
+          tabBarIcon: ({
+            focused,
+            color,
+          }) => (
             <TabIcon
               focused={focused}
               activeIcon="construct"
@@ -204,40 +241,30 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* =========================
-          PROFILE
-      ========================== */}
-
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: "Profile",
-          tabBarIcon: ({ focused, color }) => (
-            <TabIcon
-              focused={focused}
-              activeIcon="person"
-              inactiveIcon="person-outline"
-              color={color}
-            />
-          ),
-        }}
-      />
-
       {/* =====================================================
-          WATCHMAN VISIBLE TABS
-      ====================================================== */}
-
-      {/* =========================
+          WATCHMAN
           PENDING ADVISOR
           WATCHMAN ONLY
-      ========================== */}
+
+          Because this screen is declared BEFORE Gate Out
+          and Profile, Watchman order becomes:
+
+          HOME → PENDING ADVISOR → GATE OUT → PROFILE
+      ====================================================== */}
 
       <Tabs.Screen
         name="watchman/vehicles"
         options={{
           title: "Pending Advisor",
-          href: isWatchman ? undefined : null,
-          tabBarIcon: ({ focused, color }) => (
+
+          href: isWatchman
+            ? undefined
+            : null,
+
+          tabBarIcon: ({
+            focused,
+            color,
+          }) => (
             <TabIcon
               focused={focused}
               activeIcon="people"
@@ -248,21 +275,60 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* =========================
+      {/* =====================================================
+          WATCHMAN
           GATE OUT
           WATCHMAN ONLY
-      ========================== */}
+      ====================================================== */}
 
       <Tabs.Screen
         name="watchman/gate-out"
         options={{
           title: "Gate Out",
-          href: isWatchman ? undefined : null,
-          tabBarIcon: ({ focused, color }) => (
+
+          href: isWatchman
+            ? undefined
+            : null,
+
+          tabBarIcon: ({
+            focused,
+            color,
+          }) => (
             <TabIcon
               focused={focused}
               activeIcon="log-out"
               inactiveIcon="log-out-outline"
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      {/* =====================================================
+          PROFILE
+
+          Declared AFTER Watchman tabs so Watchman gets:
+
+          HOME → PENDING ADVISOR → GATE OUT → PROFILE
+
+          Normal users get:
+
+          HOME → VEHICLES → WORK → PROFILE
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+
+          tabBarIcon: ({
+            focused,
+            color,
+          }) => (
+            <TabIcon
+              focused={focused}
+              activeIcon="person"
+              inactiveIcon="person-outline"
               color={color}
             />
           ),
@@ -617,6 +683,12 @@ export default function TabsLayout() {
           href: null,
         }}
       />
+      <Tabs.Screen
+        name="advisor/approval_vehicles"
+        options={{
+          href: null,
+        }}
+      />
     </Tabs>
   );
 }
@@ -636,11 +708,16 @@ function TabIcon({
     <View
       style={[
         styles.tabIcon,
-        focused && styles.tabIconActive,
+        focused &&
+          styles.tabIconActive,
       ]}
     >
       <Ionicons
-        name={focused ? activeIcon : inactiveIcon}
+        name={
+          focused
+            ? activeIcon
+            : inactiveIcon
+        }
         size={21}
         color={color}
       />
@@ -658,6 +735,7 @@ const styles = StyleSheet.create({
   },
 
   tabIconActive: {
-    backgroundColor: colors.primary + "18",
+    backgroundColor:
+      colors.primary + "18",
   },
 });

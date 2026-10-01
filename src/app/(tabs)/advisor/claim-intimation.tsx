@@ -2,17 +2,17 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    Modal,
-    Pressable,
-    RefreshControl,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
 import { colors, radius, spacing, typography } from "../../../theme";
@@ -258,7 +258,8 @@ export default function ClaimIntimationScreen() {
       );
     }
 
-    const { data: visits, error: visitsError } = await visitQuery;
+    const { data: visits, error: visitsError } =
+      await visitQuery;
 
     if (visitsError) {
       throw visitsError;
@@ -272,11 +273,15 @@ export default function ClaimIntimationScreen() {
     }
 
     const vehicleIds = Array.from(
-      new Set(visitRows.map((item) => item.vehicle_id))
+      new Set(
+        visitRows.map((item) => item.vehicle_id)
+      )
     );
 
     const visitIds = Array.from(
-      new Set(visitRows.map((item) => item.id))
+      new Set(
+        visitRows.map((item) => item.id)
+      )
     );
 
     const [
@@ -315,15 +320,22 @@ export default function ClaimIntimationScreen() {
       throw intakeResult.error;
     }
 
-    const vehicleRows = (vehiclesResult.data || []) as VehicleRow[];
-    const intakeRows = (intakeResult.data || []) as IntakeRow[];
+    const vehicleRows =
+      (vehiclesResult.data || []) as VehicleRow[];
+
+    const intakeRows =
+      (intakeResult.data || []) as IntakeRow[];
 
     const insuranceCompanyIds = Array.from(
       new Set(
         intakeRows
-          .map((item) => item.insurance_company_id)
+          .map(
+            (item) =>
+              item.insurance_company_id
+          )
           .filter(
-            (id): id is string => Boolean(id)
+            (id): id is string =>
+              Boolean(id)
           )
       )
     );
@@ -331,86 +343,134 @@ export default function ClaimIntimationScreen() {
     const miTypeIds = Array.from(
       new Set(
         intakeRows
-          .map((item) => item.mi_type_id)
+          .map(
+            (item) => item.mi_type_id
+          )
           .filter(
-            (id): id is string => Boolean(id)
+            (id): id is string =>
+              Boolean(id)
           )
       )
     );
 
-    let insuranceCompanies: InsuranceCompanyRow[] = [];
+    let insuranceCompanies:
+      InsuranceCompanyRow[] = [];
+
     let miTypes: MiTypeRow[] = [];
 
     if (insuranceCompanyIds.length > 0) {
-      const { data, error } = await supabase
-        .from("insurance_companies")
-        .select("id, name")
-        .in("id", insuranceCompanyIds);
+      const { data, error } =
+        await supabase
+          .from("insurance_companies")
+          .select("id, name")
+          .in(
+            "id",
+            insuranceCompanyIds
+          );
 
       if (error) {
         throw error;
       }
 
-      insuranceCompanies = (data || []) as InsuranceCompanyRow[];
+      insuranceCompanies =
+        (data || []) as InsuranceCompanyRow[];
     }
 
     if (miTypeIds.length > 0) {
-      const { data, error } = await supabase
-        .from("mi_types")
-        .select("id, name")
-        .in("id", miTypeIds);
+      const { data, error } =
+        await supabase
+          .from("mi_types")
+          .select("id, name")
+          .in("id", miTypeIds);
 
       if (error) {
         throw error;
       }
 
-      miTypes = (data || []) as MiTypeRow[];
+      miTypes =
+        (data || []) as MiTypeRow[];
     }
 
-    const vehicleMap = new Map<string, VehicleRow>();
+    const vehicleMap = new Map<
+      string,
+      VehicleRow
+    >();
 
     vehicleRows.forEach((vehicle) => {
-      vehicleMap.set(vehicle.id, vehicle);
+      vehicleMap.set(
+        vehicle.id,
+        vehicle
+      );
     });
 
-    const intakeMap = new Map<string, IntakeRow>();
+    const intakeMap = new Map<
+      string,
+      IntakeRow
+    >();
 
     intakeRows.forEach((intake) => {
-      intakeMap.set(intake.visit_id, intake);
+      intakeMap.set(
+        intake.visit_id,
+        intake
+      );
     });
 
     const insuranceCompanyMap =
-      new Map<string, InsuranceCompanyRow>();
+      new Map<
+        string,
+        InsuranceCompanyRow
+      >();
 
-    insuranceCompanies.forEach((company) => {
-      insuranceCompanyMap.set(company.id, company);
-    });
+    insuranceCompanies.forEach(
+      (company) => {
+        insuranceCompanyMap.set(
+          company.id,
+          company
+        );
+      }
+    );
 
-    const miTypeMap = new Map<string, MiTypeRow>();
+    const miTypeMap = new Map<
+      string,
+      MiTypeRow
+    >();
 
     miTypes.forEach((miType) => {
-      miTypeMap.set(miType.id, miType);
+      miTypeMap.set(
+        miType.id,
+        miType
+      );
     });
 
-    const combined: ClaimVehicle[] = [];
+    const combined: ClaimVehicle[] =
+      [];
 
     visitRows.forEach((visit) => {
-      const vehicle = vehicleMap.get(visit.vehicle_id);
-      const intake = intakeMap.get(visit.id);
+      const vehicle =
+        vehicleMap.get(
+          visit.vehicle_id
+        );
+
+      const intake =
+        intakeMap.get(visit.id);
 
       if (!vehicle || !intake) {
         return;
       }
 
-      const insuranceCompany = intake.insurance_company_id
-        ? insuranceCompanyMap.get(
-            intake.insurance_company_id
-          ) || null
-        : null;
+      const insuranceCompany =
+        intake.insurance_company_id
+          ? insuranceCompanyMap.get(
+              intake.insurance_company_id
+            ) || null
+          : null;
 
-      const miType = intake.mi_type_id
-        ? miTypeMap.get(intake.mi_type_id) || null
-        : null;
+      const miType =
+        intake.mi_type_id
+          ? miTypeMap.get(
+              intake.mi_type_id
+            ) || null
+          : null;
 
       combined.push({
         visit,
@@ -431,7 +491,8 @@ export default function ClaimIntimationScreen() {
           setLoading(true);
         }
 
-        const currentProfile = await loadProfile();
+        const currentProfile =
+          await loadProfile();
 
         if (!currentProfile) {
           return;
@@ -465,9 +526,13 @@ export default function ClaimIntimationScreen() {
         try {
           setLoading(true);
 
-          const currentProfile = await loadProfile();
+          const currentProfile =
+            await loadProfile();
 
-          if (!active || !currentProfile) {
+          if (
+            !active ||
+            !currentProfile
+          ) {
             return;
           }
 
@@ -485,7 +550,10 @@ export default function ClaimIntimationScreen() {
                 created_at
               `
             )
-            .eq("current_stage", "CLAIM_INTIMATION")
+            .eq(
+              "current_stage",
+              "CLAIM_INTIMATION"
+            )
             .in("current_status", [
               "PENDING",
               "IN_PROGRESS",
@@ -495,21 +563,28 @@ export default function ClaimIntimationScreen() {
               nullsFirst: false,
             });
 
-          if (currentProfile.role === "advisor") {
-            visitQuery = visitQuery.eq(
-              "current_assigned_to",
-              currentProfile.id
-            );
+          if (
+            currentProfile.role ===
+            "advisor"
+          ) {
+            visitQuery =
+              visitQuery.eq(
+                "current_assigned_to",
+                currentProfile.id
+              );
           }
 
-          const { data: visits, error: visitsError } =
-            await visitQuery;
+          const {
+            data: visits,
+            error: visitsError,
+          } = await visitQuery;
 
           if (visitsError) {
             throw visitsError;
           }
 
-          const visitRows = (visits || []) as VisitRow[];
+          const visitRows =
+            (visits || []) as VisitRow[];
 
           if (!active) {
             return;
@@ -520,19 +595,24 @@ export default function ClaimIntimationScreen() {
             return;
           }
 
-          const vehicleIds = Array.from(
-            new Set(
-              visitRows.map(
-                (item) => item.vehicle_id
+          const vehicleIds =
+            Array.from(
+              new Set(
+                visitRows.map(
+                  (item) =>
+                    item.vehicle_id
+                )
               )
-            )
-          );
+            );
 
-          const visitIds = Array.from(
-            new Set(
-              visitRows.map((item) => item.id)
-            )
-          );
+          const visitIds =
+            Array.from(
+              new Set(
+                visitRows.map(
+                  (item) => item.id
+                )
+              )
+            );
 
           const [
             vehiclesResult,
@@ -540,8 +620,13 @@ export default function ClaimIntimationScreen() {
           ] = await Promise.all([
             supabase
               .from("vehicles")
-              .select("id, vehicle_no")
-              .in("id", vehicleIds),
+              .select(
+                "id, vehicle_no"
+              )
+              .in(
+                "id",
+                vehicleIds
+              ),
 
             supabase
               .from("vehicle_intake")
@@ -559,7 +644,10 @@ export default function ClaimIntimationScreen() {
                   job_card_no
                 `
               )
-              .in("visit_id", visitIds),
+              .in(
+                "visit_id",
+                visitIds
+              ),
           ]);
 
           if (vehiclesResult.error) {
@@ -571,10 +659,12 @@ export default function ClaimIntimationScreen() {
           }
 
           const vehicleRows =
-            (vehiclesResult.data || []) as VehicleRow[];
+            (vehiclesResult.data ||
+              []) as VehicleRow[];
 
           const intakeRows =
-            (intakeResult.data || []) as IntakeRow[];
+            (intakeResult.data ||
+              []) as IntakeRow[];
 
           const insuranceCompanyIds =
             Array.from(
@@ -585,37 +675,53 @@ export default function ClaimIntimationScreen() {
                       item.insurance_company_id
                   )
                   .filter(
-                    (id): id is string =>
+                    (
+                      id
+                    ): id is string =>
                       Boolean(id)
                   )
               )
             );
 
-          const miTypeIds = Array.from(
-            new Set(
-              intakeRows
-                .map(
-                  (item) => item.mi_type_id
-                )
-                .filter(
-                  (id): id is string =>
-                    Boolean(id)
-                )
-            )
-          );
+          const miTypeIds =
+            Array.from(
+              new Set(
+                intakeRows
+                  .map(
+                    (item) =>
+                      item.mi_type_id
+                  )
+                  .filter(
+                    (
+                      id
+                    ): id is string =>
+                      Boolean(id)
+                  )
+              )
+            );
 
-          let insuranceCompanies: InsuranceCompanyRow[] =
+          let insuranceCompanies:
+            InsuranceCompanyRow[] =
             [];
 
-          let miTypes: MiTypeRow[] = [];
+          let miTypes:
+            MiTypeRow[] = [];
 
           if (
-            insuranceCompanyIds.length > 0
+            insuranceCompanyIds.length >
+            0
           ) {
-            const { data, error } =
+            const {
+              data,
+              error,
+            } =
               await supabase
-                .from("insurance_companies")
-                .select("id, name")
+                .from(
+                  "insurance_companies"
+                )
+                .select(
+                  "id, name"
+                )
                 .in(
                   "id",
                   insuranceCompanyIds
@@ -629,12 +735,22 @@ export default function ClaimIntimationScreen() {
               (data || []) as InsuranceCompanyRow[];
           }
 
-          if (miTypeIds.length > 0) {
-            const { data, error } =
+          if (
+            miTypeIds.length > 0
+          ) {
+            const {
+              data,
+              error,
+            } =
               await supabase
                 .from("mi_types")
-                .select("id, name")
-                .in("id", miTypeIds);
+                .select(
+                  "id, name"
+                )
+                .in(
+                  "id",
+                  miTypeIds
+                );
 
             if (error) {
               throw error;
@@ -644,29 +760,35 @@ export default function ClaimIntimationScreen() {
               (data || []) as MiTypeRow[];
           }
 
-          const vehicleMap = new Map<
-            string,
-            VehicleRow
-          >();
+          const vehicleMap =
+            new Map<
+              string,
+              VehicleRow
+            >();
 
-          vehicleRows.forEach((vehicle) => {
-            vehicleMap.set(
-              vehicle.id,
-              vehicle
-            );
-          });
+          vehicleRows.forEach(
+            (vehicle) => {
+              vehicleMap.set(
+                vehicle.id,
+                vehicle
+              );
+            }
+          );
 
-          const intakeMap = new Map<
-            string,
-            IntakeRow
-          >();
+          const intakeMap =
+            new Map<
+              string,
+              IntakeRow
+            >();
 
-          intakeRows.forEach((intake) => {
-            intakeMap.set(
-              intake.visit_id,
-              intake
-            );
-          });
+          intakeRows.forEach(
+            (intake) => {
+              intakeMap.set(
+                intake.visit_id,
+                intake
+              );
+            }
+          );
 
           const insuranceCompanyMap =
             new Map<
@@ -683,59 +805,71 @@ export default function ClaimIntimationScreen() {
             }
           );
 
-          const miTypeMap = new Map<
-            string,
-            MiTypeRow
-          >();
+          const miTypeMap =
+            new Map<
+              string,
+              MiTypeRow
+            >();
 
-          miTypes.forEach((miType) => {
-            miTypeMap.set(
-              miType.id,
-              miType
-            );
-          });
-
-          const combined: ClaimVehicle[] =
-            [];
-
-          visitRows.forEach((visit) => {
-            const vehicle =
-              vehicleMap.get(
-                visit.vehicle_id
+          miTypes.forEach(
+            (miType) => {
+              miTypeMap.set(
+                miType.id,
+                miType
               );
-
-            const intake =
-              intakeMap.get(visit.id);
-
-            if (!vehicle || !intake) {
-              return;
             }
+          );
 
-            const insuranceCompany =
-              intake.insurance_company_id
-                ? insuranceCompanyMap.get(
-                    intake.insurance_company_id
-                  ) || null
-                : null;
+          const combined:
+            ClaimVehicle[] = [];
 
-            const miType =
-              intake.mi_type_id
-                ? miTypeMap.get(
-                    intake.mi_type_id
-                  ) || null
-                : null;
+          visitRows.forEach(
+            (visit) => {
+              const vehicle =
+                vehicleMap.get(
+                  visit.vehicle_id
+                );
 
-            combined.push({
-              visit,
-              vehicle,
-              intake,
-              insuranceCompany,
-              miType,
-            });
-          });
+              const intake =
+                intakeMap.get(
+                  visit.id
+                );
+
+              if (
+                !vehicle ||
+                !intake
+              ) {
+                return;
+              }
+
+              const insuranceCompany =
+                intake.insurance_company_id
+                  ? insuranceCompanyMap.get(
+                      intake.insurance_company_id
+                    ) || null
+                  : null;
+
+              const miType =
+                intake.mi_type_id
+                  ? miTypeMap.get(
+                      intake.mi_type_id
+                    ) || null
+                  : null;
+
+              combined.push({
+                visit,
+                vehicle,
+                intake,
+                insuranceCompany,
+                miType,
+              });
+            }
+          );
 
           if (active) {
-            setVehicles(combined);
+            setVehicles(
+              combined
+            );
           }
         } catch (error: any) {
           console.error(
@@ -804,15 +938,21 @@ export default function ClaimIntimationScreen() {
           nullsFirst: false,
         });
 
-      if (currentProfile.role === "advisor") {
-        visitQuery = visitQuery.eq(
-          "current_assigned_to",
-          currentProfile.id
-        );
+      if (
+        currentProfile.role ===
+        "advisor"
+      ) {
+        visitQuery =
+          visitQuery.eq(
+            "current_assigned_to",
+            currentProfile.id
+          );
       }
 
-      const { data: visits, error } =
-        await visitQuery;
+      const {
+        data: visits,
+        error,
+      } = await visitQuery;
 
       if (error) {
         throw error;
@@ -826,19 +966,24 @@ export default function ClaimIntimationScreen() {
         return;
       }
 
-      const vehicleIds = Array.from(
-        new Set(
-          visitRows.map(
-            (item) => item.vehicle_id
+      const vehicleIds =
+        Array.from(
+          new Set(
+            visitRows.map(
+              (item) =>
+                item.vehicle_id
+            )
           )
-        )
-      );
+        );
 
-      const visitIds = Array.from(
-        new Set(
-          visitRows.map((item) => item.id)
-        )
-      );
+      const visitIds =
+        Array.from(
+          new Set(
+            visitRows.map(
+              (item) => item.id
+            )
+          )
+        );
 
       const [
         vehiclesResult,
@@ -846,8 +991,13 @@ export default function ClaimIntimationScreen() {
       ] = await Promise.all([
         supabase
           .from("vehicles")
-          .select("id, vehicle_no")
-          .in("id", vehicleIds),
+          .select(
+            "id, vehicle_no"
+          )
+          .in(
+            "id",
+            vehicleIds
+          ),
 
         supabase
           .from("vehicle_intake")
@@ -865,7 +1015,10 @@ export default function ClaimIntimationScreen() {
               job_card_no
             `
           )
-          .in("visit_id", visitIds),
+          .in(
+            "visit_id",
+            visitIds
+          ),
       ]);
 
       if (vehiclesResult.error) {
@@ -877,10 +1030,12 @@ export default function ClaimIntimationScreen() {
       }
 
       const vehicleRows =
-        (vehiclesResult.data || []) as VehicleRow[];
+        (vehiclesResult.data ||
+          []) as VehicleRow[];
 
       const intakeRows =
-        (intakeResult.data || []) as IntakeRow[];
+        (intakeResult.data ||
+          []) as IntakeRow[];
 
       const insuranceCompanyIds =
         Array.from(
@@ -891,37 +1046,53 @@ export default function ClaimIntimationScreen() {
                   item.insurance_company_id
               )
               .filter(
-                (id): id is string =>
+                (
+                  id
+                ): id is string =>
                   Boolean(id)
               )
           )
         );
 
-      const miTypeIds = Array.from(
-        new Set(
-          intakeRows
-            .map(
-              (item) => item.mi_type_id
-            )
-            .filter(
-              (id): id is string =>
-                Boolean(id)
-            )
-        )
-      );
+      const miTypeIds =
+        Array.from(
+          new Set(
+            intakeRows
+              .map(
+                (item) =>
+                  item.mi_type_id
+              )
+              .filter(
+                (
+                  id
+                ): id is string =>
+                  Boolean(id)
+              )
+          )
+        );
 
-      let insuranceCompanies: InsuranceCompanyRow[] =
+      let insuranceCompanies:
+        InsuranceCompanyRow[] =
         [];
 
-      let miTypes: MiTypeRow[] = [];
+      let miTypes:
+        MiTypeRow[] = [];
 
       if (
-        insuranceCompanyIds.length > 0
+        insuranceCompanyIds.length >
+        0
       ) {
-        const { data, error } =
+        const {
+          data,
+          error,
+        } =
           await supabase
-            .from("insurance_companies")
-            .select("id, name")
+            .from(
+              "insurance_companies"
+            )
+            .select(
+              "id, name"
+            )
             .in(
               "id",
               insuranceCompanyIds
@@ -936,11 +1107,19 @@ export default function ClaimIntimationScreen() {
       }
 
       if (miTypeIds.length > 0) {
-        const { data, error } =
+        const {
+          data,
+          error,
+        } =
           await supabase
             .from("mi_types")
-            .select("id, name")
-            .in("id", miTypeIds);
+            .select(
+              "id, name"
+            )
+            .in(
+              "id",
+              miTypeIds
+            );
 
         if (error) {
           throw error;
@@ -950,29 +1129,35 @@ export default function ClaimIntimationScreen() {
           (data || []) as MiTypeRow[];
       }
 
-      const vehicleMap = new Map<
-        string,
-        VehicleRow
-      >();
+      const vehicleMap =
+        new Map<
+          string,
+          VehicleRow
+        >();
 
-      vehicleRows.forEach((vehicle) => {
-        vehicleMap.set(
-          vehicle.id,
-          vehicle
-        );
-      });
+      vehicleRows.forEach(
+        (vehicle) => {
+          vehicleMap.set(
+            vehicle.id,
+            vehicle
+          );
+        }
+      );
 
-      const intakeMap = new Map<
-        string,
-        IntakeRow
-      >();
+      const intakeMap =
+        new Map<
+          string,
+          IntakeRow
+        >();
 
-      intakeRows.forEach((intake) => {
-        intakeMap.set(
-          intake.visit_id,
-          intake
-        );
-      });
+      intakeRows.forEach(
+        (intake) => {
+          intakeMap.set(
+            intake.visit_id,
+            intake
+          );
+        }
+      );
 
       const insuranceCompanyMap =
         new Map<
@@ -989,58 +1174,70 @@ export default function ClaimIntimationScreen() {
         }
       );
 
-      const miTypeMap = new Map<
-        string,
-        MiTypeRow
-      >();
+      const miTypeMap =
+        new Map<
+          string,
+          MiTypeRow
+        >();
 
-      miTypes.forEach((miType) => {
-        miTypeMap.set(
-          miType.id,
-          miType
-        );
-      });
-
-      const combined: ClaimVehicle[] =
-        [];
-
-      visitRows.forEach((visit) => {
-        const vehicle =
-          vehicleMap.get(
-            visit.vehicle_id
+      miTypes.forEach(
+        (miType) => {
+          miTypeMap.set(
+            miType.id,
+            miType
           );
-
-        const intake =
-          intakeMap.get(visit.id);
-
-        if (!vehicle || !intake) {
-          return;
         }
+      );
 
-        const insuranceCompany =
-          intake.insurance_company_id
-            ? insuranceCompanyMap.get(
-                intake.insurance_company_id
-              ) || null
-            : null;
+      const combined:
+        ClaimVehicle[] = [];
 
-        const miType =
-          intake.mi_type_id
-            ? miTypeMap.get(
-                intake.mi_type_id
-              ) || null
-            : null;
+      visitRows.forEach(
+        (visit) => {
+          const vehicle =
+            vehicleMap.get(
+              visit.vehicle_id
+            );
 
-        combined.push({
-          visit,
-          vehicle,
-          intake,
-          insuranceCompany,
-          miType,
-        });
-      });
+          const intake =
+            intakeMap.get(
+              visit.id
+            );
 
-      setVehicles(combined);
+          if (
+            !vehicle ||
+            !intake
+          ) {
+            return;
+          }
+
+          const insuranceCompany =
+            intake.insurance_company_id
+              ? insuranceCompanyMap.get(
+                  intake.insurance_company_id
+                ) || null
+              : null;
+
+          const miType =
+            intake.mi_type_id
+              ? miTypeMap.get(
+                  intake.mi_type_id
+                ) || null
+              : null;
+
+          combined.push({
+            visit,
+            vehicle,
+            intake,
+            insuranceCompany,
+            miType,
+          });
+        }
+      );
+
+      setVehicles(
+        combined
+      );
     } catch (error: any) {
       console.error(
         "Claim Intimation refresh error:",
@@ -1058,48 +1255,57 @@ export default function ClaimIntimationScreen() {
     }
   };
 
-  const filteredVehicles = useMemo(() => {
-    const term = normalizeSearch(search);
+  const filteredVehicles =
+    useMemo(() => {
+      const term =
+        normalizeSearch(search);
 
-    if (!term) {
-      return vehicles;
-    }
+      if (!term) {
+        return vehicles;
+      }
 
-    return vehicles.filter((item) => {
-      const vehicleNumber =
-        item.vehicle.vehicle_no || "";
+      return vehicles.filter(
+        (item) => {
+          const vehicleNumber =
+            item.vehicle.vehicle_no ||
+            "";
 
-      const customerName =
-        item.intake.customer_name || "";
+          const customerName =
+            item.intake.customer_name ||
+            "";
 
-      const customerMobile =
-        item.intake.customer_mobile || "";
+          const customerMobile =
+            item.intake.customer_mobile ||
+            "";
 
-      const insuranceCompany =
-        item.insuranceCompany?.name || "";
+          const insuranceCompany =
+            item.insuranceCompany
+              ?.name || "";
 
-      const jobCard =
-        item.intake.job_card_no || "";
+          const jobCard =
+            item.intake.job_card_no ||
+            "";
 
-      return (
-        normalizeSearch(
-          vehicleNumber
-        ).includes(term) ||
-        normalizeSearch(
-          customerName
-        ).includes(term) ||
-        normalizeSearch(
-          customerMobile
-        ).includes(term) ||
-        normalizeSearch(
-          insuranceCompany
-        ).includes(term) ||
-        normalizeSearch(
-          jobCard
-        ).includes(term)
+          return (
+            normalizeSearch(
+              vehicleNumber
+            ).includes(term) ||
+            normalizeSearch(
+              customerName
+            ).includes(term) ||
+            normalizeSearch(
+              customerMobile
+            ).includes(term) ||
+            normalizeSearch(
+              insuranceCompany
+            ).includes(term) ||
+            normalizeSearch(
+              jobCard
+            ).includes(term)
+          );
+        }
       );
-    });
-  }, [vehicles, search]);
+    }, [vehicles, search]);
 
   const openClaimIntimation = (
     item: ClaimVehicle
@@ -1139,7 +1345,11 @@ export default function ClaimIntimationScreen() {
           </View>
 
           <View style={styles.vehicleMain}>
-            <Text style={styles.vehicleNumber}>
+            <Text
+              style={
+                styles.vehicleNumber
+              }
+            >
               {item.vehicle.vehicle_no}
             </Text>
 
@@ -1151,16 +1361,21 @@ export default function ClaimIntimationScreen() {
             </Text>
           </View>
 
-          <View style={styles.waitingBadge}>
+          <View
+            style={styles.waitingBadge}
+          >
             <Ionicons
               name="time-outline"
               size={14}
               color={colors.warning}
             />
 
-            <Text style={styles.waitingText}>
+            <Text
+              style={styles.waitingText}
+            >
               {getWaitingTime(
-                item.visit.stage_started_at
+                item.visit
+                  .stage_started_at
               )}
             </Text>
           </View>
@@ -1170,7 +1385,9 @@ export default function ClaimIntimationScreen() {
 
         <View style={styles.infoGrid}>
           <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>
+            <Text
+              style={styles.infoLabel}
+            >
               Insurance
             </Text>
 
@@ -1183,7 +1400,9 @@ export default function ClaimIntimationScreen() {
           </View>
 
           <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>
+            <Text
+              style={styles.infoLabel}
+            >
               Type
             </Text>
 
@@ -1196,7 +1415,9 @@ export default function ClaimIntimationScreen() {
           </View>
 
           <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>
+            <Text
+              style={styles.infoLabel}
+            >
               Vehicle
             </Text>
 
@@ -1204,12 +1425,15 @@ export default function ClaimIntimationScreen() {
               style={styles.infoValue}
               numberOfLines={1}
             >
-              {item.intake.arena_nexa || "—"}
+              {item.intake.arena_nexa ||
+                "—"}
             </Text>
           </View>
 
           <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>
+            <Text
+              style={styles.infoLabel}
+            >
               Job Card
             </Text>
 
@@ -1217,7 +1441,8 @@ export default function ClaimIntimationScreen() {
               style={styles.infoValue}
               numberOfLines={1}
             >
-              {item.intake.job_card_no || "—"}
+              {item.intake.job_card_no ||
+                "—"}
             </Text>
           </View>
         </View>
@@ -1231,15 +1456,22 @@ export default function ClaimIntimationScreen() {
             />
           </View>
 
-          <View style={styles.stageTextContainer}>
-            <Text style={styles.stageTitle}>
+          <View
+            style={styles.stageTextContainer}
+          >
+            <Text
+              style={styles.stageTitle}
+            >
               Claim Intimation Pending
             </Text>
 
-            <Text style={styles.stageSubtitle}>
+            <Text
+              style={styles.stageSubtitle}
+            >
               Since{" "}
               {formatDateTime(
-                item.visit.stage_started_at
+                item.visit
+                  .stage_started_at
               )}
             </Text>
           </View>
@@ -1248,13 +1480,18 @@ export default function ClaimIntimationScreen() {
         <Pressable
           style={({ pressed }) => [
             styles.actionButton,
-            pressed && styles.actionButtonPressed,
+            pressed &&
+              styles.actionButtonPressed,
           ]}
           onPress={() =>
             openClaimIntimation(item)
           }
         >
-          <Text style={styles.actionButtonText}>
+          <Text
+            style={
+              styles.actionButtonText
+            }
+          >
             Start Claim Intimation
           </Text>
 
@@ -1270,14 +1507,23 @@ export default function ClaimIntimationScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.loadingContainer}>
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={["top", "bottom"]}
+      >
+        <View
+          style={
+            styles.loadingContainer
+          }
+        >
           <ActivityIndicator
             size="large"
             color={colors.primary}
           />
 
-          <Text style={styles.loadingText}>
+          <Text
+            style={styles.loadingText}
+          >
             Loading Claim Intimation...
           </Text>
         </View>
@@ -1288,45 +1534,64 @@ export default function ClaimIntimationScreen() {
           animationType="fade"
           onRequestClose={closePopup}
         >
-          <View style={styles.modalBackdrop}>
-            <View style={styles.popupCard}>
+          <View
+            style={styles.modalBackdrop}
+          >
+            <View
+              style={styles.popupCard}
+            >
               <View
                 style={[
                   styles.popupIcon,
-                  popup.type === "error"
+                  popup.type ===
+                  "error"
                     ? styles.popupIconError
                     : styles.popupIconInfo,
                 ]}
               >
                 <Ionicons
                   name={
-                    popup.type === "error"
+                    popup.type ===
+                    "error"
                       ? "alert-circle"
                       : "information-circle"
                   }
                   size={27}
                   color={
-                    popup.type === "error"
+                    popup.type ===
+                    "error"
                       ? colors.danger
                       : colors.info
                   }
                 />
               </View>
 
-              <Text style={styles.popupTitle}>
+              <Text
+                style={styles.popupTitle}
+              >
                 {popup.title}
               </Text>
 
-              <Text style={styles.popupMessage}>
+              <Text
+                style={
+                  styles.popupMessage
+                }
+              >
                 {popup.message}
               </Text>
 
               <Pressable
-                style={styles.popupButton}
-                onPress={closePopup}
+                style={
+                  styles.popupButton
+                }
+                onPress={
+                  closePopup
+                }
               >
                 <Text
-                  style={styles.popupButtonText}
+                  style={
+                    styles.popupButtonText
+                  }
                 >
                   OK
                 </Text>
@@ -1339,31 +1604,50 @@ export default function ClaimIntimationScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={["top", "bottom"]}
+    >
       <View style={styles.container}>
         <View style={styles.header}>
-          <View style={styles.headerTextContainer}>
-            <Text style={styles.title}>
+          <View
+            style={
+              styles.headerTextContainer
+            }
+          >
+            <Text
+              style={styles.title}
+            >
               Claim Intimation
             </Text>
 
-            <Text style={styles.subtitle}>
+            <Text
+              style={styles.subtitle}
+            >
               Insurance vehicles waiting for claim intimation
             </Text>
           </View>
 
-          <View style={styles.countBadge}>
-            <Text style={styles.countText}>
+          <View
+            style={styles.countBadge}
+          >
+            <Text
+              style={styles.countText}
+            >
               {vehicles.length}
             </Text>
           </View>
         </View>
 
-        <View style={styles.searchContainer}>
+        <View
+          style={styles.searchContainer}
+        >
           <Ionicons
             name="search-outline"
             size={20}
-            color={colors.textSecondary}
+            color={
+              colors.textSecondary
+            }
           />
 
           <TextInput
@@ -1380,13 +1664,17 @@ export default function ClaimIntimationScreen() {
 
           {search.length > 0 && (
             <Pressable
-              onPress={() => setSearch("")}
+              onPress={() =>
+                setSearch("")
+              }
               hitSlop={10}
             >
               <Ionicons
                 name="close-circle"
                 size={20}
-                color={colors.textLight}
+                color={
+                  colors.textLight
+                }
               />
             </Pressable>
           )}
@@ -1397,28 +1685,53 @@ export default function ClaimIntimationScreen() {
           keyExtractor={(item) =>
             item.visit.id
           }
-          renderItem={renderVehicle}
+          renderItem={
+            renderVehicle
+          }
           contentContainerStyle={[
             styles.listContent,
-            filteredVehicles.length === 0 &&
+            filteredVehicles.length ===
+              0 &&
               styles.emptyListContent,
           ]}
           refreshControl={
             <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor={colors.primary}
-              colors={[colors.primary]}
+              refreshing={
+                refreshing
+              }
+              onRefresh={
+                handleRefresh
+              }
+              tintColor={
+                colors.primary
+              }
+              colors={[
+                colors.primary,
+              ]}
             />
           }
           keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={
+            false
+          }
           ListHeaderComponent={
-            filteredVehicles.length > 0 ? (
-              <View style={styles.listHeader}>
-                <Text style={styles.listHeaderText}>
-                  {filteredVehicles.length}{" "}
-                  {filteredVehicles.length === 1
+            filteredVehicles.length >
+            0 ? (
+              <View
+                style={
+                  styles.listHeader
+                }
+              >
+                <Text
+                  style={
+                    styles.listHeaderText
+                  }
+                >
+                  {
+                    filteredVehicles.length
+                  }{" "}
+                  {filteredVehicles.length ===
+                  1
                     ? "vehicle"
                     : "vehicles"}{" "}
                   pending
@@ -1427,37 +1740,64 @@ export default function ClaimIntimationScreen() {
             ) : null
           }
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <View style={styles.emptyIcon}>
+            <View
+              style={
+                styles.emptyContainer
+              }
+            >
+              <View
+                style={
+                  styles.emptyIcon
+                }
+              >
                 <Ionicons
                   name="shield-checkmark-outline"
                   size={38}
-                  color={colors.textLight}
+                  color={
+                    colors.textLight
+                  }
                 />
               </View>
 
-              <Text style={styles.emptyTitle}>
+              <Text
+                style={
+                  styles.emptyTitle
+                }
+              >
                 {search.trim()
                   ? "No vehicles found"
                   : "No Claim Intimation pending"}
               </Text>
 
-              <Text style={styles.emptyMessage}>
+              <Text
+                style={
+                  styles.emptyMessage
+                }
+              >
                 {search.trim()
                   ? "Try searching with another vehicle number, customer name, mobile number or job card."
                   : "Vehicles will appear here after Insurance intake is completed."}
               </Text>
 
-              {search.trim().length > 0 && (
+              {search.trim()
+                .length > 0 && (
                 <Pressable
-                    style={styles.clearSearchButton}
-                    onPress={() => setSearch("")}
+                  style={
+                    styles.clearSearchButton
+                  }
+                  onPress={() =>
+                    setSearch("")
+                  }
                 >
-                    <Text style={styles.clearSearchButtonText}>
+                  <Text
+                    style={
+                      styles.clearSearchButtonText
+                    }
+                  >
                     Clear Search
-                    </Text>
+                  </Text>
                 </Pressable>
-                )}
+              )}
             </View>
           }
         />
@@ -1467,10 +1807,16 @@ export default function ClaimIntimationScreen() {
         transparent
         visible={popup.visible}
         animationType="fade"
-        onRequestClose={closePopup}
+        onRequestClose={
+          closePopup
+        }
       >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.popupCard}>
+        <View
+          style={styles.modalBackdrop}
+        >
+          <View
+            style={styles.popupCard}
+          >
             <View
               style={[
                 styles.popupIcon,
@@ -1481,33 +1827,47 @@ export default function ClaimIntimationScreen() {
             >
               <Ionicons
                 name={
-                  popup.type === "error"
+                  popup.type ===
+                  "error"
                     ? "alert-circle"
                     : "information-circle"
                 }
                 size={27}
                 color={
-                  popup.type === "error"
+                  popup.type ===
+                  "error"
                     ? colors.danger
                     : colors.info
                 }
               />
             </View>
 
-            <Text style={styles.popupTitle}>
+            <Text
+              style={styles.popupTitle}
+            >
               {popup.title}
             </Text>
 
-            <Text style={styles.popupMessage}>
+            <Text
+              style={
+                styles.popupMessage
+              }
+            >
               {popup.message}
             </Text>
 
             <Pressable
-              style={styles.popupButton}
-              onPress={closePopup}
+              style={
+                styles.popupButton
+              }
+              onPress={
+                closePopup
+              }
             >
               <Text
-                style={styles.popupButtonText}
+                style={
+                  styles.popupButtonText
+                }
               >
                 OK
               </Text>
@@ -1546,7 +1906,11 @@ const styles = StyleSheet.create({
 
   header: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
+
+    // Extra top breathing room inside the
+    // already-safe area.
+    paddingTop: spacing.sm,
+
     paddingBottom: spacing.md,
     flexDirection: "row",
     alignItems: "center",
@@ -1609,11 +1973,15 @@ const styles = StyleSheet.create({
 
   listContent: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: 32,
+
+    // Keeps the last card/action safely above
+    // the bottom system navigation area.
+    paddingBottom: 48,
   },
 
   emptyListContent: {
     flexGrow: 1,
+    paddingBottom: 48,
   },
 
   listHeader: {

@@ -91,7 +91,7 @@ const workflowItems: WorkflowItem[] = [
     title: "Approval",
     description: "Review and record customer or insurance approval.",
     action: "Review approvals",
-    route: "/(tabs)/advisor/approval",
+    route: "/(tabs)/advisor/approval_vehicles",
     icon: "🛡️",
     countKey: "APPROVAL",
     countLabel: "pending",
@@ -402,7 +402,9 @@ export default function AdvisorDashboard() {
     setPlaceholderTitle(item.title);
 
     setPlaceholderMessage(
-      `${item.title} is included in the Advisor workflow dashboard. The dedicated screen for this module will be connected as that module is implemented.`
+      `${item.title} is included in the ${
+        isCeoAdmin ? "CEO Admin" : "Advisor"
+      } workflow dashboard. The dedicated screen for this module will be connected as that module is implemented.`
     );
 
     setPlaceholderVisible(true);
@@ -422,6 +424,16 @@ export default function AdvisorDashboard() {
 
     setPlaceholderVisible(true);
   };
+
+  const dashboardTitle = isCeoAdmin
+    ? "Admin Dashboard"
+    : "Advisor Dashboard";
+
+  const workspaceLabel = isCeoAdmin
+    ? "CEO ADMIN WORKSPACE"
+    : "ADVISOR WORKSPACE";
+
+  const avatarLabel = isCeoAdmin ? "CA" : "AD";
 
   return (
     <SafeAreaView
@@ -452,11 +464,13 @@ export default function AdvisorDashboard() {
             </Text>
 
             <Text style={styles.heading}>
-              Advisor Dashboard
+              {dashboardTitle}
             </Text>
 
             <Text style={styles.subtitle}>
-              Manage your vehicles and daily workflow.
+              {isCeoAdmin
+                ? "Manage system configuration, operations and vehicle workflow."
+                : "Manage your vehicles and daily workflow."}
             </Text>
           </View>
 
@@ -487,7 +501,7 @@ export default function AdvisorDashboard() {
 
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>
-                {isCeoAdmin ? "CA" : "AD"}
+                {avatarLabel}
               </Text>
             </View>
           </View>
@@ -508,9 +522,7 @@ export default function AdvisorDashboard() {
               <View style={styles.statusDot} />
 
               <Text style={styles.workspaceText}>
-                {isCeoAdmin
-                  ? "CEO ADMIN WORKSPACE"
-                  : "ADVISOR WORKSPACE"}
+                {workspaceLabel}
               </Text>
             </View>
 
@@ -526,8 +538,9 @@ export default function AdvisorDashboard() {
           </Text>
 
           <Text style={styles.welcomeDescription}>
-            Choose a workflow below to continue managing
-            your vehicles.
+            {isCeoAdmin
+              ? "Choose a workflow below to manage vehicle operations or system administration."
+              : "Choose a workflow below to continue managing your vehicles."}
           </Text>
 
           <Pressable
