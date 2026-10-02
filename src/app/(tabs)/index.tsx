@@ -12,12 +12,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { Redirect, router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import {
-  colors,
-  radius,
-  spacing,
-  typography,
-} from "../../theme";
+import { colors, radius, spacing, typography } from "../../theme";
 
 import AppCard from "../../../components/AppCard";
 import { supabase } from "../../../lib/supabase";
@@ -176,19 +171,11 @@ export default function HomeScreen() {
   // Display a spinner only while the profile is being fetched.
   if (loading) {
     return (
-      <SafeAreaView
-        style={styles.container}
-        edges={["top", "bottom"]}
-      >
+      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator
-            size="large"
-            color={colors.primary}
-          />
+          <ActivityIndicator size="large" color={colors.primary} />
 
-          <Text style={styles.loadingText}>
-            Loading dashboard...
-          </Text>
+          <Text style={styles.loadingText}>Loading dashboard...</Text>
         </View>
       </SafeAreaView>
     );
@@ -205,19 +192,27 @@ export default function HomeScreen() {
     return <Redirect href="/(tabs)/watchman" />;
   }
 
-  // Redirect Advisors and CEO Admins without rendering the old dashboard.
-  if (
-    profile?.role === "advisor" ||
-    profile?.role === "ceo_admin"
-  ) {
+  /*
+   * ADVISOR + CEO ADMIN
+   *
+   * Both roles use the shared Advisor / CEO Admin dashboard.
+   *
+   * The Store Monitoring module is opened from that dashboard
+   * using:
+   *
+   * /(tabs)/advisor/store-monitor
+   *
+   * The actual Store Monitoring screen handles the role-specific
+   * data scope:
+   * - Advisor -> assigned vehicles
+   * - CEO Admin -> all relevant vehicles
+   */
+  if (profile?.role === "advisor" || profile?.role === "ceo_admin") {
     return <Redirect href="/(tabs)/advisor" />;
   }
 
   return (
-    <SafeAreaView
-      style={styles.container}
-      edges={["top", "bottom"]}
-    >
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -225,17 +220,11 @@ export default function HomeScreen() {
         {/* HEADER */}
         <View style={styles.header}>
           <View style={styles.headerText}>
-            <Text style={styles.greeting}>
-              Good Morning 👋
-            </Text>
+            <Text style={styles.greeting}>Good Morning 👋</Text>
 
-            <Text style={styles.name}>
-              {displayName}
-            </Text>
+            <Text style={styles.name}>{displayName}</Text>
 
-            <Text style={styles.role}>
-              {displayRole}
-            </Text>
+            <Text style={styles.role}>{displayRole}</Text>
           </View>
 
           <Pressable
@@ -244,18 +233,12 @@ export default function HomeScreen() {
             accessibilityRole="button"
             accessibilityLabel="Open profile"
           >
-            <Ionicons
-              name="person-outline"
-              size={22}
-              color={colors.primary}
-            />
+            <Ionicons name="person-outline" size={22} color={colors.primary} />
           </Pressable>
         </View>
 
         {/* TODAY'S OVERVIEW */}
-        <Text style={styles.sectionTitle}>
-          Today's Overview
-        </Text>
+        <Text style={styles.sectionTitle}>Today's Overview</Text>
 
         <AppCard style={styles.overviewCard}>
           <OverviewItem
@@ -286,13 +269,9 @@ export default function HomeScreen() {
 
         {/* PENDING WORK */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            Pending Work
-          </Text>
+          <Text style={styles.sectionTitle}>Pending Work</Text>
 
-          <Text style={styles.sectionHint}>
-            Based on your role
-          </Text>
+          <Text style={styles.sectionHint}>Based on your role</Text>
         </View>
 
         {pendingSections.map((section) => (
@@ -306,9 +285,7 @@ export default function HomeScreen() {
         ))}
 
         {/* QUICK ACTIONS */}
-        <Text style={styles.sectionTitle}>
-          Quick Actions
-        </Text>
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
 
         {/* NEW JOB CARD */}
         <Pressable
@@ -319,17 +296,11 @@ export default function HomeScreen() {
           onPress={() => router.push("/(tabs)/vehicles")}
         >
           <View style={styles.actionIcon}>
-            <Ionicons
-              name="add-outline"
-              size={26}
-              color={colors.primary}
-            />
+            <Ionicons name="add-outline" size={26} color={colors.primary} />
           </View>
 
           <View style={styles.actionContent}>
-            <Text style={styles.actionTitle}>
-              New Job Card
-            </Text>
+            <Text style={styles.actionTitle}>New Job Card</Text>
 
             <Text style={styles.actionSubtitle}>
               Create a new vehicle job card
@@ -360,9 +331,7 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.actionContent}>
-            <Text style={styles.actionTitle}>
-              Master Data
-            </Text>
+            <Text style={styles.actionTitle}>Master Data</Text>
 
             <Text style={styles.actionSubtitle}>
               Manage models, insurance, business and MI types
@@ -387,12 +356,7 @@ type OverviewItemProps = {
   onPress: () => void;
 };
 
-function OverviewItem({
-  icon,
-  label,
-  enabled,
-  onPress,
-}: OverviewItemProps) {
+function OverviewItem({ icon, label, enabled, onPress }: OverviewItemProps) {
   return (
     <Pressable
       style={({ pressed }) => [
@@ -407,18 +371,12 @@ function OverviewItem({
       accessibilityState={{ disabled: !enabled }}
     >
       <View style={styles.overviewIcon}>
-        <Ionicons
-          name={icon}
-          size={21}
-          color={colors.primary}
-        />
+        <Ionicons name={icon} size={21} color={colors.primary} />
       </View>
 
       <Text style={styles.overviewValue}>—</Text>
 
-      <Text style={styles.overviewLabel}>
-        {label}
-      </Text>
+      <Text style={styles.overviewLabel}>{label}</Text>
     </Pressable>
   );
 }
@@ -430,12 +388,7 @@ type PendingCardProps = {
   onPress: () => void;
 };
 
-function PendingCard({
-  icon,
-  title,
-  subtitle,
-  onPress,
-}: PendingCardProps) {
+function PendingCard({ icon, title, subtitle, onPress }: PendingCardProps) {
   return (
     <Pressable
       style={({ pressed }) => [
@@ -447,21 +400,13 @@ function PendingCard({
       accessibilityLabel={`${title}. ${subtitle}`}
     >
       <View style={styles.pendingIcon}>
-        <Ionicons
-          name={icon}
-          size={24}
-          color={colors.primary}
-        />
+        <Ionicons name={icon} size={24} color={colors.primary} />
       </View>
 
       <View style={styles.pendingContent}>
-        <Text style={styles.pendingTitle}>
-          {title}
-        </Text>
+        <Text style={styles.pendingTitle}>{title}</Text>
 
-        <Text style={styles.pendingSubtitle}>
-          {subtitle}
-        </Text>
+        <Text style={styles.pendingSubtitle}>{subtitle}</Text>
       </View>
 
       <Ionicons

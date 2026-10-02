@@ -101,7 +101,7 @@ const workflowItems: WorkflowItem[] = [
     title: "Approval Hold",
     description: "Follow up vehicles waiting for approval resolution.",
     action: "Review holds",
-    route: "/(tabs)/advisor/approval",
+    route: "/(tabs)/advisor/approval_hold",
     icon: "⏸️",
     countKey: "APPROVAL_HOLD",
     countLabel: "on hold",
@@ -121,6 +121,7 @@ const workflowItems: WorkflowItem[] = [
     title: "Advisor Work",
     description: "Manage approved work requirements before execution.",
     action: "View work",
+    route: "/(tabs)/advisor/work",
     icon: "📝",
     countKey: "ADVISOR_WORK",
     countLabel: "active",
@@ -133,6 +134,7 @@ const workflowItems: WorkflowItem[] = [
     icon: "📦",
     countKey: "STORE",
     countLabel: "active",
+    route: "/(tabs)/advisor/store-monitor",
   },
   {
     number: "09",
@@ -256,8 +258,7 @@ export default function AdvisorDashboard() {
   }, [gridWidth, gridColumns]);
 
   const totalModuleCount =
-    workflowItems.length +
-    (isCeoAdmin ? adminItems.length : 0);
+    workflowItems.length + (isCeoAdmin ? adminItems.length : 0);
 
   const loadDashboardCounts = useCallback(async () => {
     setRefreshing(true);
@@ -278,12 +279,11 @@ export default function AdvisorDashboard() {
         return;
       }
 
-      const { data: profile, error: profileError } =
-        await supabase
-          .from("profiles")
-          .select("role,is_active")
-          .eq("id", user.id)
-          .single();
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role,is_active")
+        .eq("id", user.id)
+        .single();
 
       if (profileError) {
         throw profileError;
@@ -294,23 +294,16 @@ export default function AdvisorDashboard() {
         !["advisor", "ceo_admin"].includes(profile.role)
       ) {
         throw new Error(
-          "Only an active Advisor or CEO Admin can access this dashboard."
+          "Only an active Advisor or CEO Admin can access this dashboard.",
         );
       }
 
       setIsCeoAdmin(profile.role === "ceo_admin");
 
-      const { data: visits, error: visitsError } =
-        await supabase
-          .from("workshop_visits")
-          .select(
-            "id,current_stage,current_status,current_assigned_to"
-          )
-          .in("current_status", [
-            "PENDING",
-            "IN_PROGRESS",
-            "ON_HOLD",
-          ]);
+      const { data: visits, error: visitsError } = await supabase
+        .from("workshop_visits")
+        .select("id,current_stage,current_status,current_assigned_to")
+        .in("current_status", ["PENDING", "IN_PROGRESS", "ON_HOLD"]);
 
       if (visitsError) {
         throw visitsError;
@@ -390,7 +383,7 @@ export default function AdvisorDashboard() {
   useFocusEffect(
     useCallback(() => {
       loadDashboardCounts();
-    }, [loadDashboardCounts])
+    }, [loadDashboardCounts]),
   );
 
   const openWorkflowModule = (item: WorkflowItem) => {
@@ -404,7 +397,7 @@ export default function AdvisorDashboard() {
     setPlaceholderMessage(
       `${item.title} is included in the ${
         isCeoAdmin ? "CEO Admin" : "Advisor"
-      } workflow dashboard. The dedicated screen for this module will be connected as that module is implemented.`
+      } workflow dashboard. The dedicated screen for this module will be connected as that module is implemented.`,
     );
 
     setPlaceholderVisible(true);
@@ -419,15 +412,13 @@ export default function AdvisorDashboard() {
     setPlaceholderTitle(item.title);
 
     setPlaceholderMessage(
-      "Operations Monitor is currently a placeholder. This section will later contain Today's Operations, Activity Timeline and Vehicle History."
+      "Operations Monitor is currently a placeholder. This section will later contain Today's Operations, Activity Timeline and Vehicle History.",
     );
 
     setPlaceholderVisible(true);
   };
 
-  const dashboardTitle = isCeoAdmin
-    ? "Admin Dashboard"
-    : "Advisor Dashboard";
+  const dashboardTitle = isCeoAdmin ? "Admin Dashboard" : "Advisor Dashboard";
 
   const workspaceLabel = isCeoAdmin
     ? "CEO ADMIN WORKSPACE"
@@ -436,10 +427,7 @@ export default function AdvisorDashboard() {
   const avatarLabel = isCeoAdmin ? "CA" : "AD";
 
   return (
-    <SafeAreaView
-      style={styles.safeArea}
-      edges={["top", "left", "right"]}
-    >
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[
@@ -459,13 +447,9 @@ export default function AdvisorDashboard() {
         {/* HEADER */}
         <View style={styles.header}>
           <View style={styles.headerTextContainer}>
-            <Text style={styles.eyebrow}>
-              PAGARIYA AUTO
-            </Text>
+            <Text style={styles.eyebrow}>PAGARIYA AUTO</Text>
 
-            <Text style={styles.heading}>
-              {dashboardTitle}
-            </Text>
+            <Text style={styles.heading}>{dashboardTitle}</Text>
 
             <Text style={styles.subtitle}>
               {isCeoAdmin
@@ -483,36 +467,25 @@ export default function AdvisorDashboard() {
               style={({ pressed }) => [
                 styles.refreshButton,
                 pressed && styles.pressed,
-                refreshing &&
-                  styles.refreshButtonDisabled,
+                refreshing && styles.refreshButtonDisabled,
               ]}
             >
               {refreshing ? (
-                <ActivityIndicator
-                  size="small"
-                  color={colors.primary}
-                />
+                <ActivityIndicator size="small" color={colors.primary} />
               ) : (
-                <Text style={styles.refreshButtonText}>
-                  ↻
-                </Text>
+                <Text style={styles.refreshButtonText}>↻</Text>
               )}
             </Pressable>
 
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {avatarLabel}
-              </Text>
+              <Text style={styles.avatarText}>{avatarLabel}</Text>
             </View>
           </View>
         </View>
 
         {/* WELCOME CARD */}
         <View
-          style={[
-            styles.welcomeCard,
-            isDesktop && styles.desktopWelcomeCard,
-          ]}
+          style={[styles.welcomeCard, isDesktop && styles.desktopWelcomeCard]}
         >
           <View style={styles.decorCircleLarge} />
           <View style={styles.decorCircleSmall} />
@@ -521,21 +494,15 @@ export default function AdvisorDashboard() {
             <View style={styles.workspacePill}>
               <View style={styles.statusDot} />
 
-              <Text style={styles.workspaceText}>
-                {workspaceLabel}
-              </Text>
+              <Text style={styles.workspaceText}>{workspaceLabel}</Text>
             </View>
 
             <View style={styles.modulesPill}>
-              <Text style={styles.modulesText}>
-                {totalModuleCount} MODULES
-              </Text>
+              <Text style={styles.modulesText}>{totalModuleCount} MODULES</Text>
             </View>
           </View>
 
-          <Text style={styles.welcomeTitle}>
-            Ready to get started?
-          </Text>
+          <Text style={styles.welcomeTitle}>Ready to get started?</Text>
 
           <Text style={styles.welcomeDescription}>
             {isCeoAdmin
@@ -549,16 +516,10 @@ export default function AdvisorDashboard() {
               isDesktop && styles.desktopPrimaryButton,
               pressed && styles.pressed,
             ]}
-            onPress={() =>
-              router.push(
-                "/(tabs)/advisor/intake" as never
-              )
-            }
+            onPress={() => router.push("/(tabs)/advisor/intake" as never)}
           >
             <View style={styles.primaryButtonTextContainer}>
-              <Text style={styles.primaryButtonText}>
-                Start Vehicle Intake
-              </Text>
+              <Text style={styles.primaryButtonText}>Start Vehicle Intake</Text>
 
               <Text style={styles.primaryButtonSubtext}>
                 Accept a waiting vehicle
@@ -566,9 +527,7 @@ export default function AdvisorDashboard() {
             </View>
 
             <View style={styles.primaryButtonArrowCircle}>
-              <Text style={styles.primaryButtonArrow}>
-                →
-              </Text>
+              <Text style={styles.primaryButtonArrow}>→</Text>
             </View>
           </Pressable>
         </View>
@@ -581,9 +540,7 @@ export default function AdvisorDashboard() {
           ]}
         >
           <View>
-            <Text style={styles.sectionTitle}>
-              Your Workflow
-            </Text>
+            <Text style={styles.sectionTitle}>Your Workflow</Text>
 
             <Text style={styles.sectionSubtitle}>
               Select a task to continue
@@ -591,9 +548,7 @@ export default function AdvisorDashboard() {
           </View>
 
           <View style={styles.moduleCount}>
-            <Text style={styles.moduleCountText}>
-              {workflowItems.length}
-            </Text>
+            <Text style={styles.moduleCountText}>{workflowItems.length}</Text>
           </View>
         </View>
 
@@ -607,8 +562,7 @@ export default function AdvisorDashboard() {
           ]}
         >
           {workflowItems.map((item) => {
-            const itemCount =
-              counts?.[item.countKey] ?? null;
+            const itemCount = counts?.[item.countKey] ?? null;
 
             return (
               <Pressable
@@ -621,32 +575,24 @@ export default function AdvisorDashboard() {
                   item.featured && styles.featuredCard,
                   pressed && styles.pressed,
                 ]}
-                onPress={() =>
-                  openWorkflowModule(item)
-                }
+                onPress={() => openWorkflowModule(item)}
               >
-                {item.featured && (
-                  <View style={styles.featuredStripe} />
-                )}
+                {item.featured && <View style={styles.featuredStripe} />}
 
                 <View style={styles.cardTopRow}>
                   <View
                     style={[
                       styles.iconContainer,
-                      item.featured &&
-                        styles.featuredIconContainer,
+                      item.featured && styles.featuredIconContainer,
                     ]}
                   >
-                    <Text style={styles.cardIcon}>
-                      {item.icon}
-                    </Text>
+                    <Text style={styles.cardIcon}>{item.icon}</Text>
                   </View>
 
                   <Text
                     style={[
                       styles.cardArrow,
-                      item.featured &&
-                        styles.featuredCardArrow,
+                      item.featured && styles.featuredCardArrow,
                     ]}
                   >
                     ↗
@@ -657,15 +603,13 @@ export default function AdvisorDashboard() {
                   <View
                     style={[
                       styles.numberBadge,
-                      item.featured &&
-                        styles.featuredNumberBadge,
+                      item.featured && styles.featuredNumberBadge,
                     ]}
                   >
                     <Text
                       style={[
                         styles.numberText,
-                        item.featured &&
-                          styles.featuredNumberText,
+                        item.featured && styles.featuredNumberText,
                       ]}
                     >
                       {item.number}
@@ -673,24 +617,16 @@ export default function AdvisorDashboard() {
                   </View>
 
                   <View style={styles.waitingBadge}>
-                    {counts === null &&
-                    !countError ? (
-                      <ActivityIndicator
-                        size="small"
-                        color={colors.primary}
-                      />
+                    {counts === null && !countError ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
                     ) : (
                       <Text style={styles.waitingCount}>
-                        {countError
-                          ? "—"
-                          : itemCount ?? 0}
+                        {countError ? "—" : (itemCount ?? 0)}
                       </Text>
                     )}
 
                     <Text style={styles.waitingLabel}>
-                      {countError
-                        ? "Unavailable"
-                        : item.countLabel}
+                      {countError ? "Unavailable" : item.countLabel}
                     </Text>
                   </View>
                 </View>
@@ -698,8 +634,7 @@ export default function AdvisorDashboard() {
                 <Text
                   style={[
                     styles.cardTitle,
-                    item.featured &&
-                      styles.featuredCardTitle,
+                    item.featured && styles.featuredCardTitle,
                   ]}
                   numberOfLines={2}
                 >
@@ -709,8 +644,7 @@ export default function AdvisorDashboard() {
                 <Text
                   style={[
                     styles.cardDescription,
-                    item.featured &&
-                      styles.featuredCardDescription,
+                    item.featured && styles.featuredCardDescription,
                   ]}
                   numberOfLines={3}
                 >
@@ -720,15 +654,13 @@ export default function AdvisorDashboard() {
                 <View
                   style={[
                     styles.cardFooter,
-                    item.featured &&
-                      styles.featuredCardFooter,
+                    item.featured && styles.featuredCardFooter,
                   ]}
                 >
                   <Text
                     style={[
                       styles.cardAction,
-                      item.featured &&
-                        styles.featuredCardAction,
+                      item.featured && styles.featuredCardAction,
                     ]}
                     numberOfLines={1}
                   >
@@ -738,8 +670,7 @@ export default function AdvisorDashboard() {
                   <Text
                     style={[
                       styles.footerArrow,
-                      item.featured &&
-                        styles.featuredFooterArrow,
+                      item.featured && styles.featuredFooterArrow,
                     ]}
                   >
                     →
@@ -760,20 +691,15 @@ export default function AdvisorDashboard() {
               ]}
             >
               <View>
-                <Text style={styles.sectionTitle}>
-                  Admin Tools
-                </Text>
+                <Text style={styles.sectionTitle}>Admin Tools</Text>
 
                 <Text style={styles.sectionSubtitle}>
-                  Manage system configuration and
-                  operations
+                  Manage system configuration and operations
                 </Text>
               </View>
 
               <View style={styles.adminBadge}>
-                <Text style={styles.adminBadgeText}>
-                  CEO
-                </Text>
+                <Text style={styles.adminBadgeText}>CEO</Text>
               </View>
             </View>
 
@@ -795,51 +721,30 @@ export default function AdvisorDashboard() {
                     },
                     pressed && styles.pressed,
                   ]}
-                  onPress={() =>
-                    openAdminModule(item)
-                  }
+                  onPress={() => openAdminModule(item)}
                 >
                   <View style={styles.cardTopRow}>
-                    <View
-                      style={styles.adminIconContainer}
-                    >
-                      <Text style={styles.cardIcon}>
-                        {item.icon}
-                      </Text>
+                    <View style={styles.adminIconContainer}>
+                      <Text style={styles.cardIcon}>{item.icon}</Text>
                     </View>
 
-                    <Text style={styles.cardArrow}>
-                      ↗
-                    </Text>
+                    <Text style={styles.cardArrow}>↗</Text>
                   </View>
 
                   <View style={styles.adminNumberBadge}>
-                    <Text
-                      style={styles.adminNumberText}
-                    >
-                      {item.number}
-                    </Text>
+                    <Text style={styles.adminNumberText}>{item.number}</Text>
                   </View>
 
-                  <Text style={styles.cardTitle}>
-                    {item.title}
-                  </Text>
+                  <Text style={styles.cardTitle}>{item.title}</Text>
 
-                  <Text
-                    style={styles.cardDescription}
-                    numberOfLines={3}
-                  >
+                  <Text style={styles.cardDescription} numberOfLines={3}>
                     {item.description}
                   </Text>
 
                   <View style={styles.cardFooter}>
-                    <Text style={styles.cardAction}>
-                      {item.action}
-                    </Text>
+                    <Text style={styles.cardAction}>{item.action}</Text>
 
-                    <Text style={styles.footerArrow}>
-                      →
-                    </Text>
+                    <Text style={styles.footerArrow}>→</Text>
                   </View>
                 </Pressable>
               ))}
@@ -860,30 +765,23 @@ export default function AdvisorDashboard() {
             ]}
           >
             <Text style={styles.errorNoticeText}>
-              Some dashboard counts could not be
-              loaded. Tap here to retry.
+              Some dashboard counts could not be loaded. Tap here to retry.
             </Text>
           </Pressable>
         )}
 
         {/* WORKFLOW REMINDER */}
         <View
-          style={[
-            styles.reminderCard,
-            isDesktop && styles.desktopReminderCard,
-          ]}
+          style={[styles.reminderCard, isDesktop && styles.desktopReminderCard]}
         >
           <View style={styles.reminderIcon}>
-            <Text style={styles.reminderIconText}>
-              ✓
-            </Text>
+            <Text style={styles.reminderIconText}>✓</Text>
           </View>
 
           <View style={styles.reminderDivider} />
 
           <Text style={styles.reminderText}>
-            Follow each stage of the vehicle workflow in
-            order.
+            Follow each stage of the vehicle workflow in order.
           </Text>
 
           <View style={styles.brandMark}>
@@ -900,38 +798,26 @@ export default function AdvisorDashboard() {
         visible={placeholderVisible}
         transparent
         animationType="fade"
-        onRequestClose={() =>
-          setPlaceholderVisible(false)
-        }
+        onRequestClose={() => setPlaceholderVisible(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalIcon}>
-              <Text style={styles.modalIconText}>
-                ℹ
-              </Text>
+              <Text style={styles.modalIconText}>ℹ</Text>
             </View>
 
-            <Text style={styles.modalTitle}>
-              {placeholderTitle}
-            </Text>
+            <Text style={styles.modalTitle}>{placeholderTitle}</Text>
 
-            <Text style={styles.modalMessage}>
-              {placeholderMessage}
-            </Text>
+            <Text style={styles.modalMessage}>{placeholderMessage}</Text>
 
             <Pressable
               style={({ pressed }) => [
                 styles.modalButton,
                 pressed && styles.pressed,
               ]}
-              onPress={() =>
-                setPlaceholderVisible(false)
-              }
+              onPress={() => setPlaceholderVisible(false)}
             >
-              <Text style={styles.modalButtonText}>
-                OK
-              </Text>
+              <Text style={styles.modalButtonText}>OK</Text>
             </Pressable>
           </View>
         </View>

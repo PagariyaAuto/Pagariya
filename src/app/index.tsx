@@ -1,23 +1,22 @@
-
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import {
-  colors,
-  radius,
-  spacing,
-  typography,
-} from "../theme";
+import { colors, radius, spacing, typography } from "../theme";
 
 import { supabase } from "../../lib/supabase";
+
+type UserRole =
+  | "watchman"
+  | "ceo_admin"
+  | "advisor"
+  | "store_team"
+  | "floor_incharge"
+  | "supervisor"
+  | "worker_group"
+  | "billing_department";
 
 export default function Index() {
   const [checking, setChecking] = useState(true);
@@ -61,17 +60,42 @@ export default function Index() {
         return;
       }
 
-      if (!data.is_active) {
+      if (!data?.is_active) {
         await supabase.auth.signOut();
         router.replace("/login");
         return;
       }
 
-      // Redirect users according to their role
-      if (data.role === "advisor") {
-        router.replace("/(tabs)/advisor");
-      } else {
-        router.replace("/(tabs)");
+      const role = data.role as UserRole;
+
+      switch (role) {
+        case "advisor":
+          router.replace("/(tabs)/advisor");
+          return;
+
+        case "store_team":
+          router.replace("/(tabs)/store" as never);
+          return;
+
+        case "watchman":
+          router.replace("/(tabs)/watchman/vehicles");
+          return;
+
+        case "floor_incharge":
+          router.replace("/(tabs)/work/floor-incharge");
+          return;
+
+        case "supervisor":
+        case "worker_group":
+        case "billing_department":
+        case "ceo_admin":
+          router.replace("/(tabs)");
+          return;
+
+        default:
+          console.log("Unknown user role:", data.role);
+          router.replace("/(tabs)");
+          return;
       }
     } catch (error) {
       console.log("Check user error:", error);
@@ -85,38 +109,25 @@ export default function Index() {
     return (
       <SafeAreaView
         style={styles.container}
-        edges={["top", "bottom"]}
+        edges={["top", "bottom", "left", "right"]}
       >
         <View style={styles.content}>
-          {/* APP ICON */}
           <View style={styles.logoContainer}>
             <Text style={styles.logoText}>P</Text>
           </View>
 
-          {/* APP NAME */}
           <Text style={styles.appName}>Pagariya</Text>
 
-          <Text style={styles.tagline}>
-            Workshop Management
-          </Text>
+          <Text style={styles.tagline}>Workshop Management</Text>
 
-          {/* LOADING */}
           <View style={styles.loadingContainer}>
-            <ActivityIndicator
-              size="small"
-              color={colors.primary}
-            />
+            <ActivityIndicator size="small" color={colors.primary} />
 
-            <Text style={styles.loadingText}>
-              Loading...
-            </Text>
+            <Text style={styles.loadingText}>Loading...</Text>
           </View>
         </View>
 
-        {/* FOOTER */}
-        <Text style={styles.footerText}>
-          Pagariya Auto
-        </Text>
+        <Text style={styles.footerText}>Pagariya Auto</Text>
       </SafeAreaView>
     );
   }

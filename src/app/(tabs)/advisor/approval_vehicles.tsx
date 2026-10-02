@@ -1,16 +1,16 @@
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    BackHandler,
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  BackHandler,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -80,52 +80,58 @@ type Item = {
 type Priority = "Urgent" | "High" | "Medium" | "Low";
 type PriorityFilter = "All" | Priority;
 
+const PAGE_SIZE = 25;
 const DAY = 86400000;
 
-const ORDER: Record<Priority, number> = {
+const PRIORITY_ORDER: Record<Priority, number> = {
   Urgent: 0,
   High: 1,
   Medium: 2,
   Low: 3,
 };
 
-const days = (x: Item) =>
-  Math.max(
-    0,
-    Math.floor(
-      (Date.now() -
-        new Date(
-          x.visit.stage_started_at || x.visit.created_at
-        ).getTime()) /
-        DAY
-    )
-  );
+const daysPending = (item: Item) => {
+  const startedAt = item.visit.stage_started_at || item.visit.created_at;
 
-const priority = (d: number): Priority => {
-  if (d >= 7) return "Urgent";
-  if (d >= 4) return "High";
-  if (d >= 2) return "Medium";
+  const startedTime = new Date(startedAt).getTime();
+
+  if (!Number.isFinite(startedTime)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor((Date.now() - startedTime) / DAY));
+};
+
+const getPriority = (days: number): Priority => {
+  if (days >= 7) return "Urgent";
+  if (days >= 4) return "High";
+  if (days >= 2) return "Medium";
   return "Low";
 };
 
-const jobType = (value: string | null | undefined) => {
-  const x = (value || "").trim().toUpperCase();
+const formatJobType = (value: string | null | undefined) => {
+  const normalized = (value || "").trim().toUpperCase();
 
-  if (x === "PAID") return "PAID";
-  if (x === "INSURANCE") return "INSURANCE";
+  if (normalized === "PAID") {
+    return "PAID";
+  }
+
+  if (normalized === "INSURANCE") {
+    return "INSURANCE";
+  }
 
   return value?.trim() || "Unknown";
 };
 
-const dateText = (value: string | null) => {
+const formatDateTime = (value: string | null) => {
   if (!value) {
-    return "Date unavailable";
+    return "—";
   }
 
   const date = new Date(value);
 
   if (!Number.isFinite(date.getTime())) {
-    return "Date unavailable";
+    return "—";
   }
 
   return date.toLocaleString("en-IN", {
@@ -140,87 +146,88 @@ const dateText = (value: string | null) => {
 
 export default function ApprovalVehiclesScreen() {
   const [items, setItems] = useState<Item[]>([]);
-  const [advisorNames, setAdvisorNames] = useState<
-    Record<string, string>
-  >({});
+
+  const [advisorNames, setAdvisorNames] = useState<Record<string, string>>({});
+
   const [role, setRole] = useState("");
+
   const [loading, setLoading] = useState(true);
+
   const [refreshing, setRefreshing] = useState(false);
+
   const [error, setError] = useState("");
+
   const [search, setSearch] = useState("");
-  const [filter, setFilter] =
-    useState<PriorityFilter>("All");
-  const [lastUpdated, setLastUpdated] =
-    useState<Date | null>(null);
+
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("All");
+
+  const [page, setPage] = useState(1);
+
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useFocusEffect(
     useCallback(() => {
-      const subscription =
-        BackHandler.addEventListener(
-          "hardwareBackPress",
-          () => {
-            router.replace("/(tabs)/advisor");
-            return true;
-          }
-        );
+      const subscription = BackHandler.addEventListener(
+        "hardwareBackPress",
+        () => {
+          router.replace("/(tabs)/advisor");
+          return true;
+        },
+      );
 
       return () => subscription.remove();
-    }, [])
+    }, []),
   );
 
-  const load = useCallback(
-    async (refresh = false) => {
-      try {
-        if (refresh) {
-          setRefreshing(true);
-        } else {
-          setLoading(true);
-        }
+  const load = useCallback(async (refresh = false) => {
+    try {
+      if (refresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
 
-        setError("");
+      setError("");
 
-        const {
-          data: { user },
-          error: authError,
-        } = await supabase.auth.getUser();
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
 
-        if (authError) {
-          throw authError;
-        }
+      if (authError) {
+        throw authError;
+      }
 
-        if (!user) {
-          router.replace("/login");
-          return;
-        }
+      if (!user) {
+        router.replace("/login");
+        return;
+      }
 
-        const {
-          data: profile,
-          error: profileError,
-        } = await supabase
-          .from("profiles")
-          .select("id, role, is_active")
-          .eq("id", user.id)
-          .single();
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, role, is_active")
+        .eq("id", user.id)
+        .single();
 
-        if (profileError) {
-          throw profileError;
-        }
+      if (profileError) {
+        throw profileError;
+      }
 
-        if (
-          !profile?.is_active ||
-          !["advisor", "ceo_admin"].includes(profile.role)
-        ) {
-          throw new Error(
-            "Only an active Advisor or CEO Admin can view the approval queue."
-          );
-        }
+      if (
+        !profile?.is_active ||
+        !["advisor", "ceo_admin"].includes(profile.role)
+      ) {
+        throw new Error(
+          "Only an active Advisor or CEO Admin can view the approval queue.",
+        );
+      }
 
-        setRole(profile.role);
+      setRole(profile.role);
 
-        let visitQuery = supabase
-          .from("workshop_visits")
-          .select(
-            `
+      let visitQuery = supabase
+        .from("workshop_visits")
+        .select(
+          `
               id,
               vehicle_id,
               current_stage,
@@ -228,72 +235,45 @@ export default function ApprovalVehiclesScreen() {
               current_assigned_to,
               stage_started_at,
               created_at
+            `,
+        )
+        .eq("current_stage", "PENDING_APPROVAL")
+        .in("current_status", ["PENDING", "IN_PROGRESS"])
+        .not("current_assigned_to", "is", null)
+        .order("stage_started_at", {
+          ascending: true,
+          nullsFirst: false,
+        });
+
+      if (profile.role === "advisor") {
+        visitQuery = visitQuery.eq("current_assigned_to", user.id);
+      }
+
+      const { data: visitData, error: visitError } = await visitQuery;
+
+      if (visitError) {
+        throw visitError;
+      }
+
+      const visits = (visitData || []) as Visit[];
+
+      if (!visits.length) {
+        setItems([]);
+        setAdvisorNames({});
+        setPage(1);
+        setLastUpdated(new Date());
+        return;
+      }
+
+      const vehicleIds = [...new Set(visits.map((visit) => visit.vehicle_id))];
+
+      const visitIds = [...new Set(visits.map((visit) => visit.id))];
+
+      const [vehiclesResult, intakeResult, surveysResult] = await Promise.all([
+        supabase
+          .from("vehicles")
+          .select(
             `
-          )
-          .eq("current_stage", "PENDING_APPROVAL")
-          .in("current_status", [
-            "PENDING",
-            "IN_PROGRESS",
-          ])
-          .not("current_assigned_to", "is", null)
-          .order("stage_started_at", {
-            ascending: true,
-            nullsFirst: false,
-          });
-
-        /*
-         * Advisor:
-         * only see their own assigned vehicles.
-         *
-         * CEO Admin:
-         * can see all assigned approval vehicles.
-         */
-        if (profile.role === "advisor") {
-          visitQuery = visitQuery.eq(
-            "current_assigned_to",
-            user.id
-          );
-        }
-
-        const {
-          data: visitData,
-          error: visitError,
-        } = await visitQuery;
-
-        if (visitError) {
-          throw visitError;
-        }
-
-        const visits = (visitData || []) as Visit[];
-
-        if (!visits.length) {
-          setItems([]);
-          setAdvisorNames({});
-          setLastUpdated(new Date());
-          return;
-        }
-
-        const vehicleIds = [
-          ...new Set(
-            visits.map((visit) => visit.vehicle_id)
-          ),
-        ];
-
-        const visitIds = [
-          ...new Set(
-            visits.map((visit) => visit.id)
-          ),
-        ];
-
-        const [
-          vehiclesResult,
-          intakeResult,
-          surveysResult,
-        ] = await Promise.all([
-          supabase
-            .from("vehicles")
-            .select(
-              `
                 id,
                 vehicle_no,
                 customer_name,
@@ -301,332 +281,235 @@ export default function ApprovalVehiclesScreen() {
                 model,
                 arena_nexa,
                 vehicle_type
-              `
-            )
-            .in("id", vehicleIds),
+              `,
+          )
+          .in("id", vehicleIds),
 
-          supabase
-            .from("vehicle_intake")
-            .select(
-              `
+        supabase
+          .from("vehicle_intake")
+          .select(
+            `
                 visit_id,
                 vehicle_id,
                 insurance_type,
                 mi_type_id,
                 insurance_company_id,
                 job_card_no
-              `
-            )
-            .in("visit_id", visitIds),
+              `,
+          )
+          .in("visit_id", visitIds),
 
-          supabase
-            .from("surveys")
-            .select(
-              `
+        supabase
+          .from("surveys")
+          .select(
+            `
                 visit_id,
                 survey_no,
                 survey_type,
                 completed_at
-              `
-            )
-            .in("visit_id", visitIds)
-            .order("survey_no", {
-              ascending: false,
-            }),
-        ]);
+              `,
+          )
+          .in("visit_id", visitIds)
+          .order("survey_no", {
+            ascending: false,
+          }),
+      ]);
 
-        if (vehiclesResult.error) {
-          throw vehiclesResult.error;
+      if (vehiclesResult.error) {
+        throw vehiclesResult.error;
+      }
+
+      if (intakeResult.error) {
+        throw intakeResult.error;
+      }
+
+      if (surveysResult.error) {
+        throw surveysResult.error;
+      }
+
+      const vehicles = (vehiclesResult.data || []) as Vehicle[];
+
+      const intakes = (intakeResult.data || []) as Intake[];
+
+      const surveys = (surveysResult.data || []) as Survey[];
+
+      const surveyMap = new Map<string, Survey>();
+
+      surveys.forEach((survey) => {
+        if (!surveyMap.has(survey.visit_id)) {
+          surveyMap.set(survey.visit_id, survey);
+        }
+      });
+
+      const insuranceCompanyIds = [
+        ...new Set(
+          intakes
+            .map((item) => item.insurance_company_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+
+      const miTypeIds = [
+        ...new Set(
+          intakes
+            .map((item) => item.mi_type_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+
+      let insuranceCompanies: InsuranceCompany[] = [];
+
+      let miTypes: MIType[] = [];
+
+      if (insuranceCompanyIds.length) {
+        const { data, error } = await supabase
+          .from("insurance_companies")
+          .select("id, name")
+          .in("id", insuranceCompanyIds);
+
+        if (error) {
+          throw error;
         }
 
-        if (intakeResult.error) {
-          throw intakeResult.error;
+        insuranceCompanies = (data || []) as InsuranceCompany[];
+      }
+
+      if (miTypeIds.length) {
+        const { data, error } = await supabase
+          .from("mi_types")
+          .select("id, name")
+          .in("id", miTypeIds);
+
+        if (error) {
+          throw error;
         }
 
-        if (surveysResult.error) {
-          throw surveysResult.error;
+        miTypes = (data || []) as MIType[];
+      }
+
+      const vehicleMap = new Map<string, Vehicle>();
+
+      vehicles.forEach((vehicle) => {
+        vehicleMap.set(vehicle.id, vehicle);
+      });
+
+      const intakeMap = new Map<string, Intake>();
+
+      intakes.forEach((intake) => {
+        intakeMap.set(intake.visit_id, intake);
+      });
+
+      const insuranceMap = new Map<string, InsuranceCompany>();
+
+      insuranceCompanies.forEach((company) => {
+        insuranceMap.set(company.id, company);
+      });
+
+      const miMap = new Map<string, MIType>();
+
+      miTypes.forEach((miType) => {
+        miMap.set(miType.id, miType);
+      });
+
+      const combined: Item[] = [];
+
+      visits.forEach((visit) => {
+        const vehicle = vehicleMap.get(visit.vehicle_id);
+
+        if (!vehicle) {
+          return;
         }
 
-        const vehicles =
-          (vehiclesResult.data || []) as Vehicle[];
+        const intake = intakeMap.get(visit.id) || null;
 
-        const intakes =
-          (intakeResult.data || []) as Intake[];
+        const survey = surveyMap.get(visit.id) || null;
 
-        const surveys =
-          (surveysResult.data || []) as Survey[];
+        const insuranceCompany = intake?.insurance_company_id
+          ? insuranceMap.get(intake.insurance_company_id) || null
+          : null;
 
-        /*
-         * Only the latest survey for each visit is needed.
-         */
-        const surveyMap = new Map<
-          string,
-          Survey
-        >();
+        const miType = intake?.mi_type_id
+          ? miMap.get(intake.mi_type_id) || null
+          : null;
 
-        surveys.forEach((survey) => {
-          if (!surveyMap.has(survey.visit_id)) {
-            surveyMap.set(
-              survey.visit_id,
-              survey
-            );
-          }
+        combined.push({
+          visit,
+          vehicle,
+          intake,
+          survey,
+          insuranceCompany,
+          miType,
         });
+      });
 
-        /*
-         * Load only insurance companies actually used
-         * by the vehicles in this queue.
-         */
-        const insuranceCompanyIds = [
+      setItems(combined);
+      setPage(1);
+
+      if (profile.role === "ceo_admin") {
+        const advisorIds = [
           ...new Set(
-            intakes
-              .map(
-                (item) =>
-                  item.insurance_company_id
-              )
-              .filter(
-                (id): id is string =>
-                  Boolean(id)
-              )
+            visits
+              .map((visit) => visit.current_assigned_to)
+              .filter((id): id is string => Boolean(id)),
           ),
         ];
 
-        /*
-         * Load only MI types actually used
-         * by the vehicles in this queue.
-         */
-        const miTypeIds = [
-          ...new Set(
-            intakes
-              .map((item) => item.mi_type_id)
-              .filter(
-                (id): id is string =>
-                  Boolean(id)
-              )
-          ),
-        ];
-
-        let insuranceCompanies: InsuranceCompany[] =
-          [];
-
-        let miTypes: MIType[] = [];
-
-        if (insuranceCompanyIds.length > 0) {
-          const {
-            data,
-            error,
-          } = await supabase
-            .from("insurance_companies")
+        if (advisorIds.length) {
+          const { data, error } = await supabase
+            .from("profiles")
             .select("id, name")
-            .in(
-              "id",
-              insuranceCompanyIds
-            );
+            .in("id", advisorIds);
 
           if (error) {
             throw error;
           }
 
-          insuranceCompanies =
-            (data || []) as InsuranceCompany[];
-        }
+          const names: Record<string, string> = {};
 
-        if (miTypeIds.length > 0) {
-          const {
-            data,
-            error,
-          } = await supabase
-            .from("mi_types")
-            .select("id, name")
-            .in("id", miTypeIds);
-
-          if (error) {
-            throw error;
-          }
-
-          miTypes =
-            (data || []) as MIType[];
-        }
-
-        const vehicleMap = new Map<
-          string,
-          Vehicle
-        >();
-
-        vehicles.forEach((vehicle) => {
-          vehicleMap.set(
-            vehicle.id,
-            vehicle
-          );
-        });
-
-        const intakeMap = new Map<
-          string,
-          Intake
-        >();
-
-        intakes.forEach((intake) => {
-          intakeMap.set(
-            intake.visit_id,
-            intake
-          );
-        });
-
-        const insuranceMap = new Map<
-          string,
-          InsuranceCompany
-        >();
-
-        insuranceCompanies.forEach(
-          (company) => {
-            insuranceMap.set(
-              company.id,
-              company
-            );
-          }
-        );
-
-        const miMap = new Map<
-          string,
-          MIType
-        >();
-
-        miTypes.forEach((miType) => {
-          miMap.set(
-            miType.id,
-            miType
-          );
-        });
-
-        const combined: Item[] = [];
-
-        visits.forEach((visit) => {
-          const vehicle =
-            vehicleMap.get(
-              visit.vehicle_id
-            );
-
-          if (!vehicle) {
-            return;
-          }
-
-          const intake =
-            intakeMap.get(visit.id) ||
-            null;
-
-          const survey =
-            surveyMap.get(visit.id) ||
-            null;
-
-          const insuranceCompany =
-            intake?.insurance_company_id
-              ? insuranceMap.get(
-                  intake.insurance_company_id
-                ) || null
-              : null;
-
-          const miType =
-            intake?.mi_type_id
-              ? miMap.get(
-                  intake.mi_type_id
-                ) || null
-              : null;
-
-          combined.push({
-            visit,
-            vehicle,
-            intake,
-            survey,
-            insuranceCompany,
-            miType,
+          ((data || []) as Advisor[]).forEach((advisor) => {
+            names[advisor.id] =
+              advisor.name?.trim() || "Advisor name unavailable";
           });
-        });
 
-        setItems(combined);
-
-        /*
-         * CEO Admin sees advisor names.
-         */
-        if (profile.role === "ceo_admin") {
-          const advisorIds = [
-            ...new Set(
-              visits
-                .map(
-                  (visit) =>
-                    visit.current_assigned_to
-                )
-                .filter(
-                  (
-                    id
-                  ): id is string =>
-                    Boolean(id)
-                )
-            ),
-          ];
-
-          if (advisorIds.length > 0) {
-            const {
-              data,
-              error,
-            } = await supabase
-              .from("profiles")
-              .select("id, name")
-              .in(
-                "id",
-                advisorIds
-              );
-
-            if (error) {
-              throw error;
-            }
-
-            const names: Record<
-              string,
-              string
-            > = {};
-
-            (data || []).forEach(
-              (advisor: Advisor) => {
-                names[advisor.id] =
-                  advisor.name?.trim() ||
-                  "Advisor name unavailable";
-              }
-            );
-
-            setAdvisorNames(names);
-          } else {
-            setAdvisorNames({});
-          }
+          setAdvisorNames(names);
         } else {
           setAdvisorNames({});
         }
-
-        setLastUpdated(new Date());
-      } catch (e) {
-        setError(
-          e instanceof Error
-            ? e.message
-            : "Please try again."
-        );
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
+      } else {
+        setAdvisorNames({});
       }
-    },
-    []
-  );
+
+      setLastUpdated(new Date());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Please try again.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load])
+    }, [load]),
   );
 
+  /*
+   * Reset pagination when search
+   * or priority changes.
+   */
+  const handleSearch = (value: string) => {
+    setSearch(value);
+    setPage(1);
+  };
+
+  const handlePriority = (value: PriorityFilter) => {
+    setPriorityFilter(value);
+    setPage(1);
+  };
+
   const counts = useMemo(() => {
-    const result: Record<
-      Priority,
-      number
-    > = {
+    const result: Record<Priority, number> = {
       Urgent: 0,
       High: 0,
       Medium: 0,
@@ -634,504 +517,374 @@ export default function ApprovalVehiclesScreen() {
     };
 
     items.forEach((item) => {
-      result[priority(days(item))]++;
+      result[getPriority(daysPending(item))]++;
     });
 
     return result;
   }, [items]);
 
-  const filtered = useMemo(() => {
-    const searchText =
-      search.trim().toLowerCase();
+  const filteredItems = useMemo(() => {
+    const query = search.trim().toLowerCase();
 
     return [...items]
       .filter((item) => {
-        const vehicle =
-          item.vehicle;
+        const vehicle = item.vehicle;
 
-        const intake =
-          item.intake;
+        const intake = item.intake;
 
-        const insuranceCompany =
-          item.insuranceCompany;
+        const insurance = item.insuranceCompany;
 
-        const miType =
-          item.miType;
+        const miType = item.miType;
 
         const matchesSearch =
-          !searchText ||
-          (
-            vehicle.vehicle_no ||
-            ""
-          )
-            .toLowerCase()
-            .includes(searchText) ||
-          (
-            vehicle.customer_name ||
-            ""
-          )
-            .toLowerCase()
-            .includes(searchText) ||
-          (
-            vehicle.customer_mobile ||
-            ""
-          )
-            .toLowerCase()
-            .includes(searchText) ||
-          (
-            intake?.job_card_no ||
-            ""
-          )
-            .toLowerCase()
-            .includes(searchText) ||
-          (
-            insuranceCompany?.name ||
-            ""
-          )
-            .toLowerCase()
-            .includes(searchText) ||
-          (
-            miType?.name ||
-            ""
-          )
-            .toLowerCase()
-            .includes(searchText);
+          !query ||
+          (vehicle.vehicle_no || "").toLowerCase().includes(query) ||
+          (vehicle.customer_name || "").toLowerCase().includes(query) ||
+          (vehicle.customer_mobile || "").toLowerCase().includes(query) ||
+          (intake?.job_card_no || "").toLowerCase().includes(query) ||
+          (insurance?.name || "").toLowerCase().includes(query) ||
+          (miType?.name || "").toLowerCase().includes(query);
 
         const matchesPriority =
-          filter === "All" ||
-          priority(days(item)) ===
-            filter;
+          priorityFilter === "All" ||
+          getPriority(daysPending(item)) === priorityFilter;
 
-        return (
-          matchesSearch &&
-          matchesPriority
-        );
+        return matchesSearch && matchesPriority;
       })
       .sort((a, b) => {
-        const priorityA =
-          priority(days(a));
+        const priorityA = getPriority(daysPending(a));
 
-        const priorityB =
-          priority(days(b));
+        const priorityB = getPriority(daysPending(b));
 
         return (
-          ORDER[priorityA] -
-            ORDER[priorityB] ||
-          days(b) - days(a) ||
-          (
-            a.vehicle.vehicle_no ||
-            ""
-          ).localeCompare(
-            b.vehicle.vehicle_no ||
-              ""
-          )
+          PRIORITY_ORDER[priorityA] - PRIORITY_ORDER[priorityB] ||
+          daysPending(b) - daysPending(a) ||
+          (a.vehicle.vehicle_no || "").localeCompare(b.vehicle.vehicle_no || "")
         );
       });
-  }, [items, search, filter]);
+  }, [items, search, priorityFilter]);
 
-  const openApproval = (
-    item: Item
-  ) => {
-    /*
-     * The Approval Form will be created
-     * in the next step.
-     */
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+
+  /*
+   * Keep page valid if filtering
+   * reduces the total page count.
+   */
+  const safePage = Math.min(page, totalPages);
+
+  const startIndex = (safePage - 1) * PAGE_SIZE;
+
+  const endIndex = Math.min(startIndex + PAGE_SIZE, filteredItems.length);
+
+  const paginatedItems = filteredItems.slice(startIndex, endIndex);
+
+  const openApproval = (item: Item) => {
     router.push({
-      pathname:
-        "/(tabs)/advisor/approval_form",
+      pathname: "/(tabs)/advisor/approval_form",
       params: {
         visitId: item.visit.id,
-        vehicleId:
-          item.vehicle.id,
+        vehicleId: item.vehicle.id,
       },
     });
   };
 
   if (loading) {
     return (
-      <SafeAreaView
-        style={s.container}
-        edges={["top", "bottom"]}
-      >
+      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
         <StatusBar
           barStyle="dark-content"
-          backgroundColor={
-            colors.background
-          }
+          backgroundColor={colors.background}
         />
 
-        <View style={s.center}>
-          <ActivityIndicator
-            color={colors.primary}
-            size="large"
-          />
+        <View style={styles.loadingCenter}>
+          <ActivityIndicator size="large" color={colors.primary} />
 
-          <Text style={s.state}>
-            Loading approval queue…
-          </Text>
+          <Text style={styles.loadingText}>Loading approval queue…</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView
-      style={s.container}
-      edges={["top", "bottom"]}
-    >
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor={
-          colors.background
-        }
-      />
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
 
       <ScrollView
-        contentContainerStyle={
-          s.content
-        }
+        contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={
-          false
-        }
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() =>
-              load(true)
-            }
-            tintColor={
-              colors.primary
-            }
+            onRefresh={() => load(true)}
+            tintColor={colors.primary}
           />
         }
       >
-        {/* HEADER */}
+        {/* TOP BAR */}
 
-        <View style={s.top}>
+        <View style={styles.topBar}>
           <Pressable
-            onPress={() =>
-              router.replace(
-                "/(tabs)/advisor"
-              )
-            }
+            onPress={() => router.replace("/(tabs)/advisor")}
             hitSlop={10}
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed && styles.pressed,
+            ]}
           >
-            <Text style={s.back}>
-              ‹ Back
-            </Text>
+            <Text style={styles.backArrow}>‹</Text>
+
+            <Text style={styles.backText}>Back</Text>
           </Pressable>
 
-          <Text style={s.brand}>
-            PAGARIYA
-          </Text>
+          <Text style={styles.brand}>PAGARIYA</Text>
         </View>
 
         {/* HERO */}
 
-        <View style={s.hero}>
-          <Text style={s.eyebrow}>
-            ADVISOR WORKSPACE
+        <View style={styles.hero}>
+          <Text style={styles.heroEyebrow}>ADVISOR WORKSPACE</Text>
+
+          <Text style={styles.heroTitle}>Pending Approval</Text>
+
+          <Text style={styles.heroSubtitle}>
+            Vehicles that have completed survey and are waiting for an approval
+            decision.
           </Text>
 
-          <Text style={s.heading}>
-            Pending Approval
-          </Text>
+          <View style={styles.heroBottom}>
+            <View style={styles.heroCount}>
+              <Text style={styles.heroCountText}>
+                {filteredItems.length}{" "}
+                {filteredItems.length === 1 ? "vehicle" : "vehicles"} shown
+              </Text>
+            </View>
 
-          <Text style={s.sub}>
-            {role === "ceo_admin"
-              ? "Vehicles assigned to advisors and waiting for approval."
-              : "Vehicles assigned to you and waiting for approval."}
-          </Text>
-
-          <View style={s.count}>
-            <Text
-              style={s.countText}
-            >
-              {items.length}{" "}
-              {items.length === 1
-                ? "vehicle"
-                : "vehicles"}{" "}
-              pending
-            </Text>
-          </View>
-
-          {lastUpdated && (
-            <Text style={s.updated}>
-              Last updated:{" "}
-              {lastUpdated.toLocaleTimeString(
-                "en-IN",
-                {
+            {lastUpdated && (
+              <Text style={styles.updated}>
+                Updated{" "}
+                {lastUpdated.toLocaleTimeString("en-IN", {
                   hour: "2-digit",
                   minute: "2-digit",
-                  second: "2-digit",
                   hour12: true,
-                }
-              )}
-            </Text>
-          )}
+                })}
+              </Text>
+            )}
+          </View>
         </View>
 
         {/* ERROR */}
 
         {error !== "" && (
-          <View style={s.error}>
-            <Text
-              style={s.errorTitle}
-            >
-              Couldn't load the queue
-            </Text>
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Couldn't load the queue</Text>
 
-            <Text
-              style={s.errorMsg}
-            >
-              {error}
-            </Text>
+            <Text style={styles.errorMessage}>{error}</Text>
 
-            <Pressable
-              onPress={() =>
-                load(true)
-              }
-              style={s.smallButton}
-            >
-              <Text
-                style={s.buttonText}
-              >
-                Try Again
-              </Text>
+            <Pressable onPress={() => load(true)} style={styles.retryButton}>
+              <Text style={styles.retryText}>Try Again</Text>
             </Pressable>
           </View>
         )}
 
-        {/* PRIORITY */}
+        {/* PRIORITY OVERVIEW */}
 
-        <View style={s.card}>
-          <Text style={s.section}>
-            Priority Overview
-          </Text>
+        <View style={styles.card}>
+          <View style={styles.sectionHeader}>
+            <View
+              style={{
+                flex: 1,
+              }}
+            >
+              <Text style={styles.sectionTitle}>Priority Overview</Text>
 
-          <View style={s.grid}>
-            <Tile
-              p="All"
-              n={items.length}
-              selected={
-                filter === "All"
-              }
-              onPress={() =>
-                setFilter("All")
-              }
-            />
+              <Text style={styles.sectionSubtitle}>
+                Older approvals appear first.
+              </Text>
+            </View>
 
-            <Tile
-              p="Urgent"
-              n={counts.Urgent}
-              selected={
-                filter === "Urgent"
-              }
-              onPress={() =>
-                setFilter("Urgent")
-              }
-            />
-
-            <Tile
-              p="High"
-              n={counts.High}
-              selected={
-                filter === "High"
-              }
-              onPress={() =>
-                setFilter("High")
-              }
-            />
-
-            <Tile
-              p="Medium"
-              n={counts.Medium}
-              selected={
-                filter === "Medium"
-              }
-              onPress={() =>
-                setFilter("Medium")
-              }
-            />
-
-            <Tile
-              p="Low"
-              n={counts.Low}
-              selected={
-                filter === "Low"
-              }
-              onPress={() =>
-                setFilter("Low")
-              }
-            />
+            <Text style={styles.totalText}>{items.length} total</Text>
           </View>
 
-          <Text style={s.note}>
-            Priority is based on how long
-            approval has been pending.
-            Older approvals appear first
-            within each priority level.
-          </Text>
+          <View style={styles.priorityGrid}>
+            <PriorityTile
+              label="All"
+              count={items.length}
+              selected={priorityFilter === "All"}
+              onPress={() => handlePriority("All")}
+              type="All"
+            />
+
+            <PriorityTile
+              label="Urgent"
+              count={counts.Urgent}
+              selected={priorityFilter === "Urgent"}
+              onPress={() => handlePriority("Urgent")}
+              type="Urgent"
+            />
+
+            <PriorityTile
+              label="High"
+              count={counts.High}
+              selected={priorityFilter === "High"}
+              onPress={() => handlePriority("High")}
+              type="High"
+            />
+
+            <PriorityTile
+              label="Medium"
+              count={counts.Medium}
+              selected={priorityFilter === "Medium"}
+              onPress={() => handlePriority("Medium")}
+              type="Medium"
+            />
+
+            <PriorityTile
+              label="Low"
+              count={counts.Low}
+              selected={priorityFilter === "Low"}
+              onPress={() => handlePriority("Low")}
+              type="Low"
+            />
+          </View>
         </View>
 
         {/* SEARCH */}
 
-        <View style={s.card}>
-          <Text style={s.section}>
-            Find a Vehicle
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Find a Vehicle</Text>
+
+          <Text style={styles.sectionSubtitle}>
+            Search registration, customer, mobile, job card, insurance or MI
+            type.
           </Text>
 
           <TextInput
             value={search}
-            onChangeText={setSearch}
-            placeholder="Search registration, customer, mobile, JC no., insurance or MI type"
-            placeholderTextColor={
-              colors.textSecondary
-            }
+            onChangeText={handleSearch}
+            placeholder="Search vehicles..."
+            placeholderTextColor={colors.textSecondary}
             autoCapitalize="characters"
             autoCorrect={false}
             returnKeyType="search"
-            style={s.input}
+            style={styles.searchInput}
           />
         </View>
 
-        {/* EMPTY / VEHICLES */}
+        {/* RESULT SUMMARY */}
 
-        {items.length === 0 &&
-        !error ? (
-          <Empty
-            text={
+        {filteredItems.length > 0 && (
+          <View style={styles.resultBar}>
+            <Text style={styles.resultText}>
+              Showing {startIndex + 1}–{endIndex} of {filteredItems.length}{" "}
+              vehicles
+            </Text>
+
+            {priorityFilter !== "All" && (
+              <Text style={styles.filterText}>{priorityFilter}</Text>
+            )}
+          </View>
+        )}
+
+        {/* VEHICLES */}
+
+        {items.length === 0 && !error ? (
+          <EmptyState
+            title="No pending approvals"
+            message={
               role === "ceo_admin"
-                ? "There are currently no vehicles pending for approval."
-                : "You currently have no vehicles pending for approval."
+                ? "There are currently no vehicles waiting for approval."
+                : "You currently have no vehicles waiting for approval."
             }
-            action="Refresh Queue"
-            onPress={() =>
-              load(true)
-            }
+            button="Refresh Queue"
+            onPress={() => load(true)}
           />
-        ) : items.length > 0 &&
-          !filtered.length ? (
-          <Empty
-            text="No vehicles match your search or selected priority. Try changing the filter or search term."
-            action="Clear Search & Filter"
+        ) : items.length > 0 && !filteredItems.length ? (
+          <EmptyState
+            title="No matching vehicles"
+            message="No vehicles match your search or selected priority."
+            button="Clear Search & Filter"
             onPress={() => {
               setSearch("");
-              setFilter("All");
+              setPriorityFilter("All");
+              setPage(1);
             }}
           />
         ) : (
-          filtered.map((item) => {
-            const pendingDays =
-              days(item);
+          paginatedItems.map((item) => {
+            const pendingDays = daysPending(item);
 
-            const itemPriority =
-              priority(
-                pendingDays
-              );
+            const itemPriority = getPriority(pendingDays);
 
-            const type =
-              jobType(
-                item.intake
-                  ?.insurance_type
-              );
+            const type = formatJobType(item.intake?.insurance_type);
 
             return (
-              <View
-                key={
-                  item.visit.id
-                }
-                style={s.vehicle}
-              >
+              <View key={item.visit.id} style={styles.vehicleCard}>
                 {/* VEHICLE HEADER */}
 
-                <View
-                  style={s.header}
-                >
-                  <View
-                    style={{
-                      flex: 1,
-                    }}
-                  >
-                    <Text
-                      style={s.small}
-                    >
+                <View style={styles.vehicleHeader}>
+                  <View style={styles.vehicleHeaderLeft}>
+                    <Text style={styles.vehicleLabel}>
                       VEHICLE REGISTRATION
                     </Text>
 
-                    <Text
-                      style={s.reg}
-                    >
-                      {item.vehicle
-                        .vehicle_no ||
-                        "Registration unavailable"}
+                    <Text style={styles.registration}>
+                      {item.vehicle.vehicle_no || "Registration unavailable"}
                     </Text>
                   </View>
 
-                  <View
-                    style={
-                      s.pending
-                    }
-                  >
-                    <Text
-                      style={
-                        s.pendingText
-                      }
-                    >
+                  <View style={styles.pendingBadge}>
+                    <Text style={styles.pendingBadgeText}>
+                      PENDING APPROVAL
+                    </Text>
+                  </View>
+                </View>
+
+                {/* WORKFLOW */}
+
+                <View style={styles.workflowRow}>
+                  <View style={styles.workflowDone}>
+                    <Text style={styles.workflowDoneText}>
+                      ✓ Survey Completed
+                    </Text>
+                  </View>
+
+                  <Text style={styles.workflowArrow}>→</Text>
+
+                  <View style={styles.workflowCurrent}>
+                    <Text style={styles.workflowCurrentText}>
                       Pending Approval
                     </Text>
                   </View>
                 </View>
 
-                {/* PRIORITY / JOB TYPE */}
+                {/* PRIORITY */}
 
-                <View
-                  style={
-                    s.priorityLine
-                  }
-                >
-                  <Badge
-                    p={
-                      itemPriority
-                    }
-                  />
+                <View style={styles.priorityRow}>
+                  <PriorityBadge priority={itemPriority} />
 
-                  <Text
-                    style={
-                      s.pendingAge
-                    }
-                  >
-                    {pendingDays}{" "}
-                    {pendingDays ===
-                    1
-                      ? "day"
-                      : "days"}{" "}
-                    pending
+                  <Text style={styles.pendingText}>
+                    {pendingDays} {pendingDays === 1 ? "day" : "days"} pending
                   </Text>
 
                   <View
                     style={[
-                      s.jobBadge,
-                      type ===
-                      "PAID"
-                        ? s.paid
-                        : type ===
-                          "INSURANCE"
-                        ? s.insurance
-                        : s.unknown,
+                      styles.jobBadge,
+                      type === "PAID"
+                        ? styles.paidBadge
+                        : type === "INSURANCE"
+                          ? styles.insuranceBadge
+                          : styles.unknownBadge,
                     ]}
                   >
                     <Text
                       style={[
-                        s.jobText,
-                        type ===
-                        "PAID"
-                          ? s.paidText
-                          : type ===
-                            "INSURANCE"
-                          ? s.insuranceText
-                          : s.unknownText,
+                        styles.jobBadgeText,
+                        type === "PAID"
+                          ? styles.paidText
+                          : type === "INSURANCE"
+                            ? styles.insuranceText
+                            : styles.unknownText,
                       ]}
                     >
                       {type}
@@ -1139,153 +892,88 @@ export default function ApprovalVehiclesScreen() {
                   </View>
                 </View>
 
-                <View
-                  style={s.sep}
-                />
+                <View style={styles.divider} />
 
                 {/* DETAILS */}
 
-                <Info
-                  label="Customer"
-                  value={
-                    item.vehicle
-                      .customer_name
-                  }
-                />
+                <InfoRow label="Customer" value={item.vehicle.customer_name} />
 
-                <Info
-                  label="Mobile"
-                  value={
-                    item.vehicle
-                      .customer_mobile
-                  }
-                />
+                <InfoRow label="Mobile" value={item.vehicle.customer_mobile} />
 
-                <Info
+                <InfoRow
                   label="Vehicle"
-                  value={[
-                    item.vehicle
-                      .arena_nexa,
-                    item.vehicle
-                      .model,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") ||
-                    null
-                  }
-                />
-
-                <Info
-                  label="Vehicle type"
                   value={
-                    item.vehicle
-                      .vehicle_type
-                      ? item.vehicle
-                          .vehicle_type ===
-                        "PRIVATE"
-                        ? "Private"
-                        : item.vehicle
-                            .vehicle_type ===
-                          "COMMERCIAL"
-                        ? "Commercial"
-                        : item.vehicle
-                            .vehicle_type
-                      : null
+                    [item.vehicle.arena_nexa, item.vehicle.model]
+                      .filter(Boolean)
+                      .join(" · ") || null
                   }
                 />
 
-                <Info
-                  label="Job type"
-                  value={type}
+                <InfoRow
+                  label="Vehicle Type"
+                  value={
+                    item.vehicle.vehicle_type === "PRIVATE"
+                      ? "Private"
+                      : item.vehicle.vehicle_type === "COMMERCIAL"
+                        ? "Commercial"
+                        : item.vehicle.vehicle_type
+                  }
                 />
 
-                {type ===
-                  "INSURANCE" && (
-                  <>
-                    <Info
-                      label="MI / Non-MI"
-                      value={
-                        item.miType
-                          ?.name ||
-                        null
-                      }
-                    />
+                <InfoRow label="Job Type" value={type} />
 
-                    <Info
-                      label="Insurance company"
-                      value={
-                        item
-                          .insuranceCompany
-                          ?.name ||
-                        null
-                      }
+                {type === "INSURANCE" && (
+                  <>
+                    <InfoRow label="MI / Non-MI" value={item.miType?.name} />
+
+                    <InfoRow
+                      label="Insurance Company"
+                      value={item.insuranceCompany?.name}
                     />
                   </>
                 )}
 
-                <Info
+                <InfoRow
                   label="Job Card No."
-                  value={
-                    item.intake
-                      ?.job_card_no ||
-                    null
-                  }
+                  value={item.intake?.job_card_no}
                 />
 
-                <Info
-                  label="Survey completed"
+                <InfoRow
+                  label="Survey Completed"
                   value={
-                    item.survey
-                      ?.completed_at
-                      ? dateText(
-                          item
-                            .survey
-                            .completed_at
-                        )
+                    item.survey?.completed_at
+                      ? formatDateTime(item.survey.completed_at)
                       : null
                   }
                 />
 
-                {role ===
-                  "ceo_admin" && (
-                  <Info
-                    label="Assigned advisor"
+                {role === "ceo_admin" && (
+                  <InfoRow
+                    label="Assigned Advisor"
                     value={
-                      item.visit
-                        .current_assigned_to
-                        ? advisorNames[
-                            item.visit
-                              .current_assigned_to
-                          ] ||
+                      item.visit.current_assigned_to
+                        ? advisorNames[item.visit.current_assigned_to] ||
                           "Advisor name unavailable"
                         : "Not assigned"
                     }
                   />
                 )}
 
-                <Info
-                  label="Approval pending since"
-                  value={dateText(
-                    item.visit
-                      .stage_started_at
-                  )}
+                <InfoRow
+                  label="Approval Pending Since"
+                  value={formatDateTime(item.visit.stage_started_at)}
                 />
 
-                {/* OPEN */}
+                {/* OPEN APPROVAL */}
 
                 <Pressable
-                  onPress={() =>
-                    openApproval(
-                      item
-                    )
-                  }
-                  style={s.open}
+                  onPress={() => openApproval(item)}
+                  style={({ pressed }) => [
+                    styles.openButton,
+                    pressed && styles.pressed,
+                  ]}
                 >
-                  <Text
-                    style={
-                      s.openText
-                    }
-                  >
+                  <Text style={styles.openButtonText}>
                     Open Approval Form →
                   </Text>
                 </Pressable>
@@ -1294,240 +982,225 @@ export default function ApprovalVehiclesScreen() {
           })
         )}
 
+        {/* PAGINATION */}
+
+        {filteredItems.length > PAGE_SIZE && (
+          <View style={styles.pagination}>
+            <Pressable
+              disabled={safePage <= 1}
+              onPress={() => setPage((current) => Math.max(1, current - 1))}
+              style={[
+                styles.pageButton,
+                safePage <= 1 && styles.pageButtonDisabled,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pageButtonText,
+                  safePage <= 1 && styles.pageButtonTextDisabled,
+                ]}
+              >
+                ‹ Previous
+              </Text>
+            </Pressable>
+
+            <View style={styles.pageIndicator}>
+              <Text style={styles.pageNumber}>
+                Page {safePage} of {totalPages}
+              </Text>
+
+              <Text style={styles.pageRange}>
+                {startIndex + 1}–{endIndex} of {filteredItems.length}
+              </Text>
+            </View>
+
+            <Pressable
+              disabled={safePage >= totalPages}
+              onPress={() =>
+                setPage((current) => Math.min(totalPages, current + 1))
+              }
+              style={[
+                styles.pageButton,
+                safePage >= totalPages && styles.pageButtonDisabled,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pageButtonText,
+                  safePage >= totalPages && styles.pageButtonTextDisabled,
+                ]}
+              >
+                Next ›
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* PRIORITY GUIDE */}
 
-        <View
-          style={[
-            s.card,
-            s.guide,
-          ]}
-        >
-          <Text
-            style={s.section}
-          >
-            Automatic Priority Rules
+        <View style={[styles.card, styles.guideCard]}>
+          <Text style={styles.sectionTitle}>Automatic Priority Rules</Text>
+
+          <Text style={styles.sectionSubtitle}>
+            Priority is automatically calculated from the time the vehicle
+            entered Pending Approval.
           </Text>
 
-          <Guide
-            p="Urgent"
-            t="7 or more days"
-          />
+          <GuideRow priority="Urgent" description="7 or more days" />
 
-          <Guide
-            p="High"
-            t="4–6 days"
-          />
+          <GuideRow priority="High" description="4–6 days" />
 
-          <Guide
-            p="Medium"
-            t="2–3 days"
-          />
+          <GuideRow priority="Medium" description="2–3 days" />
 
-          <Guide
-            p="Low"
-            t="0–1 day"
-          />
+          <GuideRow priority="Low" description="0–1 day" />
         </View>
 
-        <Text style={s.footer}>
-          PAGARIYA AUTO • APPROVAL QUEUE
-        </Text>
+        <Text style={styles.footer}>PAGARIYA AUTO • APPROVAL QUEUE</Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function Tile({
-  p,
-  n,
+function PriorityTile({
+  label,
+  count,
   selected,
   onPress,
+  type,
 }: {
-  p: Priority | "All";
-  n: number;
+  label: string;
+  count: number;
   selected: boolean;
   onPress: () => void;
+  type: "All" | Priority;
 }) {
-  const tone =
-    p === "Urgent"
-      ? s.urgent
-      : p === "High"
-      ? s.high
-      : p === "Medium"
-      ? s.medium
-      : p === "Low"
-      ? s.low
-      : s.all;
+  const background =
+    type === "Urgent"
+      ? styles.urgentBackground
+      : type === "High"
+        ? styles.highBackground
+        : type === "Medium"
+          ? styles.mediumBackground
+          : type === "Low"
+            ? styles.lowBackground
+            : styles.allBackground;
 
-  const toneText =
-    p === "Urgent"
-      ? s.urgentText
-      : p === "High"
-      ? s.highText
-      : p === "Medium"
-      ? s.mediumText
-      : p === "Low"
-      ? s.lowText
-      : s.allText;
+  const countColor =
+    type === "Urgent"
+      ? styles.urgentColor
+      : type === "High"
+        ? styles.highColor
+        : type === "Medium"
+          ? styles.mediumColor
+          : type === "Low"
+            ? styles.lowColor
+            : styles.allColor;
 
   return (
     <Pressable
       onPress={onPress}
       style={[
-        s.tile,
-        tone,
-        selected &&
-          s.tileSelected,
+        styles.priorityTile,
+        background,
+        selected && styles.priorityTileSelected,
       ]}
     >
-      <Text
-        style={s.tileLabel}
-      >
-        {p}
-      </Text>
+      <Text style={styles.priorityTileLabel}>{label}</Text>
 
-      <Text
-        style={[
-          s.tileCount,
-          toneText,
-        ]}
-      >
-        {n}
-      </Text>
+      <Text style={[styles.priorityTileCount, countColor]}>{count}</Text>
 
-      {selected && (
-        <Text
-          style={
-            s.selectedLabel
-          }
-        >
-          Selected
-        </Text>
-      )}
+      {selected && <Text style={styles.selectedText}>Selected</Text>}
     </Pressable>
   );
 }
 
-function Badge({
-  p,
-}: {
-  p: Priority;
-}) {
+function PriorityBadge({ priority }: { priority: Priority }) {
   const background =
-    p === "Urgent"
-      ? s.urgent
-      : p === "High"
-      ? s.high
-      : p === "Medium"
-      ? s.medium
-      : s.low;
+    priority === "Urgent"
+      ? styles.urgentBackground
+      : priority === "High"
+        ? styles.highBackground
+        : priority === "Medium"
+          ? styles.mediumBackground
+          : styles.lowBackground;
 
   const text =
-    p === "Urgent"
-      ? s.urgentText
-      : p === "High"
-      ? s.highText
-      : p === "Medium"
-      ? s.mediumText
-      : s.lowText;
+    priority === "Urgent"
+      ? styles.urgentColor
+      : priority === "High"
+        ? styles.highColor
+        : priority === "Medium"
+          ? styles.mediumColor
+          : styles.lowColor;
 
   return (
-    <View
-      style={[
-        s.badge,
-        background,
-      ]}
-    >
-      <Text
-        style={[
-          s.badgeText,
-          text,
-        ]}
-      >
-        {p}
-      </Text>
+    <View style={[styles.priorityBadge, background]}>
+      <Text style={[styles.priorityBadgeText, text]}>{priority}</Text>
     </View>
   );
 }
 
-function Guide({
-  p,
-  t,
-}: {
-  p: Priority;
-  t: string;
-}) {
-  return (
-    <View style={s.guideRow}>
-      <Badge p={p} />
-
-      <Text
-        style={s.guideText}
-      >
-        {t}
-      </Text>
-    </View>
-  );
-}
-
-function Info({
+function InfoRow({
   label,
   value,
 }: {
   label: string;
-  value: string | null;
+  value: string | null | undefined;
 }) {
   return (
-    <View style={s.info}>
-      <Text style={s.label}>
-        {label}
-      </Text>
+    <View style={styles.infoRow}>
+      <Text style={styles.infoLabel}>{label}</Text>
 
-      <Text style={s.value}>
-        {value?.trim() || "—"}
-      </Text>
+      <Text style={styles.infoValue}>{value?.trim() || "—"}</Text>
     </View>
   );
 }
 
-function Empty({
-  text,
-  action,
+function GuideRow({
+  priority,
+  description,
+}: {
+  priority: Priority;
+  description: string;
+}) {
+  return (
+    <View style={styles.guideRow}>
+      <PriorityBadge priority={priority} />
+
+      <Text style={styles.guideDescription}>{description}</Text>
+    </View>
+  );
+}
+
+function EmptyState({
+  title,
+  message,
+  button,
   onPress,
 }: {
-  text: string;
-  action: string;
+  title: string;
+  message: string;
+  button: string;
   onPress: () => void;
 }) {
   return (
-    <View style={s.empty}>
-      <Text
-        style={s.emptyTitle}
-      >
-        No pending approvals
-      </Text>
+    <View style={styles.emptyCard}>
+      <View style={styles.emptyIcon}>
+        <Text style={styles.emptyIconText}>✓</Text>
+      </View>
 
-      <Text
-        style={s.emptyMsg}
-      >
-        {text}
-      </Text>
+      <Text style={styles.emptyTitle}>{title}</Text>
 
-      <Pressable
-        onPress={onPress}
-        style={s.smallButton}
-      >
-        <Text
-          style={s.buttonText}
-        >
-          {action}
-        </Text>
+      <Text style={styles.emptyMessage}>{message}</Text>
+
+      <Pressable onPress={onPress} style={styles.retryButton}>
+        <Text style={styles.retryText}>{button}</Text>
       </Pressable>
     </View>
   );
 }
 
-const s = StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -1535,38 +1208,50 @@ const s = StyleSheet.create({
 
   content: {
     padding: spacing.lg,
-    paddingBottom:
-      spacing.xxl + 96,
+    paddingBottom: spacing.xxl + 100,
   },
 
-  center: {
+  loadingCenter: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
   },
 
-  state: {
+  loadingText: {
     color: colors.textSecondary,
     fontSize: 14,
   },
 
-  top: {
+  topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: spacing.lg,
   },
 
-  back: {
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  backArrow: {
+    fontSize: 30,
+    lineHeight: 30,
+    color: colors.primary,
+    marginRight: 4,
+  },
+
+  backText: {
     ...typography.bodyMedium,
     color: colors.primary,
   },
 
   brand: {
-    fontWeight: "800",
-    letterSpacing: 1.5,
     color: colors.text,
+    fontSize: 14,
+    fontWeight: "900",
+    letterSpacing: 1.6,
   },
 
   hero: {
@@ -1576,164 +1261,203 @@ const s = StyleSheet.create({
     marginBottom: spacing.md,
   },
 
-  eyebrow: {
+  heroEyebrow: {
     color: "#FFE5E7",
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.3,
   },
 
-  heading: {
+  heroTitle: {
+    color: "#FFFFFF",
     fontSize: 28,
-    fontWeight: "800",
-    color: "#FFF",
-    marginTop: 8,
+    fontWeight: "900",
+    marginTop: 7,
   },
 
-  sub: {
+  heroSubtitle: {
     color: "#FFF0F0",
     fontSize: 14,
     lineHeight: 20,
-    marginTop: 6,
+    marginTop: 7,
   },
 
-  count: {
-    alignSelf: "flex-start",
+  heroBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
     marginTop: 16,
+  },
+
+  heroCount: {
+    backgroundColor: "rgba(255,255,255,0.17)",
+    borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor:
-      "rgba(255,255,255,0.17)",
   },
 
-  countText: {
-    color: "#FFF",
+  heroCountText: {
+    color: "#FFFFFF",
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "900",
   },
 
   updated: {
-    color: "#FFF0F0",
+    color: "#FFE5E7",
     fontSize: 11,
-    marginTop: 9,
+    fontWeight: "600",
   },
 
   card: {
     backgroundColor: colors.surface,
-    borderRadius: 16,
+    borderRadius: 17,
     padding: 16,
     marginBottom: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
   },
 
-  section: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "800",
-    marginBottom: 10,
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 13,
   },
 
-  grid: {
+  sectionTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+
+  sectionSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 3,
+  },
+
+  totalText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
+  priorityGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
 
-  tile: {
-    width: "30%",
-    minWidth: "30%",
+  priorityTile: {
     flexGrow: 1,
-    borderRadius: 12,
+    flexBasis: "29%",
+    minWidth: 88,
+    borderRadius: 13,
     padding: 12,
     borderWidth: 1,
     borderColor: "transparent",
   },
 
-  tileSelected: {
+  priorityTileSelected: {
     borderColor: colors.primary,
     borderWidth: 2,
   },
 
-  selectedLabel: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: colors.primary,
-    marginTop: 5,
-  },
-
-  all: {
-    backgroundColor: "#F2F4F7",
-  },
-
-  allText: {
+  priorityTileLabel: {
     color: colors.text,
-  },
-
-  urgent: {
-    backgroundColor: "#FCE4E4",
-  },
-
-  high: {
-    backgroundColor: "#FFF0DB",
-  },
-
-  medium: {
-    backgroundColor: "#E8F1FF",
-  },
-
-  low: {
-    backgroundColor: "#E7F6EC",
-  },
-
-  tileLabel: {
     fontSize: 12,
     fontWeight: "800",
-    color: colors.text,
   },
 
-  tileCount: {
+  priorityTileCount: {
     fontSize: 23,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+
+  selectedText: {
+    color: colors.primary,
+    fontSize: 9,
     fontWeight: "900",
     marginTop: 3,
   },
 
-  urgentText: {
+  allBackground: {
+    backgroundColor: "#F2F4F7",
+  },
+
+  allColor: {
+    color: colors.text,
+  },
+
+  urgentBackground: {
+    backgroundColor: "#FCE4E4",
+  },
+
+  urgentColor: {
     color: "#B42318",
   },
 
-  highText: {
+  highBackground: {
+    backgroundColor: "#FFF0DB",
+  },
+
+  highColor: {
     color: "#B54708",
   },
 
-  mediumText: {
+  mediumBackground: {
+    backgroundColor: "#E8F1FF",
+  },
+
+  mediumColor: {
     color: "#175CD3",
   },
 
-  lowText: {
+  lowBackground: {
+    backgroundColor: "#E7F6EC",
+  },
+
+  lowColor: {
     color: "#18794E",
   },
 
-  note: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 11,
-  },
-
-  input: {
+  searchInput: {
+    minHeight: 48,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.background,
     color: colors.text,
-    borderRadius: 12,
-    minHeight: 46,
-    paddingHorizontal: 13,
+    paddingHorizontal: 14,
     fontSize: 14,
+    marginTop: 12,
   },
 
-  vehicle: {
+  resultBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+    paddingHorizontal: 3,
+  },
+
+  resultText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  filterText: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+
+  vehicleCard: {
     backgroundColor: colors.surface,
     borderRadius: 18,
     padding: 16,
@@ -1742,41 +1466,85 @@ const s = StyleSheet.create({
     marginBottom: 14,
   },
 
-  header: {
+  vehicleHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: 10,
   },
 
-  small: {
+  vehicleHeaderLeft: {
+    flex: 1,
+  },
+
+  vehicleLabel: {
     color: colors.textSecondary,
     fontSize: 10,
-    fontWeight: "800",
+    fontWeight: "900",
     letterSpacing: 0.8,
   },
 
-  reg: {
+  registration: {
     color: colors.text,
     fontSize: 21,
-    fontWeight: "800",
-    marginTop: 5,
+    fontWeight: "900",
+    marginTop: 4,
   },
 
-  pending: {
+  pendingBadge: {
     backgroundColor: "#FFF3D6",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
 
-  pendingText: {
+  pendingBadgeText: {
     color: "#8A5A00",
-    fontSize: 11,
+    fontSize: 9,
+    fontWeight: "900",
+  },
+
+  workflowRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 7,
+    marginTop: 13,
+  },
+
+  workflowDone: {
+    backgroundColor: "#E7F6EC",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+
+  workflowDoneText: {
+    color: "#18794E",
+    fontSize: 10,
     fontWeight: "800",
   },
 
-  priorityLine: {
+  workflowArrow: {
+    color: colors.textLight,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
+  workflowCurrent: {
+    backgroundColor: "#F2F4F7",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+
+  workflowCurrentText: {
+    color: colors.text,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+
+  priorityRow: {
     flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
@@ -1784,20 +1552,19 @@ const s = StyleSheet.create({
     marginTop: 12,
   },
 
-  badge: {
+  priorityBadge: {
     borderRadius: 999,
     paddingHorizontal: 11,
     paddingVertical: 6,
     alignSelf: "flex-start",
   },
 
-  badgeText: {
+  priorityBadgeText: {
     fontSize: 11,
     fontWeight: "900",
-    letterSpacing: 0.2,
   },
 
-  pendingAge: {
+  pendingText: {
     color: colors.textSecondary,
     fontSize: 12,
     fontWeight: "700",
@@ -1809,20 +1576,20 @@ const s = StyleSheet.create({
     paddingVertical: 6,
   },
 
-  paid: {
+  paidBadge: {
     backgroundColor: "#E7F6EC",
   },
 
-  insurance: {
+  insuranceBadge: {
     backgroundColor: "#E8F1FF",
   },
 
-  unknown: {
+  unknownBadge: {
     backgroundColor: "#F2F4F7",
   },
 
-  jobText: {
-    fontSize: 11,
+  jobBadgeText: {
+    fontSize: 10,
     fontWeight: "900",
   },
 
@@ -1838,91 +1605,146 @@ const s = StyleSheet.create({
     color: colors.textSecondary,
   },
 
-  sep: {
+  divider: {
     height: 1,
-    backgroundColor:
-      colors.divider,
-    marginVertical: 14,
+    backgroundColor: colors.divider,
+    marginVertical: 13,
   },
 
-  info: {
+  infoRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "flex-start",
-    paddingVertical: 7,
+    justifyContent: "space-between",
     gap: 12,
+    paddingVertical: 6,
   },
 
-  label: {
+  infoLabel: {
     flex: 0.85,
-    fontSize: 13,
     color: colors.textSecondary,
+    fontSize: 12,
   },
 
-  value: {
+  infoValue: {
     flex: 1.4,
-    fontSize: 13,
     color: colors.text,
-    fontWeight: "600",
+    fontSize: 12,
+    fontWeight: "700",
     textAlign: "right",
   },
 
-  open: {
-    marginTop: 16,
-    backgroundColor: colors.primary,
-    borderRadius: 12,
+  openButton: {
     minHeight: 48,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
+    marginTop: 14,
     paddingHorizontal: 14,
   },
 
-  openText: {
-    color: "#FFF",
+  openButtonText: {
+    color: "#FFFFFF",
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "900",
   },
 
-  empty: {
+  pagination: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 10,
+    marginBottom: spacing.md,
+  },
+
+  pageButton: {
+    minHeight: 42,
+    minWidth: 92,
+    paddingHorizontal: 12,
+    borderRadius: 11,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  pageButtonDisabled: {
+    backgroundColor: "#E9EAEC",
+  },
+
+  pageButtonText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  pageButtonTextDisabled: {
+    color: colors.textLight,
+  },
+
+  pageIndicator: {
+    alignItems: "center",
+    flex: 1,
+  },
+
+  pageNumber: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
+  pageRange: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    marginTop: 2,
+  },
+
+  emptyCard: {
     backgroundColor: colors.surface,
     borderRadius: 18,
-    padding: 22,
+    padding: 24,
     alignItems: "center",
     borderWidth: 1,
     borderColor: colors.border,
+    marginBottom: spacing.md,
+  },
+
+  emptyIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#E7F6EC",
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 12,
   },
 
+  emptyIconText: {
+    color: "#18794E",
+    fontSize: 23,
+    fontWeight: "900",
+  },
+
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: "800",
     color: colors.text,
+    fontSize: 18,
+    fontWeight: "900",
     textAlign: "center",
   },
 
-  emptyMsg: {
-    fontSize: 14,
-    lineHeight: 21,
+  emptyMessage: {
     color: colors.textSecondary,
-    textAlign: "center",
-    marginTop: 8,
-  },
-
-  smallButton: {
-    marginTop: 18,
-    borderRadius: 12,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    backgroundColor: colors.primary,
-  },
-
-  buttonText: {
-    color: "#FFF",
     fontSize: 13,
-    fontWeight: "800",
+    lineHeight: 20,
+    textAlign: "center",
+    marginTop: 7,
   },
 
-  error: {
+  errorCard: {
     backgroundColor: "#FEF3F2",
     borderRadius: 16,
     padding: 16,
@@ -1934,27 +1756,43 @@ const s = StyleSheet.create({
   errorTitle: {
     color: "#B42318",
     fontSize: 15,
-    fontWeight: "800",
+    fontWeight: "900",
   },
 
-  errorMsg: {
+  errorMessage: {
     color: "#912018",
     fontSize: 13,
     lineHeight: 19,
-    marginTop: 6,
+    marginTop: 5,
   },
 
-  guide: {
-    gap: 9,
+  retryButton: {
+    alignSelf: "center",
+    marginTop: 16,
+    backgroundColor: colors.primary,
+    borderRadius: 11,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+
+  retryText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  guideCard: {
+    gap: 2,
   },
 
   guideRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    paddingVertical: 5,
   },
 
-  guideText: {
+  guideDescription: {
     color: colors.textSecondary,
     fontSize: 12,
     fontWeight: "600",
@@ -1962,10 +1800,15 @@ const s = StyleSheet.create({
 
   footer: {
     textAlign: "center",
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 1,
     color: colors.textLight,
-    marginTop: 24,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginTop: 8,
+    marginBottom: 20,
+  },
+
+  pressed: {
+    opacity: 0.78,
   },
 });

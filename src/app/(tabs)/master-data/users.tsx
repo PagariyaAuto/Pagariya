@@ -2,15 +2,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    Modal,
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -25,7 +25,9 @@ type UserRole =
   | "supervisor"
   | "worker_group"
   | "billing_department"
-  | "watchman";
+  | "watchman"
+  | "store_team"
+  | "final_inspector";
 
 type UserProfile = {
   id: string;
@@ -52,6 +54,8 @@ const ROLES: { value: UserRole; label: string }[] = [
   { value: "worker_group", label: "Worker Group" },
   { value: "billing_department", label: "Billing Department" },
   { value: "watchman", label: "Watchman" },
+  { value: "store_team", label: "Store Team" },
+  { value: "final_inspector", label: "Final Inspector" },
 ];
 
 export default function UsersScreen() {
@@ -60,23 +64,18 @@ export default function UsersScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] =
-    useState<StatusFilter>("all");
-  const [roleFilter, setRoleFilter] =
-    useState<RoleFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
   const [currentPage, setCurrentPage] = useState(1);
 
   const [roleModalVisible, setRoleModalVisible] = useState(false);
-  const [roleFilterModalVisible, setRoleFilterModalVisible] =
-    useState(false);
+  const [roleFilterModalVisible, setRoleFilterModalVisible] = useState(false);
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [messageModalVisible, setMessageModalVisible] = useState(false);
 
-  const [selectedUser, setSelectedUser] =
-    useState<UserProfile | null>(null);
-  const [selectedRole, setSelectedRole] =
-    useState<UserRole>("user");
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [selectedRole, setSelectedRole] = useState<UserRole>("user");
 
   const [messageTitle, setMessageTitle] = useState("");
   const [messageText, setMessageText] = useState("");
@@ -84,20 +83,15 @@ export default function UsersScreen() {
   const [savingRole, setSavingRole] = useState(false);
   const [savingStatus, setSavingStatus] = useState(false);
 
-  const showMessage = useCallback(
-    (title: string, message: string) => {
-      setMessageTitle(title);
-      setMessageText(message);
-      setMessageModalVisible(true);
-    },
-    []
-  );
+  const showMessage = useCallback((title: string, message: string) => {
+    setMessageTitle(title);
+    setMessageText(message);
+    setMessageModalVisible(true);
+  }, []);
 
   const loadUsers = useCallback(async () => {
     try {
-      const { data, error } = await supabase.rpc(
-        "get_admin_users"
-      );
+      const { data, error } = await supabase.rpc("get_admin_users");
 
       if (error) {
         throw error;
@@ -109,8 +103,7 @@ export default function UsersScreen() {
 
       showMessage(
         "Unable to Load Users",
-        error?.message ||
-          "Something went wrong while loading users."
+        error?.message || "Something went wrong while loading users.",
       );
     } finally {
       setLoading(false);
@@ -121,7 +114,7 @@ export default function UsersScreen() {
   useFocusEffect(
     useCallback(() => {
       loadUsers();
-    }, [loadUsers])
+    }, [loadUsers]),
   );
 
   const onRefresh = useCallback(() => {
@@ -130,9 +123,7 @@ export default function UsersScreen() {
   }, [loadUsers]);
 
   const getRoleLabel = (role: UserRole) => {
-    return (
-      ROLES.find((item) => item.value === role)?.label ?? role
-    );
+    return ROLES.find((item) => item.value === role)?.label ?? role;
   };
 
   const filteredUsers = useMemo(() => {
@@ -148,8 +139,7 @@ export default function UsersScreen() {
         return false;
       }
 
-      const matchesRole =
-        roleFilter === "all" || user.role === roleFilter;
+      const matchesRole = roleFilter === "all" || user.role === roleFilter;
 
       if (!matchesRole) {
         return false;
@@ -173,39 +163,30 @@ export default function UsersScreen() {
 
   const totalPages = Math.max(
     1,
-    Math.ceil(filteredUsers.length / USERS_PER_PAGE)
+    Math.ceil(filteredUsers.length / USERS_PER_PAGE),
   );
 
   const safeCurrentPage = Math.min(currentPage, totalPages);
 
   const paginatedUsers = useMemo(() => {
-    const startIndex =
-      (safeCurrentPage - 1) * USERS_PER_PAGE;
+    const startIndex = (safeCurrentPage - 1) * USERS_PER_PAGE;
 
-    return filteredUsers.slice(
-      startIndex,
-      startIndex + USERS_PER_PAGE
-    );
+    return filteredUsers.slice(startIndex, startIndex + USERS_PER_PAGE);
   }, [filteredUsers, safeCurrentPage]);
 
   const pageStart =
-    filteredUsers.length === 0
-      ? 0
-      : (safeCurrentPage - 1) * USERS_PER_PAGE + 1;
+    filteredUsers.length === 0 ? 0 : (safeCurrentPage - 1) * USERS_PER_PAGE + 1;
 
   const pageEnd =
     filteredUsers.length === 0
       ? 0
-      : Math.min(
-          safeCurrentPage * USERS_PER_PAGE,
-          filteredUsers.length
-        );
+      : Math.min(safeCurrentPage * USERS_PER_PAGE, filteredUsers.length);
 
   const totalUsers = users.length;
 
   const activeUsers = useMemo(
     () => users.filter((user) => user.is_active).length,
-    [users]
+    [users],
   );
 
   const inactiveUsers = totalUsers - activeUsers;
@@ -222,9 +203,7 @@ export default function UsersScreen() {
   };
 
   const hasActiveFilters =
-    search.trim().length > 0 ||
-    statusFilter !== "all" ||
-    roleFilter !== "all";
+    search.trim().length > 0 || statusFilter !== "all" || roleFilter !== "all";
 
   const openRoleModal = (user: UserProfile) => {
     setSelectedUser(user);
@@ -245,13 +224,10 @@ export default function UsersScreen() {
     setSavingRole(true);
 
     try {
-      const { error } = await supabase.rpc(
-        "change_user_role",
-        {
-          target_user_id: selectedUser.id,
-          new_role: selectedRole,
-        }
-      );
+      const { error } = await supabase.rpc("change_user_role", {
+        target_user_id: selectedUser.id,
+        new_role: selectedRole,
+      });
 
       if (error) {
         throw error;
@@ -265,25 +241,22 @@ export default function UsersScreen() {
                 role: selectedRole,
                 updated_at: new Date().toISOString(),
               }
-            : user
-        )
+            : user,
+        ),
       );
 
       setRoleModalVisible(false);
 
       showMessage(
         "Role Updated",
-        `${selectedUser.name || "User"} is now ${getRoleLabel(
-          selectedRole
-        )}.`
+        `${selectedUser.name || "User"} is now ${getRoleLabel(selectedRole)}.`,
       );
     } catch (error: any) {
       console.error("Error changing role:", error);
 
       showMessage(
         "Unable to Change Role",
-        error?.message ||
-          "Something went wrong while changing the role."
+        error?.message || "Something went wrong while changing the role.",
       );
     } finally {
       setSavingRole(false);
@@ -305,13 +278,10 @@ export default function UsersScreen() {
     setSavingStatus(true);
 
     try {
-      const { error } = await supabase.rpc(
-        "change_user_status",
-        {
-          target_user_id: selectedUser.id,
-          new_status: newStatus,
-        }
-      );
+      const { error } = await supabase.rpc("change_user_status", {
+        target_user_id: selectedUser.id,
+        new_status: newStatus,
+      });
 
       if (error) {
         throw error;
@@ -325,30 +295,25 @@ export default function UsersScreen() {
                 is_active: newStatus,
                 updated_at: new Date().toISOString(),
               }
-            : user
-        )
+            : user,
+        ),
       );
 
       setStatusModalVisible(false);
 
       showMessage(
-        newStatus
-          ? "User Activated"
-          : "User Deactivated",
+        newStatus ? "User Activated" : "User Deactivated",
         `${selectedUser.name || "User"} has been ${
           newStatus ? "activated" : "deactivated"
-        }.`
+        }.`,
       );
     } catch (error: any) {
-      console.error(
-        "Error changing user status:",
-        error
-      );
+      console.error("Error changing user status:", error);
 
       showMessage(
         "Unable to Change Status",
         error?.message ||
-          "Something went wrong while changing the user status."
+          "Something went wrong while changing the user status.",
       );
     } finally {
       setSavingStatus(false);
@@ -359,7 +324,7 @@ export default function UsersScreen() {
     title: string,
     value: number,
     icon: keyof typeof Ionicons.glyphMap,
-    iconBackground: string
+    iconBackground: string,
   ) => {
     return (
       <View style={styles.summaryCard}>
@@ -371,11 +336,7 @@ export default function UsersScreen() {
             },
           ]}
         >
-          <Ionicons
-            name={icon}
-            size={19}
-            color={colors.text}
-          />
+          <Ionicons name={icon} size={19} color={colors.text} />
         </View>
 
         <View style={styles.summaryTextContainer}>
@@ -388,30 +349,19 @@ export default function UsersScreen() {
   };
 
   return (
-    <SafeAreaView
-      style={styles.safeArea}
-      edges={["top"]}
-    >
+    <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
           <Pressable
             style={styles.backButton}
-            onPress={() =>
-              router.replace("/(tabs)/master-data")
-            }
+            onPress={() => router.replace("/(tabs)/master-data")}
           >
-            <Ionicons
-              name="arrow-back"
-              size={22}
-              color={colors.text}
-            />
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
           </Pressable>
 
           <View style={styles.headerTextContainer}>
-            <Text style={styles.headerTitle}>
-              Users
-            </Text>
+            <Text style={styles.headerTitle}>Users</Text>
 
             <Text style={styles.headerSubtitle}>
               Manage roles and account access
@@ -436,21 +386,21 @@ export default function UsersScreen() {
               "Total",
               totalUsers,
               "people-outline",
-              colors.primaryLight
+              colors.primaryLight,
             )}
 
             {renderSummaryCard(
               "Active",
               activeUsers,
               "checkmark-circle-outline",
-              colors.successLight
+              colors.successLight,
             )}
 
             {renderSummaryCard(
               "Inactive",
               inactiveUsers,
               "close-circle-outline",
-              colors.dangerLight
+              colors.dangerLight,
             )}
           </View>
 
@@ -500,16 +450,14 @@ export default function UsersScreen() {
                     ["inactive", "Inactive"],
                   ] as [StatusFilter, string][]
                 ).map(([value, label]) => {
-                  const selected =
-                    statusFilter === value;
+                  const selected = statusFilter === value;
 
                   return (
                     <Pressable
                       key={value}
                       style={[
                         styles.statusFilterButton,
-                        selected &&
-                          styles.statusFilterButtonSelected,
+                        selected && styles.statusFilterButtonSelected,
                       ]}
                       onPress={() => {
                         setStatusFilter(value);
@@ -519,8 +467,7 @@ export default function UsersScreen() {
                       <Text
                         style={[
                           styles.statusFilterText,
-                          selected &&
-                            styles.statusFilterTextSelected,
+                          selected && styles.statusFilterTextSelected,
                         ]}
                       >
                         {label}
@@ -532,31 +479,24 @@ export default function UsersScreen() {
 
               <Pressable
                 style={styles.roleFilterButton}
-                onPress={() =>
-                  setRoleFilterModalVisible(true)
-                }
+                onPress={() => setRoleFilterModalVisible(true)}
               >
                 <Ionicons
                   name="funnel-outline"
                   size={17}
                   color={
-                    roleFilter === "all"
-                      ? colors.textSecondary
-                      : colors.primary
+                    roleFilter === "all" ? colors.textSecondary : colors.primary
                   }
                 />
 
                 <Text
                   style={[
                     styles.roleFilterText,
-                    roleFilter !== "all" &&
-                      styles.roleFilterTextSelected,
+                    roleFilter !== "all" && styles.roleFilterTextSelected,
                   ]}
                   numberOfLines={1}
                 >
-                  {roleFilter === "all"
-                    ? "Role"
-                    : getRoleLabel(roleFilter)}
+                  {roleFilter === "all" ? "Role" : getRoleLabel(roleFilter)}
                 </Text>
 
                 <Ionicons
@@ -578,9 +518,7 @@ export default function UsersScreen() {
                   color={colors.primary}
                 />
 
-                <Text style={styles.clearFiltersText}>
-                  Clear filters
-                </Text>
+                <Text style={styles.clearFiltersText}>Clear filters</Text>
               </Pressable>
             )}
           </View>
@@ -588,9 +526,7 @@ export default function UsersScreen() {
           {/* User List Header */}
           <View style={styles.sectionHeader}>
             <View>
-              <Text style={styles.sectionTitle}>
-                User List
-              </Text>
+              <Text style={styles.sectionTitle}>User List</Text>
 
               <Text style={styles.rangeText}>
                 {filteredUsers.length === 0
@@ -609,14 +545,9 @@ export default function UsersScreen() {
           {/* Loading */}
           {loading ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator
-                size="large"
-                color={colors.primary}
-              />
+              <ActivityIndicator size="large" color={colors.primary} />
 
-              <Text style={styles.loadingText}>
-                Loading users...
-              </Text>
+              <Text style={styles.loadingText}>Loading users...</Text>
             </View>
           ) : filteredUsers.length === 0 ? (
             /* Empty State */
@@ -629,9 +560,7 @@ export default function UsersScreen() {
                 />
               </View>
 
-              <Text style={styles.emptyTitle}>
-                No Users Found
-              </Text>
+              <Text style={styles.emptyTitle}>No Users Found</Text>
 
               <Text style={styles.emptyText}>
                 Try changing your search or filters.
@@ -642,9 +571,7 @@ export default function UsersScreen() {
                   style={styles.emptyClearButton}
                   onPress={clearFilters}
                 >
-                  <Text style={styles.emptyClearButtonText}>
-                    Clear Filters
-                  </Text>
+                  <Text style={styles.emptyClearButtonText}>Clear Filters</Text>
                 </Pressable>
               )}
             </View>
@@ -653,28 +580,17 @@ export default function UsersScreen() {
               {/* Users */}
               <View style={styles.userList}>
                 {paginatedUsers.map((user) => (
-                  <View
-                    key={user.id}
-                    style={styles.userCard}
-                  >
+                  <View key={user.id} style={styles.userCard}>
                     <View style={styles.userTopRow}>
                       <View style={styles.avatar}>
                         <Text style={styles.avatarText}>
-                          {(
-                            user.name
-                              ?.trim()
-                              ?.charAt(0) || "U"
-                          ).toUpperCase()}
+                          {(user.name?.trim()?.charAt(0) || "U").toUpperCase()}
                         </Text>
                       </View>
 
                       <View style={styles.userMainInfo}>
-                        <Text
-                          style={styles.userName}
-                          numberOfLines={1}
-                        >
-                          {user.name ||
-                            "Unnamed User"}
+                        <Text style={styles.userName} numberOfLines={1}>
+                          {user.name || "Unnamed User"}
                         </Text>
 
                         <View style={styles.contactRow}>
@@ -684,12 +600,8 @@ export default function UsersScreen() {
                             color={colors.textSecondary}
                           />
 
-                          <Text
-                            style={styles.userEmail}
-                            numberOfLines={1}
-                          >
-                            {user.email ||
-                              "No email address"}
+                          <Text style={styles.userEmail} numberOfLines={1}>
+                            {user.email || "No email address"}
                           </Text>
                         </View>
 
@@ -700,12 +612,8 @@ export default function UsersScreen() {
                             color={colors.textSecondary}
                           />
 
-                          <Text
-                            style={styles.userPhone}
-                            numberOfLines={1}
-                          >
-                            {user.phone ||
-                              "No phone number"}
+                          <Text style={styles.userPhone} numberOfLines={1}>
+                            {user.phone || "No phone number"}
                           </Text>
                         </View>
                       </View>
@@ -722,10 +630,9 @@ export default function UsersScreen() {
                           style={[
                             styles.statusDot,
                             {
-                              backgroundColor:
-                                user.is_active
-                                  ? colors.success
-                                  : colors.danger,
+                              backgroundColor: user.is_active
+                                ? colors.success
+                                : colors.danger,
                             },
                           ]}
                         />
@@ -734,16 +641,13 @@ export default function UsersScreen() {
                           style={[
                             styles.statusText,
                             {
-                              color:
-                                user.is_active
-                                  ? colors.success
-                                  : colors.danger,
+                              color: user.is_active
+                                ? colors.success
+                                : colors.danger,
                             },
                           ]}
                         >
-                          {user.is_active
-                            ? "Active"
-                            : "Inactive"}
+                          {user.is_active ? "Active" : "Inactive"}
                         </Text>
                       </View>
                     </View>
@@ -756,9 +660,7 @@ export default function UsersScreen() {
                           color={colors.primary}
                         />
 
-                        <Text
-                          style={styles.roleBadgeText}
-                        >
+                        <Text style={styles.roleBadgeText}>
                           {getRoleLabel(user.role)}
                         </Text>
                       </View>
@@ -767,9 +669,7 @@ export default function UsersScreen() {
                     <View style={styles.actionRow}>
                       <Pressable
                         style={styles.secondaryAction}
-                        onPress={() =>
-                          openRoleModal(user)
-                        }
+                        onPress={() => openRoleModal(user)}
                       >
                         <Ionicons
                           name="shield-checkmark-outline"
@@ -777,9 +677,7 @@ export default function UsersScreen() {
                           color={colors.primary}
                         />
 
-                        <Text
-                          style={styles.secondaryActionText}
-                        >
+                        <Text style={styles.secondaryActionText}>
                           Change Role
                         </Text>
                       </Pressable>
@@ -791,9 +689,7 @@ export default function UsersScreen() {
                             ? styles.deactivateAction
                             : styles.activateAction,
                         ]}
-                        onPress={() =>
-                          openStatusModal(user)
-                        }
+                        onPress={() => openStatusModal(user)}
                       >
                         <Ionicons
                           name={
@@ -803,9 +699,7 @@ export default function UsersScreen() {
                           }
                           size={17}
                           color={
-                            user.is_active
-                              ? colors.danger
-                              : colors.success
+                            user.is_active ? colors.danger : colors.success
                           }
                         />
 
@@ -813,16 +707,13 @@ export default function UsersScreen() {
                           style={[
                             styles.statusActionText,
                             {
-                              color:
-                                user.is_active
-                                  ? colors.danger
-                                  : colors.success,
+                              color: user.is_active
+                                ? colors.danger
+                                : colors.success,
                             },
                           ]}
                         >
-                          {user.is_active
-                            ? "Deactivate"
-                            : "Activate"}
+                          {user.is_active ? "Deactivate" : "Activate"}
                         </Text>
                       </Pressable>
                     </View>
@@ -835,31 +726,25 @@ export default function UsersScreen() {
                 <Pressable
                   style={[
                     styles.paginationButton,
-                    safeCurrentPage === 1 &&
-                      styles.paginationButtonDisabled,
+                    safeCurrentPage === 1 && styles.paginationButtonDisabled,
                   ]}
                   disabled={safeCurrentPage === 1}
                   onPress={() =>
-                    setCurrentPage((page) =>
-                      Math.max(1, page - 1)
-                    )
+                    setCurrentPage((page) => Math.max(1, page - 1))
                   }
                 >
                   <Ionicons
                     name="chevron-back"
                     size={18}
                     color={
-                      safeCurrentPage === 1
-                        ? colors.textLight
-                        : colors.text
+                      safeCurrentPage === 1 ? colors.textLight : colors.text
                     }
                   />
 
                   <Text
                     style={[
                       styles.paginationButtonText,
-                      safeCurrentPage === 1 &&
-                        styles.paginationTextDisabled,
+                      safeCurrentPage === 1 && styles.paginationTextDisabled,
                     ]}
                   >
                     Previous
@@ -868,32 +753,25 @@ export default function UsersScreen() {
 
                 <View style={styles.paginationCenter}>
                   <Text style={styles.paginationPageText}>
-                    Page {safeCurrentPage} of{" "}
-                    {totalPages}
+                    Page {safeCurrentPage} of {totalPages}
                   </Text>
                 </View>
 
                 <Pressable
                   style={[
                     styles.paginationButton,
-                    safeCurrentPage ===
-                      totalPages &&
+                    safeCurrentPage === totalPages &&
                       styles.paginationButtonDisabled,
                   ]}
-                  disabled={
-                    safeCurrentPage === totalPages
-                  }
+                  disabled={safeCurrentPage === totalPages}
                   onPress={() =>
-                    setCurrentPage((page) =>
-                      Math.min(totalPages, page + 1)
-                    )
+                    setCurrentPage((page) => Math.min(totalPages, page + 1))
                   }
                 >
                   <Text
                     style={[
                       styles.paginationButtonText,
-                      safeCurrentPage ===
-                        totalPages &&
+                      safeCurrentPage === totalPages &&
                         styles.paginationTextDisabled,
                     ]}
                   >
@@ -904,8 +782,7 @@ export default function UsersScreen() {
                     name="chevron-forward"
                     size={18}
                     color={
-                      safeCurrentPage ===
-                      totalPages
+                      safeCurrentPage === totalPages
                         ? colors.textLight
                         : colors.text
                     }
@@ -922,41 +799,26 @@ export default function UsersScreen() {
         visible={roleFilterModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() =>
-          setRoleFilterModalVisible(false)
-        }
+        onRequestClose={() => setRoleFilterModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.filterModal}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>
-                  Filter by Role
-                </Text>
+                <Text style={styles.modalTitle}>Filter by Role</Text>
 
-                <Text style={styles.modalSubtitle}>
-                  Select a user role
-                </Text>
+                <Text style={styles.modalSubtitle}>Select a user role</Text>
               </View>
 
-              <Pressable
-                onPress={() =>
-                  setRoleFilterModalVisible(false)
-                }
-              >
-                <Ionicons
-                  name="close"
-                  size={24}
-                  color={colors.textSecondary}
-                />
+              <Pressable onPress={() => setRoleFilterModalVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </Pressable>
             </View>
 
             <Pressable
               style={[
                 styles.roleFilterOption,
-                roleFilter === "all" &&
-                  styles.roleFilterOptionSelected,
+                roleFilter === "all" && styles.roleFilterOptionSelected,
               ]}
               onPress={() => {
                 setRoleFilter("all");
@@ -967,8 +829,7 @@ export default function UsersScreen() {
               <Text
                 style={[
                   styles.roleFilterOptionText,
-                  roleFilter === "all" &&
-                    styles.roleFilterOptionTextSelected,
+                  roleFilter === "all" && styles.roleFilterOptionTextSelected,
                 ]}
               >
                 All Roles
@@ -984,16 +845,14 @@ export default function UsersScreen() {
             </Pressable>
 
             {ROLES.map((role) => {
-              const selected =
-                roleFilter === role.value;
+              const selected = roleFilter === role.value;
 
               return (
                 <Pressable
                   key={role.value}
                   style={[
                     styles.roleFilterOption,
-                    selected &&
-                      styles.roleFilterOptionSelected,
+                    selected && styles.roleFilterOptionSelected,
                   ]}
                   onPress={() => {
                     setRoleFilter(role.value);
@@ -1004,8 +863,7 @@ export default function UsersScreen() {
                   <Text
                     style={[
                       styles.roleFilterOptionText,
-                      selected &&
-                        styles.roleFilterOptionTextSelected,
+                      selected && styles.roleFilterOptionTextSelected,
                     ]}
                   >
                     {role.label}
@@ -1040,9 +898,7 @@ export default function UsersScreen() {
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>
-                  Change Role
-                </Text>
+                <Text style={styles.modalTitle}>Change Role</Text>
 
                 <Text style={styles.modalSubtitle}>
                   {selectedUser?.name || "User"}
@@ -1057,11 +913,7 @@ export default function UsersScreen() {
                 }}
                 disabled={savingRole}
               >
-                <Ionicons
-                  name="close"
-                  size={24}
-                  color={colors.textSecondary}
-                />
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </Pressable>
             </View>
 
@@ -1070,42 +922,29 @@ export default function UsersScreen() {
               style={styles.roleList}
             >
               {ROLES.map((role) => {
-                const selected =
-                  selectedRole === role.value;
+                const selected = selectedRole === role.value;
 
                 return (
                   <Pressable
                     key={role.value}
                     style={[
                       styles.roleOption,
-                      selected &&
-                        styles.roleOptionSelected,
+                      selected && styles.roleOptionSelected,
                     ]}
-                    onPress={() =>
-                      setSelectedRole(role.value)
-                    }
+                    onPress={() => setSelectedRole(role.value)}
                     disabled={savingRole}
                   >
-                    <View
-                      style={
-                        styles.roleOptionTextContainer
-                      }
-                    >
+                    <View style={styles.roleOptionTextContainer}>
                       <Text
                         style={[
                           styles.roleOptionTitle,
-                          selected &&
-                            styles.roleOptionTitleSelected,
+                          selected && styles.roleOptionTitleSelected,
                         ]}
                       >
                         {role.label}
                       </Text>
 
-                      <Text
-                        style={styles.roleOptionCode}
-                      >
-                        {role.value}
-                      </Text>
+                      <Text style={styles.roleOptionCode}>{role.value}</Text>
                     </View>
 
                     {selected && (
@@ -1123,36 +962,24 @@ export default function UsersScreen() {
             <View style={styles.modalActions}>
               <Pressable
                 style={styles.cancelButton}
-                onPress={() =>
-                  setRoleModalVisible(false)
-                }
+                onPress={() => setRoleModalVisible(false)}
                 disabled={savingRole}
               >
-                <Text style={styles.cancelButtonText}>
-                  Cancel
-                </Text>
+                <Text style={styles.cancelButtonText}>Cancel</Text>
               </Pressable>
 
               <Pressable
                 style={[
                   styles.confirmButton,
-                  savingRole &&
-                    styles.disabledButton,
+                  savingRole && styles.disabledButton,
                 ]}
                 onPress={changeRole}
                 disabled={savingRole}
               >
                 {savingRole ? (
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.white}
-                  />
+                  <ActivityIndicator size="small" color={colors.white} />
                 ) : (
-                  <Text
-                    style={styles.confirmButtonText}
-                  >
-                    Save Role
-                  </Text>
+                  <Text style={styles.confirmButtonText}>Save Role</Text>
                 )}
               </Pressable>
             </View>
@@ -1177,10 +1004,9 @@ export default function UsersScreen() {
               style={[
                 styles.confirmIcon,
                 {
-                  backgroundColor:
-                    selectedUser?.is_active
-                      ? colors.dangerLight
-                      : colors.successLight,
+                  backgroundColor: selectedUser?.is_active
+                    ? colors.dangerLight
+                    : colors.successLight,
                 },
               ]}
             >
@@ -1191,43 +1017,31 @@ export default function UsersScreen() {
                     : "checkmark-circle-outline"
                 }
                 size={30}
-                color={
-                  selectedUser?.is_active
-                    ? colors.danger
-                    : colors.success
-                }
+                color={selectedUser?.is_active ? colors.danger : colors.success}
               />
             </View>
 
             <Text style={styles.confirmTitle}>
-              {selectedUser?.is_active
-                ? "Deactivate User?"
-                : "Activate User?"}
+              {selectedUser?.is_active ? "Deactivate User?" : "Activate User?"}
             </Text>
 
             <Text style={styles.confirmText}>
               {selectedUser?.is_active
                 ? `Are you sure you want to deactivate ${
-                    selectedUser?.name ||
-                    "this user"
+                    selectedUser?.name || "this user"
                   }? They will no longer be treated as an active user.`
                 : `Are you sure you want to activate ${
-                    selectedUser?.name ||
-                    "this user"
+                    selectedUser?.name || "this user"
                   }?`}
             </Text>
 
             <View style={styles.modalActions}>
               <Pressable
                 style={styles.cancelButton}
-                onPress={() =>
-                  setStatusModalVisible(false)
-                }
+                onPress={() => setStatusModalVisible(false)}
                 disabled={savingStatus}
               >
-                <Text style={styles.cancelButtonText}>
-                  Cancel
-                </Text>
+                <Text style={styles.cancelButtonText}>Cancel</Text>
               </Pressable>
 
               <Pressable
@@ -1236,24 +1050,16 @@ export default function UsersScreen() {
                   selectedUser?.is_active
                     ? styles.dangerButton
                     : styles.successButton,
-                  savingStatus &&
-                    styles.disabledButton,
+                  savingStatus && styles.disabledButton,
                 ]}
                 onPress={changeStatus}
                 disabled={savingStatus}
               >
                 {savingStatus ? (
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.white}
-                  />
+                  <ActivityIndicator size="small" color={colors.white} />
                 ) : (
-                  <Text
-                    style={styles.confirmButtonText}
-                  >
-                    {selectedUser?.is_active
-                      ? "Deactivate"
-                      : "Activate"}
+                  <Text style={styles.confirmButtonText}>
+                    {selectedUser?.is_active ? "Deactivate" : "Activate"}
                   </Text>
                 )}
               </Pressable>
@@ -1267,9 +1073,7 @@ export default function UsersScreen() {
         visible={messageModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() =>
-          setMessageModalVisible(false)
-        }
+        onRequestClose={() => setMessageModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.messageModal}>
@@ -1281,23 +1085,15 @@ export default function UsersScreen() {
               />
             </View>
 
-            <Text style={styles.messageTitle}>
-              {messageTitle}
-            </Text>
+            <Text style={styles.messageTitle}>{messageTitle}</Text>
 
-            <Text style={styles.messageText}>
-              {messageText}
-            </Text>
+            <Text style={styles.messageText}>{messageText}</Text>
 
             <Pressable
               style={styles.confirmButton}
-              onPress={() =>
-                setMessageModalVisible(false)
-              }
+              onPress={() => setMessageModalVisible(false)}
             >
-              <Text style={styles.confirmButtonText}>
-                OK
-              </Text>
+              <Text style={styles.confirmButtonText}>OK</Text>
             </Pressable>
           </View>
         </View>

@@ -1,11 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { Tabs } from "expo-router";
 import { useEffect, useState } from "react";
-import {
-  StyleSheet,
-  View,
-  type ColorValue,
-} from "react-native";
+import { StyleSheet, View, type ColorValue } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { supabase } from "../../../lib/supabase";
@@ -15,6 +11,7 @@ type UserRole =
   | "watchman"
   | "ceo_admin"
   | "advisor"
+  | "store_team"
   | "floor_incharge"
   | "supervisor"
   | "worker_group"
@@ -54,10 +51,7 @@ export default function TabsLayout() {
           .single();
 
         if (error) {
-          console.error(
-            "Failed to load user role:",
-            error
-          );
+          console.error("Failed to load user role:", error);
 
           if (mounted) {
             setRole(null);
@@ -68,17 +62,16 @@ export default function TabsLayout() {
         }
 
         if (mounted) {
-          setRole(
-            (data?.role as UserRole) ?? null
-          );
+          if (!data?.is_active) {
+            setRole(null);
+          } else {
+            setRole((data.role as UserRole) ?? null);
+          }
 
           setLoadingRole(false);
         }
       } catch (error) {
-        console.error(
-          "Failed to load user role:",
-          error
-        );
+        console.error("Failed to load user role:", error);
 
         if (mounted) {
           setRole(null);
@@ -90,18 +83,32 @@ export default function TabsLayout() {
     loadRole();
 
     const {
-      data: authListener,
+      data: { subscription },
     } = supabase.auth.onAuthStateChange(() => {
       loadRole();
     });
 
     return () => {
       mounted = false;
-      authListener.subscription.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
   const isWatchman = role === "watchman";
+  const isStoreTeam = role === "store_team";
+
+  /*
+   * Normal workspace roles:
+   *
+   * HOME → VEHICLES → WORK → PROFILE
+   */
+  const isNormalWorkspace =
+    role === "advisor" ||
+    role === "floor_incharge" ||
+    role === "supervisor" ||
+    role === "worker_group" ||
+    role === "billing_department" ||
+    role === "ceo_admin";
 
   if (loadingRole) {
     return (
@@ -128,11 +135,9 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
 
-        tabBarActiveTintColor:
-          colors.primary,
+        tabBarActiveTintColor: colors.primary,
 
-        tabBarInactiveTintColor:
-          colors.textLight,
+        tabBarInactiveTintColor: colors.textLight,
 
         tabBarStyle: {
           height: 68 + bottomInset,
@@ -152,18 +157,16 @@ export default function TabsLayout() {
       }}
     >
       {/* =====================================================
-          VISIBLE TABS
+          HOME
 
-          NORMAL USERS:
-          HOME → VEHICLES → WORK → PROFILE
+          STORE TEAM:
+          HOME → STORE DASHBOARD → PROFILE
 
           WATCHMAN:
           HOME → PENDING ADVISOR → GATE OUT → PROFILE
-      ====================================================== */}
 
-      {/* =====================================================
-          HOME
-          VISIBLE FOR EVERYONE
+          NORMAL USERS:
+          HOME → VEHICLES → WORK → PROFILE
       ====================================================== */}
 
       <Tabs.Screen
@@ -171,10 +174,27 @@ export default function TabsLayout() {
         options={{
           title: "Home",
 
-          tabBarIcon: ({
-            focused,
-            color,
-          }) => (
+          /*
+           * IMPORTANT:
+           *
+           * Store Team must NOT go to the old /(tabs)/index.tsx
+           * dashboard when Home is pressed.
+           *
+           * Their Home tab now points directly to:
+           *
+           * /(tabs)/store
+           *
+           * Other roles keep their existing Home destinations.
+           */
+          href: isStoreTeam
+            ? "/(tabs)/store"
+            : isWatchman
+              ? "/(tabs)/watchman"
+              : isNormalWorkspace
+                ? "/(tabs)"
+                : null,
+
+          tabBarIcon: ({ focused, color }) => (
             <TabIcon
               focused={focused}
               activeIcon="home"
@@ -187,22 +207,17 @@ export default function TabsLayout() {
 
       {/* =====================================================
           VEHICLES
-          NORMAL USERS ONLY
+          NORMAL WORKSPACE USERS ONLY
       ====================================================== */}
 
       <Tabs.Screen
         name="vehicle-management/index"
         options={{
-          href: isWatchman
-            ? null
-            : undefined,
+          href: isNormalWorkspace ? undefined : null,
 
           title: "Vehicles",
 
-          tabBarIcon: ({
-            focused,
-            color,
-          }) => (
+          tabBarIcon: ({ focused, color }) => (
             <TabIcon
               focused={focused}
               activeIcon="car"
@@ -215,7 +230,7 @@ export default function TabsLayout() {
 
       {/* =====================================================
           WORK
-          NORMAL USERS ONLY
+          NORMAL WORKSPACE USERS ONLY
       ====================================================== */}
 
       <Tabs.Screen
@@ -223,14 +238,9 @@ export default function TabsLayout() {
         options={{
           title: "Work",
 
-          href: isWatchman
-            ? null
-            : undefined,
+          href: isNormalWorkspace ? undefined : null,
 
-          tabBarIcon: ({
-            focused,
-            color,
-          }) => (
+          tabBarIcon: ({ focused, color }) => (
             <TabIcon
               focused={focused}
               activeIcon="construct"
@@ -242,14 +252,28 @@ export default function TabsLayout() {
       />
 
       {/* =====================================================
+          STORE
+
+          NOT A VISIBLE TAB.
+
+          Store Team uses:
+          HOME → STORE DASHBOARD → PROFILE
+
+          The Store screen remains available internally at:
+          /(tabs)/store
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="store/index"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
           WATCHMAN
           PENDING ADVISOR
           WATCHMAN ONLY
-
-          Because this screen is declared BEFORE Gate Out
-          and Profile, Watchman order becomes:
-
-          HOME → PENDING ADVISOR → GATE OUT → PROFILE
       ====================================================== */}
 
       <Tabs.Screen
@@ -257,14 +281,9 @@ export default function TabsLayout() {
         options={{
           title: "Pending Advisor",
 
-          href: isWatchman
-            ? undefined
-            : null,
+          href: isWatchman ? undefined : null,
 
-          tabBarIcon: ({
-            focused,
-            color,
-          }) => (
+          tabBarIcon: ({ focused, color }) => (
             <TabIcon
               focused={focused}
               activeIcon="people"
@@ -278,7 +297,6 @@ export default function TabsLayout() {
       {/* =====================================================
           WATCHMAN
           GATE OUT
-          WATCHMAN ONLY
       ====================================================== */}
 
       <Tabs.Screen
@@ -286,14 +304,9 @@ export default function TabsLayout() {
         options={{
           title: "Gate Out",
 
-          href: isWatchman
-            ? undefined
-            : null,
+          href: isWatchman ? undefined : null,
 
-          tabBarIcon: ({
-            focused,
-            color,
-          }) => (
+          tabBarIcon: ({ focused, color }) => (
             <TabIcon
               focused={focused}
               activeIcon="log-out"
@@ -307,12 +320,13 @@ export default function TabsLayout() {
       {/* =====================================================
           PROFILE
 
-          Declared AFTER Watchman tabs so Watchman gets:
+          STORE TEAM:
+          HOME → STORE DASHBOARD → PROFILE
 
+          WATCHMAN:
           HOME → PENDING ADVISOR → GATE OUT → PROFILE
 
-          Normal users get:
-
+          NORMAL USERS:
           HOME → VEHICLES → WORK → PROFILE
       ====================================================== */}
 
@@ -321,10 +335,10 @@ export default function TabsLayout() {
         options={{
           title: "Profile",
 
-          tabBarIcon: ({
-            focused,
-            color,
-          }) => (
+          href:
+            isStoreTeam || isWatchman || isNormalWorkspace ? undefined : null,
+
+          tabBarIcon: ({ focused, color }) => (
             <TabIcon
               focused={focused}
               activeIcon="person"
@@ -486,7 +500,6 @@ export default function TabsLayout() {
 
       {/* =====================================================
           INTAKE COMPONENT ROUTES
-          ALL HIDDEN
       ====================================================== */}
 
       <Tabs.Screen
@@ -568,7 +581,6 @@ export default function TabsLayout() {
 
       {/* =====================================================
           INTAKE HELPER FILES
-          ALL HIDDEN
       ====================================================== */}
 
       <Tabs.Screen
@@ -683,8 +695,59 @@ export default function TabsLayout() {
           href: null,
         }}
       />
+
+      {/* =====================================================
+          ADVISOR WORKFLOW INTERNAL ROUTES
+      ====================================================== */}
+
       <Tabs.Screen
         name="advisor/approval_vehicles"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/work"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/advisor_work_form"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/approval_form"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          STORE INTERNAL ROUTES
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="store/vehicle-action"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/store-monitor/index"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/store-monitor/vehicle-details"
         options={{
           href: null,
         }}
@@ -705,19 +768,9 @@ function TabIcon({
   color: ColorValue;
 }) {
   return (
-    <View
-      style={[
-        styles.tabIcon,
-        focused &&
-          styles.tabIconActive,
-      ]}
-    >
+    <View style={[styles.tabIcon, focused && styles.tabIconActive]}>
       <Ionicons
-        name={
-          focused
-            ? activeIcon
-            : inactiveIcon
-        }
+        name={focused ? activeIcon : inactiveIcon}
         size={21}
         color={color}
       />
@@ -735,7 +788,6 @@ const styles = StyleSheet.create({
   },
 
   tabIconActive: {
-    backgroundColor:
-      colors.primary + "18",
+    backgroundColor: colors.primary + "18",
   },
 });
