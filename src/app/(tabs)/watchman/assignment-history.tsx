@@ -1454,6 +1454,7 @@ export default function WatchmanAssignmentHistoryScreen() {
           closePopup
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.popupOverlay
@@ -1522,6 +1523,7 @@ export default function WatchmanAssignmentHistoryScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

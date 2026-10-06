@@ -1195,6 +1195,7 @@ export default function VehicleManagementScreen() {
             setFilterModalVisible(false)
           }
         >
+          <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
           <Pressable
             style={styles.modalOverlay}
             onPress={() =>
@@ -1332,6 +1333,7 @@ export default function VehicleManagementScreen() {
               })}
             </Pressable>
           </Pressable>
+          </SafeAreaView>
         </Modal>
       </View>
     </SafeAreaView>

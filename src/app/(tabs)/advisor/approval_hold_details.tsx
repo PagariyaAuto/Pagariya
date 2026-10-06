@@ -714,6 +714,7 @@ export default function ApprovalHoldDetailsScreen() {
               `,
             )
             .eq("vehicle_id", vehicleId)
+            .neq("current_job_stage", "CLOSED")
             .maybeSingle(),
 
           /*
@@ -725,6 +726,7 @@ export default function ApprovalHoldDetailsScreen() {
               "id,visit_id,vehicle_id,assigned_to,assigned_by,assignment_role,assigned_at,unassigned_at,remarks",
             )
             .eq("visit_id", visitId)
+            .eq("assignment_role", "ADVISOR")
             .is("unassigned_at", null)
             .order("assigned_at", {
               ascending: false,
@@ -1732,6 +1734,7 @@ export default function ApprovalHoldDetailsScreen() {
           }
         }}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.popupCard}>
             <View
@@ -1795,6 +1798,7 @@ export default function ApprovalHoldDetailsScreen() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

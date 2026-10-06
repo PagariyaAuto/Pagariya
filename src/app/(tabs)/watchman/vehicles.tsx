@@ -1343,6 +1343,7 @@ export default function WatchmanVehiclesScreen() {
           closeAssignModal
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.modalOverlay
@@ -1641,6 +1642,7 @@ export default function WatchmanVehiclesScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* ========================================================
@@ -1655,6 +1657,7 @@ export default function WatchmanVehiclesScreen() {
           cancelAssignmentConfirmation
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.popupOverlay
@@ -1798,6 +1801,7 @@ export default function WatchmanVehiclesScreen() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* ========================================================
@@ -1812,6 +1816,7 @@ export default function WatchmanVehiclesScreen() {
           closePopup
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.popupOverlay
@@ -1889,6 +1894,7 @@ export default function WatchmanVehiclesScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

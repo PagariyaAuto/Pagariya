@@ -1,3 +1,4 @@
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import {
     Modal,
@@ -28,6 +29,7 @@ export default function PhotoUploadModal({
       animationType="slide"
       onRequestClose={onClose}
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View style={styles.overlay}>
         {/* Close when tapping outside */}
         <Pressable
@@ -145,6 +147,7 @@ export default function PhotoUploadModal({
           </TouchableOpacity>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }

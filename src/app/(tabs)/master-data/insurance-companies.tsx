@@ -1026,6 +1026,7 @@ export default function InsuranceCompanies() {
         animationType="fade"
         onRequestClose={closeModal}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
@@ -1142,6 +1143,7 @@ export default function InsuranceCompanies() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* DEACTIVATE CONFIRMATION */}
@@ -1152,6 +1154,7 @@ export default function InsuranceCompanies() {
         animationType="fade"
         onRequestClose={closeConfirmModal}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.confirmCard}>
             <View style={styles.confirmIconContainer}>
@@ -1253,6 +1256,7 @@ export default function InsuranceCompanies() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* POPUP MESSAGE */}
@@ -1263,6 +1267,7 @@ export default function InsuranceCompanies() {
         animationType="fade"
         onRequestClose={closeMessageModal}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.messageCard}>
             <View
@@ -1305,6 +1310,7 @@ export default function InsuranceCompanies() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

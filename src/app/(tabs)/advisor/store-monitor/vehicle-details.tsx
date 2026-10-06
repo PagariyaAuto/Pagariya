@@ -1,3 +1,4 @@
+import { supplementaryRequirements, requirementView } from "../../../../lib/supplementary-store";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -61,6 +62,7 @@ type PartRequisition = {
   visit_id: string;
   vehicle_id: string;
   advisor_work_id: string | null;
+  supplementary_cycle_id: string | null;
   requisition_no: string;
   requisition_at: string;
   requested_by: string;
@@ -320,6 +322,7 @@ function CustomPopup({
       animationType="fade"
       onRequestClose={onClose}
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View style={styles.popupOverlay}>
         <View style={styles.popupCard}>
           <View
@@ -353,6 +356,7 @@ function CustomPopup({
           </View>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -706,13 +710,10 @@ export default function StoreMonitorVehicleDetailsScreen() {
            ADVISOR SCOPE
         ====================================================== */
 
-        if (
-          profileData.role === "advisor" &&
-          vehicle.current_assigned_to !== user.id
-        ) {
-          throw new Error(
-            "You can only monitor Store activity for vehicles assigned to you.",
-          );
+        if (profileData.role === "advisor") {
+          const { data: assignments, error: assignmentError } = await supabase.from("vehicle_assignments").select("id").eq("vehicle_id", vehicleId).eq("assigned_to", user.id).eq("assignment_role", "ADVISOR").is("unassigned_at", null).limit(1);
+          if (assignmentError) throw assignmentError;
+          if (!assignments?.length) throw new Error("You can only monitor Store activity for vehicles assigned to you.");
         }
 
         /* ======================================================
@@ -722,7 +723,7 @@ export default function StoreMonitorVehicleDetailsScreen() {
         let requisitionQuery = supabase
           .from("part_requisitions")
           .select(
-            "id,visit_id,vehicle_id,advisor_work_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
+            "id,visit_id,vehicle_id,advisor_work_id,supplementary_cycle_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
           )
           .eq("vehicle_id", vehicleId)
           .order("created_at", {
@@ -763,6 +764,7 @@ export default function StoreMonitorVehicleDetailsScreen() {
           orderQuery = orderQuery.eq("visit_id", visitId);
         }
 
+        if (requisition) orderQuery = orderQuery.eq("part_requisition_id", requisition.id);
         const orderResult = await orderQuery;
 
         if (orderResult.error) {
@@ -797,9 +799,12 @@ export default function StoreMonitorVehicleDetailsScreen() {
           throw advisorWorkResult.error;
         }
 
-        const advisorWork =
+        let advisorWork =
           ((advisorWorkResult.data || [])[0] as AdvisorWork | undefined) ||
           null;
+
+        const requirements = await supplementaryRequirements(requisition?.supplementary_cycle_id ? [requisition.id] : []);
+        advisorWork = requirementView(advisorWork, requisition ? requirements.get(requisition.id) : undefined, requisition);
 
         setProfile(profileData);
 

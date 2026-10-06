@@ -1,343 +1,213 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { Redirect, router } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-
-import Ionicons from "@expo/vector-icons/Ionicons";
-import { Redirect, router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-
+import { supabase } from "../../../lib/supabase";
 import { colors, radius, spacing, typography } from "../../theme";
 
-import AppCard from "../../../components/AppCard";
-import { supabase } from "../../../lib/supabase";
-
-type Profile = {
-  name: string | null;
-  role: string;
+type Profile = { name: string | null; role: string; is_active: boolean };
+const roleRoutes: Record<string, string> = {
+  advisor: "/(tabs)/advisor",
+  ceo_admin: "/(tabs)/advisor",
+  store_team: "/(tabs)/store",
+  watchman: "/(tabs)/watchman",
+  floor_incharge: "/(tabs)/floor-incharge",
+  final_inspector: "/(tabs)/final-inspector",
+  billing_executive: "/(tabs)/billing",
 };
-
-type DashboardSection = {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  subtitle: string;
-};
+function formatRole(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
 export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [loggedOut, setLoggedOut] = useState(false);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    loadProfile();
-  }, []);
+    let active = true;
+    setLoading(true);
+    setProfile(null);
+    setLoadError("");
+    setLoggedOut(false);
 
-  const loadProfile = async () => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.replace("/login");
-        return;
+    const loadProfile = async () => {
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+        if (!active) return;
+        if (!session?.user) {
+          setLoggedOut(true);
+          return;
+        }
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("name,role,is_active")
+          .eq("id", session.user.id)
+          .single();
+        if (error) throw error;
+        if (!active) return;
+        if (!data) throw new Error("Your account profile could not be found.");
+        if (!data.is_active) {
+          await supabase.auth.signOut();
+          if (active) setLoggedOut(true);
+          return;
+        }
+        setProfile(data as Profile);
+      } catch (e: any) {
+        if (active)
+          setLoadError(e?.message || "Unable to load your account profile.");
+      } finally {
+        if (active) setLoading(false);
       }
+    };
 
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("name, role")
-        .eq("id", user.id)
-        .single();
-
-      if (error) {
-        console.log("Home profile error:", error.message);
-
-        setProfile({
-          name: user.user_metadata?.name || null,
-          role: "user",
-        });
-
-        return;
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (active && event === "SIGNED_OUT") {
+        active = false;
+        setLoggedOut(true);
+        setProfile(null);
+        setLoading(false);
       }
+    });
+    void loadProfile();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [retry]);
 
-      setProfile(data);
-    } catch (error) {
-      console.log("Load home profile error:", error);
-
-      // Prevent the Home screen from remaining in a loading state
-      // if the profile request unexpectedly fails.
-      setProfile({
-        name: null,
-        role: "user",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const displayName = profile?.name?.trim() || "User";
-
-  const displayRole = profile?.role
-    ? profile.role
-        .replace(/_/g, " ")
-        .replace(/\b\w/g, (letter) => letter.toUpperCase())
-    : "User";
-
-  const role = profile?.role || "user";
-
-  const getPendingSections = (): DashboardSection[] => {
-    switch (role) {
-      case "advisor":
-        return [
-          {
-            icon: "clipboard-outline",
-            title: "Pending Survey",
-            subtitle: "Vehicles waiting for survey",
-          },
-        ];
-
-      case "floor_incharge":
-        return [
-          {
-            icon: "car-outline",
-            title: "Ready for Floor",
-            subtitle: "Vehicles ready to enter workshop",
-          },
-        ];
-
-      case "supervisor":
-        return [
-          {
-            icon: "construct-outline",
-            title: "Workshop Work",
-            subtitle: "Vehicles currently in workshop",
-          },
-        ];
-
-      case "worker_group":
-        return [
-          {
-            icon: "people-outline",
-            title: "Assigned Work",
-            subtitle: "Vehicles assigned to your group",
-          },
-        ];
-
-      case "billing_department":
-        return [
-          {
-            icon: "receipt-outline",
-            title: "Billing Pending",
-            subtitle: "Vehicles waiting for billing",
-          },
-        ];
-
-      case "ceo_admin":
-        return [
-          {
-            icon: "clipboard-outline",
-            title: "Pending Survey",
-            subtitle: "Vehicles waiting for survey",
-          },
-          {
-            icon: "checkmark-circle-outline",
-            title: "Pending Approval",
-            subtitle: "Vehicles waiting for approval",
-          },
-          {
-            icon: "car-outline",
-            title: "Ready for Floor",
-            subtitle: "Vehicles ready to enter workshop",
-          },
-        ];
-
-      default:
-        return [
-          {
-            icon: "car-outline",
-            title: "Vehicle Operations",
-            subtitle: "View current vehicle activity",
-          },
-        ];
-    }
-  };
-
-  const pendingSections = getPendingSections();
-
-  // Display a spinner only while the profile is being fetched.
-  if (loading) {
+  if (loggedOut) return <Redirect href="/login" />;
+  if (loading)
     return (
       <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-        <View style={styles.loadingContainer}>
+        <StatusBar
+          barStyle="dark-content"
+          backgroundColor={colors.background}
+        />
+        <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.primary} />
-
-          <Text style={styles.loadingText}>Loading dashboard...</Text>
+          <Text style={styles.loadingText}>Loading workspace…</Text>
         </View>
       </SafeAreaView>
     );
-  }
 
-  /*
-   * ROLE-BASED DASHBOARD REDIRECTS
-   *
-   * Watchman has a completely separate dashboard.
-   * The old Home dashboard should never render Watchman-specific
-   * cards, buttons or navigation.
-   */
-  if (profile?.role === "watchman") {
-    return <Redirect href="/(tabs)/watchman" />;
-  }
+  if (loadError || !profile)
+    return (
+      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+        <StatusBar
+          barStyle="dark-content"
+          backgroundColor={colors.background}
+        />
+        <View style={styles.center}>
+          <View style={styles.errorIcon}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={30}
+              color={colors.error}
+            />
+          </View>
+          <Text style={styles.title}>Workspace unavailable</Text>
+          <Text style={styles.errorText}>
+            {loadError || "Unable to load your account profile."}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            style={styles.button}
+            onPress={() => setRetry((value) => value + 1)}
+          >
+            <Text style={styles.buttonText}>Try Again</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
 
-  /*
-   * ADVISOR + CEO ADMIN
-   *
-   * Both roles use the shared Advisor / CEO Admin dashboard.
-   *
-   * The Store Monitoring module is opened from that dashboard
-   * using:
-   *
-   * /(tabs)/advisor/store-monitor
-   *
-   * The actual Store Monitoring screen handles the role-specific
-   * data scope:
-   * - Advisor -> assigned vehicles
-   * - CEO Admin -> all relevant vehicles
-   */
-  if (profile?.role === "advisor" || profile?.role === "ceo_admin") {
-    return <Redirect href="/(tabs)/advisor" />;
-  }
+  const role = profile.role.trim().toLowerCase();
+  const destination = roleRoutes[role];
+  if (destination) return <Redirect href={destination as any} />;
 
+  // Billing stays on a valid landing screen until its department workspace is built.
+  const isBilling =
+    role === "billing_executive" || role === "billing_department";
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* HEADER */}
         <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.greeting}>Good Morning 👋</Text>
-
-            <Text style={styles.name}>{displayName}</Text>
-
-            <Text style={styles.role}>{displayRole}</Text>
+          <View style={styles.grow}>
+            <Text style={styles.eyebrow}>PAGARIYA BODYSHOP</Text>
+            <Text style={styles.name}>{profile.name?.trim() || "User"}</Text>
+            <Text style={styles.role}>{formatRole(role)}</Text>
           </View>
-
           <Pressable
-            style={styles.profileButton}
-            onPress={() => router.push("/(tabs)/profile")}
             accessibilityRole="button"
             accessibilityLabel="Open profile"
+            style={styles.profileButton}
+            onPress={() => router.push("/(tabs)/profile")}
           >
             <Ionicons name="person-outline" size={22} color={colors.primary} />
           </Pressable>
         </View>
-
-        {/* TODAY'S OVERVIEW */}
-        <Text style={styles.sectionTitle}>Today's Overview</Text>
-
-        <AppCard style={styles.overviewCard}>
-          <OverviewItem
-            icon="clipboard-outline"
-            label="Pending Survey"
-            enabled={true}
-            onPress={() => router.push("/(tabs)/work")}
-          />
-
-          <View style={styles.overviewDivider} />
-
-          <OverviewItem
-            icon="checkmark-circle-outline"
-            label="Pending Approval"
-            enabled={true}
-            onPress={() => router.push("/(tabs)/work")}
-          />
-
-          <View style={styles.overviewDivider} />
-
-          <OverviewItem
-            icon="car-outline"
-            label="Work"
-            enabled={true}
-            onPress={() => router.push("/(tabs)/work")}
-          />
-        </AppCard>
-
-        {/* PENDING WORK */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Pending Work</Text>
-
-          <Text style={styles.sectionHint}>Based on your role</Text>
-        </View>
-
-        {pendingSections.map((section) => (
-          <PendingCard
-            key={section.title}
-            icon={section.icon}
-            title={section.title}
-            subtitle={section.subtitle}
-            onPress={() => router.push("/(tabs)/work")}
-          />
-        ))}
-
-        {/* QUICK ACTIONS */}
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
-
-        {/* NEW JOB CARD */}
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionCard,
-            pressed && styles.actionPressed,
-          ]}
-          onPress={() => router.push("/(tabs)/vehicles")}
-        >
-          <View style={styles.actionIcon}>
-            <Ionicons name="add-outline" size={26} color={colors.primary} />
-          </View>
-
-          <View style={styles.actionContent}>
-            <Text style={styles.actionTitle}>New Job Card</Text>
-
-            <Text style={styles.actionSubtitle}>
-              Create a new vehicle job card
-            </Text>
-          </View>
-
-          <Ionicons
-            name="chevron-forward-outline"
-            size={20}
-            color={colors.textLight}
-          />
-        </Pressable>
-
-        {/* MASTER DATA */}
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionCard,
-            pressed && styles.actionPressed,
-          ]}
-          onPress={() => router.push("/(tabs)/master-data")}
-        >
-          <View style={styles.actionIcon}>
+        <View style={styles.workspaceCard}>
+          <View style={styles.workspaceIcon}>
             <Ionicons
-              name="settings-outline"
-              size={24}
+              name={isBilling ? "receipt-outline" : "grid-outline"}
+              size={25}
               color={colors.primary}
             />
           </View>
-
-          <View style={styles.actionContent}>
-            <Text style={styles.actionTitle}>Master Data</Text>
-
+          <Text style={styles.title}>
+            {isBilling ? "Billing Department" : "Workspace"}
+          </Text>
+          <Text style={styles.body}>
+            {isBilling
+              ? "Your Billing account is active. The Billing Executive screens are being prepared."
+              : "Your account is active. A dedicated workspace for your role is being prepared."}
+          </Text>
+          <Text style={styles.hint}>
+            {isBilling
+              ? "This workspace will handle internal Bill No., tax invoices, amounts and payment details after the Advisor transfers the vehicle."
+              : "You can view your account information from My Profile."}
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.actionCard,
+            pressed && styles.pressed,
+          ]}
+          onPress={() => router.push("/(tabs)/profile")}
+        >
+          <View style={styles.actionIcon}>
+            <Ionicons name="person-outline" size={24} color={colors.primary} />
+          </View>
+          <View style={styles.grow}>
+            <Text style={styles.actionTitle}>My Profile</Text>
             <Text style={styles.actionSubtitle}>
-              Manage models, insurance, business and MI types
+              View your account and role information
             </Text>
           </View>
-
           <Ionicons
             name="chevron-forward-outline"
             size={20}
@@ -349,127 +219,74 @@ export default function HomeScreen() {
   );
 }
 
-type OverviewItemProps = {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  enabled: boolean;
-  onPress: () => void;
-};
-
-function OverviewItem({ icon, label, enabled, onPress }: OverviewItemProps) {
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.overviewItem,
-        !enabled && styles.overviewItemDisabled,
-        pressed && enabled && styles.overviewItemPressed,
-      ]}
-      onPress={onPress}
-      disabled={!enabled}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${label}`}
-      accessibilityState={{ disabled: !enabled }}
-    >
-      <View style={styles.overviewIcon}>
-        <Ionicons name={icon} size={21} color={colors.primary} />
-      </View>
-
-      <Text style={styles.overviewValue}>—</Text>
-
-      <Text style={styles.overviewLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-type PendingCardProps = {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  subtitle: string;
-  onPress: () => void;
-};
-
-function PendingCard({ icon, title, subtitle, onPress }: PendingCardProps) {
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.pendingCard,
-        pressed && styles.pendingPressed,
-      ]}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${title}. ${subtitle}`}
-    >
-      <View style={styles.pendingIcon}>
-        <Ionicons name={icon} size={24} color={colors.primary} />
-      </View>
-
-      <View style={styles.pendingContent}>
-        <Text style={styles.pendingTitle}>{title}</Text>
-
-        <Text style={styles.pendingSubtitle}>{subtitle}</Text>
-      </View>
-
-      <Ionicons
-        name="chevron-forward-outline"
-        size={20}
-        color={colors.textLight}
-      />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
+  container: { flex: 1, backgroundColor: colors.background },
   content: {
     padding: spacing.lg,
     paddingBottom: spacing.xxl,
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
   },
-
-  loadingContainer: {
+  center: {
     flex: 1,
+    padding: spacing.xl,
     alignItems: "center",
     justifyContent: "center",
   },
-
   loadingText: {
-    marginTop: spacing.md,
     ...typography.body,
+    marginTop: spacing.md,
     color: colors.textSecondary,
   },
-
+  errorIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 20,
+    backgroundColor: colors.dangerLight,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.md,
+  },
+  errorText: {
+    ...typography.body,
+    marginTop: spacing.sm,
+    maxWidth: 420,
+    color: colors.textSecondary,
+    textAlign: "center",
+    lineHeight: 21,
+  },
+  button: {
+    marginTop: spacing.lg,
+    minWidth: 150,
+    minHeight: 48,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buttonText: { color: colors.white, fontSize: 14, fontWeight: "800" },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: spacing.md,
     marginBottom: spacing.xl,
   },
-
-  headerText: {
-    flex: 1,
+  grow: { flex: 1 },
+  eyebrow: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+    color: colors.primary,
   },
-
-  greeting: {
-    ...typography.body,
-    color: colors.textSecondary,
-  },
-
-  name: {
-    ...typography.title,
-    color: colors.text,
-    marginTop: spacing.xs,
-  },
-
+  name: { ...typography.title, color: colors.text, marginTop: spacing.xs },
   role: {
     ...typography.caption,
-    color: colors.primary,
+    color: colors.textSecondary,
     marginTop: spacing.xs,
-    fontWeight: "600",
+    fontWeight: "700",
   },
-
   profileButton: {
     width: 46,
     height: 46,
@@ -478,118 +295,39 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  sectionHeader: {
-    marginBottom: spacing.sm,
-  },
-
-  sectionTitle: {
-    ...typography.subheading,
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-
-  sectionHint: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginBottom: spacing.sm,
-  },
-
-  overviewCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-around",
-    paddingVertical: spacing.lg,
-    marginBottom: spacing.xl,
-  },
-
-  overviewItem: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: spacing.xs,
-    borderRadius: radius.md,
-  },
-
-  overviewItemDisabled: {
-    opacity: 0.55,
-  },
-
-  overviewItemPressed: {
-    opacity: 0.7,
-    transform: [{ scale: 0.97 }],
-  },
-
-  overviewIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.sm,
-  },
-
-  overviewValue: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: colors.text,
-  },
-
-  overviewLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-    textAlign: "center",
-  },
-
-  overviewDivider: {
-    width: 1,
-    height: 55,
-    backgroundColor: colors.divider,
-  },
-
-  pendingCard: {
-    minHeight: 76,
-    backgroundColor: colors.surface,
+  workspaceCard: {
+    padding: spacing.lg,
     borderRadius: radius.lg,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.md,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
+    marginBottom: spacing.md,
   },
-
-  pendingPressed: {
-    opacity: 0.75,
-  },
-
-  pendingIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: radius.md,
+  workspaceIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
     backgroundColor: colors.primaryLight,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: spacing.md,
+    marginBottom: spacing.md,
   },
-
-  pendingContent: {
-    flex: 1,
-  },
-
-  pendingTitle: {
-    ...typography.bodyMedium,
-    color: colors.text,
-  },
-
-  pendingSubtitle: {
-    ...typography.caption,
+  title: { fontSize: 20, fontWeight: "900", color: colors.text },
+  body: {
+    marginTop: spacing.sm,
+    fontSize: 14,
+    lineHeight: 21,
     color: colors.textSecondary,
-    marginTop: 3,
   },
-
+  hint: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.background,
+    fontSize: 12,
+    lineHeight: 19,
+    color: colors.textSecondary,
+  },
   actionCard: {
     minHeight: 76,
     backgroundColor: colors.surface,
@@ -601,11 +339,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     marginBottom: spacing.md,
   },
-
-  actionPressed: {
-    opacity: 0.75,
-  },
-
+  pressed: { opacity: 0.75 },
   actionIcon: {
     width: 46,
     height: 46,
@@ -615,16 +349,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: spacing.md,
   },
-
-  actionContent: {
-    flex: 1,
-  },
-
-  actionTitle: {
-    ...typography.bodyMedium,
-    color: colors.text,
-  },
-
+  actionTitle: { ...typography.bodyMedium, color: colors.text },
   actionSubtitle: {
     ...typography.caption,
     color: colors.textSecondary,

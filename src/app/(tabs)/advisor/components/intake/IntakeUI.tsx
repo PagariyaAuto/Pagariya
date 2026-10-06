@@ -1,3 +1,4 @@
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import {
   Image,
@@ -260,6 +261,7 @@ export function DropdownModal({
         onClose
       }
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View
         style={
           styles.modalOverlay
@@ -417,6 +419,7 @@ export function DropdownModal({
           </ScrollView>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -439,6 +442,7 @@ export function PhotoViewerModal({
         onClose
       }
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View
         style={
           styles.photoViewerOverlay
@@ -475,6 +479,7 @@ export function PhotoViewerModal({
           Tap close to return
         </Text>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -528,6 +533,7 @@ export function PopupModal({
         onAction
       }
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View
         style={
           styles.modalOverlay
@@ -597,6 +603,7 @@ export function PopupModal({
           </Pressable>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }

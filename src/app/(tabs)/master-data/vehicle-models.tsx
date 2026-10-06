@@ -1045,6 +1045,7 @@ export default function VehicleModels() {
         animationType="fade"
         onRequestClose={closeModal}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
@@ -1231,6 +1232,7 @@ export default function VehicleModels() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* DEACTIVATE CONFIRMATION */}
@@ -1241,6 +1243,7 @@ export default function VehicleModels() {
         animationType="fade"
         onRequestClose={closeConfirmModal}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.confirmCard}>
             <View style={styles.confirmIconContainer}>
@@ -1340,6 +1343,7 @@ export default function VehicleModels() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* MESSAGE MODAL */}
@@ -1352,6 +1356,7 @@ export default function VehicleModels() {
           setMessageModalVisible(false)
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.messageCard}>
             <View style={styles.messageIconContainer}>
@@ -1385,6 +1390,7 @@ export default function VehicleModels() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

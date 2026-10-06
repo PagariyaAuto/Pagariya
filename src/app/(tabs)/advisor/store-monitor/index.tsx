@@ -1,3 +1,4 @@
+import { supplementaryRequirements, requirementView } from "../../../../lib/supplementary-store";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -65,6 +66,7 @@ type PartRequisition = {
   visit_id: string;
   vehicle_id: string;
   advisor_work_id: string | null;
+  supplementary_cycle_id: string | null;
   requisition_no: string;
   requisition_at: string;
   requested_by: string;
@@ -283,6 +285,7 @@ function CustomPopup({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View style={styles.popupOverlay}>
         <View style={styles.popupCard}>
           <View
@@ -313,6 +316,7 @@ function CustomPopup({
           </Pressable>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -420,12 +424,19 @@ export default function StoreMonitorScreen() {
           );
         }
 
+        const assignedVehicleIds = new Set<string>();
+        if (currentProfile.role === "advisor") {
+          const { data: assignments, error: assignmentError } = await supabase.from("vehicle_assignments").select("vehicle_id").eq("assigned_to", user.id).eq("assignment_role", "ADVISOR").is("unassigned_at", null);
+          if (assignmentError) throw assignmentError;
+          assignments?.forEach(assignment => assignedVehicleIds.add(assignment.vehicle_id));
+        }
+
         const [requisitionsResult, ordersResult, advisorWorkResult] =
           await Promise.all([
             supabase
               .from("part_requisitions")
               .select(
-                "id,visit_id,vehicle_id,advisor_work_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
+                "id,visit_id,vehicle_id,advisor_work_id,supplementary_cycle_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
               )
               .order("created_at", {
                 ascending: false,
@@ -445,7 +456,7 @@ export default function StoreMonitorScreen() {
               .select(
                 "id,visit_id,vehicle_id,work_path,parts_required,denting_required,painting_required,advisor_requisition_no,requisition_at,assigned_by,remarks",
               )
-              .eq("parts_required", true),
+              ,
           ]);
 
         if (requisitionsResult.error) {
@@ -498,6 +509,7 @@ export default function StoreMonitorScreen() {
           }
         }
 
+        const cycleRequirements = await supplementaryRequirements(requisitions.filter(row => row.supplementary_cycle_id).map(row => row.id));
         const advisorWorkByVehicle = new Map<string, AdvisorWork>();
 
         for (const row of advisorWorks) {
@@ -524,9 +536,10 @@ export default function StoreMonitorScreen() {
         for (const vehicle of vehicles) {
           const requisition = requisitionByVehicle.get(vehicle.id) || null;
 
-          const order = orderByVehicle.get(vehicle.id) || null;
+          const latestOrder = orderByVehicle.get(vehicle.id) || null;
+          const order = !requisition || latestOrder?.part_requisition_id === requisition.id ? latestOrder : null;
 
-          const advisorWork = advisorWorkByVehicle.get(vehicle.id) || null;
+          const advisorWork = requirementView(advisorWorkByVehicle.get(vehicle.id) || null, requisition ? cycleRequirements.get(requisition.id) : undefined, requisition);
 
           if (!requisition && !order) {
             continue;
@@ -534,7 +547,7 @@ export default function StoreMonitorScreen() {
 
           if (
             currentProfile.role === "advisor" &&
-            vehicle.current_assigned_to !== user.id
+            !assignedVehicleIds.has(vehicle.id)
           ) {
             continue;
           }

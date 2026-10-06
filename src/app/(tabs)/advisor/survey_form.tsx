@@ -1,7 +1,9 @@
-import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import DateTimePicker, {
+  DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -19,9 +21,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
 import { styles } from "../../../../styles/survey_form.styles";
+import { checkWorkflowReadiness } from "../../../lib/workflow-readiness";
 import { colors } from "../../../theme";
 
-import CustomerDetailsCard from "./components/CustomerDetailsCard";
 import VehicleDetailsCard from "./components/VehicleDetailsCard";
 
 type Vehicle = {
@@ -56,6 +58,8 @@ type Profile = {
   is_active: boolean;
   name?: string | null;
 };
+
+type WorkType = { id: string; code: string; name: string; is_active: boolean };
 
 type PopupType = "success" | "error" | "warning" | "info";
 
@@ -101,6 +105,14 @@ function displayValue(value: unknown) {
   return String(value);
 }
 
+function contactValue(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const text = String(value).trim();
+  return !text || ["—", "-", "null", "undefined"].includes(text.toLowerCase())
+    ? null
+    : text;
+}
+
 function normalizeInsuranceType(value: unknown) {
   return String(value ?? "")
     .trim()
@@ -125,14 +137,11 @@ function SectionHeading({
       <View style={styles.sectionHeadingCopy}>
         <Text style={styles.cardTitle}>{title}</Text>
 
-        {!!subtitle && (
-          <Text style={styles.sectionSubtitle}>{subtitle}</Text>
-        )}
+        {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
       </View>
     </View>
   );
 }
-
 
 function parseDateTime(value: string | null) {
   if (!value) return new Date();
@@ -183,7 +192,7 @@ function DateTimeField({
         updated.setFullYear(
           selectedDate.getFullYear(),
           selectedDate.getMonth(),
-          selectedDate.getDate()
+          selectedDate.getDate(),
         );
         setDraftDate(updated);
         setPickerMode("time");
@@ -191,7 +200,12 @@ function DateTimeField({
       }
 
       const updated = new Date(draftDate);
-      updated.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+      updated.setHours(
+        selectedDate.getHours(),
+        selectedDate.getMinutes(),
+        0,
+        0,
+      );
       setDraftDate(updated);
       onChange(updated);
       setShowPicker(false);
@@ -261,42 +275,49 @@ function DateTimeField({
           animationType="slide"
           onRequestClose={() => setShowPicker(false)}
         >
-          <View style={screenStyles.iosPickerOverlay}>
-            <View style={screenStyles.iosPickerCard}>
-              <View style={screenStyles.iosPickerHeader}>
-                <View>
-                  <Text style={screenStyles.iosPickerTitle}>{label}</Text>
-                  <Text style={screenStyles.iosPickerSubtitle}>
-                    Select the actual date and time
-                  </Text>
+          <SafeAreaView
+            style={{ flex: 1 }}
+            edges={["top", "right", "bottom", "left"]}
+          >
+            <View style={screenStyles.iosPickerOverlay}>
+              <View style={screenStyles.iosPickerCard}>
+                <View style={screenStyles.iosPickerHeader}>
+                  <View>
+                    <Text style={screenStyles.iosPickerTitle}>{label}</Text>
+                    <Text style={screenStyles.iosPickerSubtitle}>
+                      Select the actual date and time
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => setShowPicker(false)}
+                    style={screenStyles.iosCancelButton}
+                  >
+                    <Text style={screenStyles.iosCancelText}>Cancel</Text>
+                  </Pressable>
                 </View>
+
+                <DateTimePicker
+                  value={draftDate}
+                  mode="datetime"
+                  display="spinner"
+                  onChange={handleChange}
+                  style={screenStyles.iosPicker}
+                />
+
                 <Pressable
-                  onPress={() => setShowPicker(false)}
-                  style={screenStyles.iosCancelButton}
+                  onPress={() => {
+                    onChange(draftDate);
+                    setShowPicker(false);
+                  }}
+                  style={screenStyles.iosConfirmButton}
                 >
-                  <Text style={screenStyles.iosCancelText}>Cancel</Text>
+                  <Text style={screenStyles.iosConfirmText}>
+                    Confirm Date & Time
+                  </Text>
                 </Pressable>
               </View>
-
-              <DateTimePicker
-                value={draftDate}
-                mode="datetime"
-                display="spinner"
-                onChange={handleChange}
-                style={screenStyles.iosPicker}
-              />
-
-              <Pressable
-                onPress={() => {
-                  onChange(draftDate);
-                  setShowPicker(false);
-                }}
-                style={screenStyles.iosConfirmButton}
-              >
-                <Text style={screenStyles.iosConfirmText}>Confirm Date & Time</Text>
-              </Pressable>
             </View>
-          </View>
+          </SafeAreaView>
         </Modal>
       )}
 
@@ -322,13 +343,7 @@ function CustomPopup({
   const isError = popup.type === "error";
   const isWarning = popup.type === "warning";
 
-  const icon = isSuccess
-    ? "✓"
-    : isError
-      ? "!"
-      : isWarning
-        ? "!"
-        : "i";
+  const icon = isSuccess ? "✓" : isError ? "!" : isWarning ? "!" : "i";
 
   return (
     <Modal
@@ -337,68 +352,70 @@ function CustomPopup({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={popupStyles.overlay}>
-        <View style={popupStyles.card}>
-          <View
-            style={[
-              popupStyles.iconCircle,
-              isSuccess && popupStyles.successIcon,
-              isError && popupStyles.errorIcon,
-              isWarning && popupStyles.warningIcon,
-              !isSuccess &&
-                !isError &&
-                !isWarning &&
-                popupStyles.infoIcon,
-            ]}
-          >
-            <Text style={popupStyles.iconText}>{icon}</Text>
-          </View>
+      <SafeAreaView
+        style={{ flex: 1 }}
+        edges={["top", "right", "bottom", "left"]}
+      >
+        <View style={popupStyles.overlay}>
+          <View style={popupStyles.card}>
+            <View
+              style={[
+                popupStyles.iconCircle,
+                isSuccess && popupStyles.successIcon,
+                isError && popupStyles.errorIcon,
+                isWarning && popupStyles.warningIcon,
+                !isSuccess && !isError && !isWarning && popupStyles.infoIcon,
+              ]}
+            >
+              <Text style={popupStyles.iconText}>{icon}</Text>
+            </View>
 
-          <Text style={popupStyles.title}>{popup.title}</Text>
+            <Text style={popupStyles.title}>{popup.title}</Text>
 
-          <Text style={popupStyles.message}>{popup.message}</Text>
+            <Text style={popupStyles.message}>{popup.message}</Text>
 
-          <View style={popupStyles.actions}>
-            {!!popup.secondaryText && (
+            <View style={popupStyles.actions}>
+              {!!popup.secondaryText && (
+                <Pressable
+                  onPress={() => {
+                    if (popup.onSecondary) {
+                      popup.onSecondary();
+                    } else {
+                      onClose();
+                    }
+                  }}
+                  style={({ pressed }) => [
+                    popupStyles.secondaryButton,
+                    pressed && popupStyles.pressed,
+                  ]}
+                >
+                  <Text style={popupStyles.secondaryButtonText}>
+                    {popup.secondaryText}
+                  </Text>
+                </Pressable>
+              )}
+
               <Pressable
                 onPress={() => {
-                  if (popup.onSecondary) {
-                    popup.onSecondary();
+                  if (popup.onPrimary) {
+                    popup.onPrimary();
                   } else {
                     onClose();
                   }
                 }}
                 style={({ pressed }) => [
-                  popupStyles.secondaryButton,
+                  popupStyles.primaryButton,
                   pressed && popupStyles.pressed,
                 ]}
               >
-                <Text style={popupStyles.secondaryButtonText}>
-                  {popup.secondaryText}
+                <Text style={popupStyles.primaryButtonText}>
+                  {popup.primaryText || "OK"}
                 </Text>
               </Pressable>
-            )}
-
-            <Pressable
-              onPress={() => {
-                if (popup.onPrimary) {
-                  popup.onPrimary();
-                } else {
-                  onClose();
-                }
-              }}
-              style={({ pressed }) => [
-                popupStyles.primaryButton,
-                pressed && popupStyles.pressed,
-              ]}
-            >
-              <Text style={popupStyles.primaryButtonText}>
-                {popup.primaryText || "OK"}
-              </Text>
-            </Pressable>
+            </View>
           </View>
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -417,7 +434,7 @@ export default function AdvisorSurveyFormScreen() {
 
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [vehicleIntake, setVehicleIntake] = useState<VehicleIntake | null>(
-    null
+    null,
   );
   const [profile, setProfile] = useState<Profile | null>(null);
 
@@ -427,13 +444,73 @@ export default function AdvisorSurveyFormScreen() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const submittingRef = useRef(false);
+  const [readinessError, setReadinessError] = useState("");
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   const [popup, setPopup] = useState<PopupState>(INITIAL_POPUP);
 
-  const [surveyCompletedAt, setSurveyCompletedAt] = useState<Date>(() => new Date());
-  const [approvalStatus, setApprovalStatus] = useState<"PENDING" | "RECEIVED">("PENDING");
-  const [approvalReceivedAt, setApprovalReceivedAt] = useState<Date>(() => new Date());
-  const [assessmentPhoto, setAssessmentPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [surveyCompletedAt, setSurveyCompletedAt] = useState<Date>(
+    () => new Date(),
+  );
+  const [approvalStatus, setApprovalStatus] = useState<"PENDING" | "RECEIVED">(
+    "PENDING",
+  );
+  const [workTypes, setWorkTypes] = useState<WorkType[]>([]);
+  const [selectedWorkTypeIds, setSelectedWorkTypeIds] = useState<string[]>([]);
+  const [workTypesLoading, setWorkTypesLoading] = useState(true);
+  const [workTypesError, setWorkTypesError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadWorkTypes() {
+      setWorkTypesLoading(true);
+      setWorkTypesError("");
+      try {
+        const { data, error } = await supabase
+          .from("work_type_master")
+          .select("id,code,name,is_active")
+          .eq("is_active", true)
+          .order("name");
+        if (error) throw error;
+        const active = ((data || []) as WorkType[]).filter(
+          (item) =>
+            !["FINAL_INSPECTION", "FINAL_INSPECTION_REWORK"].includes(
+              item.code,
+            ),
+        );
+        if (!active.length)
+          throw new Error(
+            "No active Floor work types are available. Contact CEO Admin.",
+          );
+        if (!mounted) return;
+        setWorkTypes(active);
+        setSelectedWorkTypeIds((previous) =>
+          Array.from(
+            new Set([
+              ...previous.filter((id) => active.some((item) => item.id === id)),
+            ]),
+          ),
+        );
+      } catch (error: any) {
+        if (mounted)
+          setWorkTypesError(
+            error?.message || "Unable to load Approved Floor Work.",
+          );
+      } finally {
+        if (mounted) setWorkTypesLoading(false);
+      }
+    }
+    void loadWorkTypes();
+    return () => {
+      mounted = false;
+    };
+  }, [refreshVersion]);
+  const [approvalReceivedAt, setApprovalReceivedAt] = useState<Date>(
+    () => new Date(),
+  );
+  const [assessmentPhoto, setAssessmentPhoto] =
+    useState<ImagePicker.ImagePickerAsset | null>(null);
 
   const closePopup = () => {
     setPopup(INITIAL_POPUP);
@@ -448,7 +525,7 @@ export default function AdvisorSurveyFormScreen() {
       secondaryText?: string;
       onPrimary?: () => void;
       onSecondary?: () => void;
-    }
+    },
   ) => {
     setPopup({
       visible: true,
@@ -468,12 +545,15 @@ export default function AdvisorSurveyFormScreen() {
     async function loadScreen() {
       try {
         setLoading(true);
+        setReadinessError("");
 
         if (!visitId || !vehicleId) {
           throw new Error(
-            "Vehicle or visit information is missing. Please return to Pending Survey and open the vehicle again."
+            "Vehicle or visit information is missing. Please return to Pending Survey and open the vehicle again.",
           );
         }
+
+        await checkWorkflowReadiness(visitId, vehicleId, "PENDING_SURVEY");
 
         const {
           data: { user },
@@ -504,7 +584,7 @@ export default function AdvisorSurveyFormScreen() {
           supabase
             .from("vehicles")
             .select(
-              "id,vehicle_no,current_stage,current_status,current_assigned_to,customer_name,customer_mobile,model,arena_nexa,vehicle_type,jc_no,stage_started_at"
+              "id,vehicle_no,current_stage,current_status,current_assigned_to,customer_name,customer_mobile,model,arena_nexa,vehicle_type,jc_no,stage_started_at",
             )
             .eq("id", vehicleId)
             .single(),
@@ -519,7 +599,7 @@ export default function AdvisorSurveyFormScreen() {
           supabase
             .from("workshop_visits")
             .select(
-              "id,vehicle_id,current_stage,current_status,current_assigned_to,stage_started_at"
+              "id,vehicle_id,current_stage,current_status,current_assigned_to,stage_started_at",
             )
             .eq("id", visitId)
             .eq("vehicle_id", vehicleId)
@@ -548,14 +628,12 @@ export default function AdvisorSurveyFormScreen() {
 
         if (!profileData.is_active) {
           throw new Error(
-            "Your account is inactive. Please contact the CEO Admin."
+            "Your account is inactive. Please contact the CEO Admin.",
           );
         }
 
         if (profileData.role !== "advisor") {
-          throw new Error(
-            "Only the assigned Advisor can complete the survey."
-          );
+          throw new Error("Only the assigned Advisor can complete the survey.");
         }
 
         if (!vehicleData) {
@@ -568,13 +646,13 @@ export default function AdvisorSurveyFormScreen() {
 
         if (vehicleData.current_assigned_to !== user.id) {
           throw new Error(
-            "This vehicle is assigned to another Advisor. You cannot complete its survey."
+            "This vehicle is assigned to another Advisor. You cannot complete its survey.",
           );
         }
 
         if (visitData.current_assigned_to !== user.id) {
           throw new Error(
-            "This survey is not assigned to your Advisor account."
+            "This survey is not assigned to your Advisor account.",
           );
         }
 
@@ -605,22 +683,20 @@ export default function AdvisorSurveyFormScreen() {
                   closePopup();
                   router.replace("/(tabs)/advisor/survey");
                 },
-              }
+              },
             );
           } else {
             throw new Error(
-              `This vehicle is currently in ${visitData.current_stage}, not Pending Survey.`
+              `This vehicle is currently in ${visitData.current_stage}, not Pending Survey.`,
             );
           }
 
           return;
         }
 
-        if (
-          !["PENDING", "IN_PROGRESS"].includes(visitData.current_status)
-        ) {
+        if (!["PENDING", "IN_PROGRESS"].includes(visitData.current_status)) {
           throw new Error(
-            `This survey cannot be completed because the visit status is ${visitData.current_status}.`
+            `This survey cannot be completed because the visit status is ${visitData.current_status}.`,
           );
         }
 
@@ -629,12 +705,24 @@ export default function AdvisorSurveyFormScreen() {
         }
 
         setProfile(profileData);
-        setVehicle(vehicleData);
+        // Intake stores contact details for this visit; the vehicle master may be empty or outdated.
+        setVehicle({
+          ...vehicleData,
+          customer_name:
+            contactValue(intakeData?.customer_name) ||
+            contactValue(vehicleData.customer_name),
+          customer_mobile:
+            contactValue(intakeData?.customer_mobile) ||
+            contactValue(vehicleData.customer_mobile),
+        });
         setVehicleIntake(intakeData);
       } catch (error: any) {
         if (!mounted) {
           return;
         }
+        setReadinessError(
+          error?.message || "Unable to verify this vehicle. Please refresh.",
+        );
 
         showPopup(
           "error",
@@ -647,7 +735,7 @@ export default function AdvisorSurveyFormScreen() {
               closePopup();
               router.replace("/(tabs)/advisor/survey");
             },
-          }
+          },
         );
       } finally {
         if (mounted) {
@@ -661,21 +749,27 @@ export default function AdvisorSurveyFormScreen() {
     return () => {
       mounted = false;
     };
-  }, [visitId, vehicleId]);
+  }, [visitId, vehicleId, refreshVersion]);
 
-  const insuranceType = normalizeInsuranceType(
-    vehicleIntake?.insurance_type
-  );
+  const insuranceType = normalizeInsuranceType(vehicleIntake?.insurance_type);
 
   const isPaid = insuranceType === "PAID";
   const isInsurance = insuranceType === "INSURANCE";
 
+  useEffect(() => {
+    if (!isInsurance) return;
+    const stripping = workTypes.find((item) => item.code === "STRIPPING");
+    if (stripping)
+      setSelectedWorkTypeIds((previous) =>
+        previous.includes(stripping.id)
+          ? previous
+          : [...previous, stripping.id],
+      );
+  }, [isInsurance, workTypes]);
+
   const vehicleTitle = useMemo(
-    () =>
-      [vehicle?.arena_nexa, vehicle?.model]
-        .filter(Boolean)
-        .join(" · "),
-    [vehicle?.arena_nexa, vehicle?.model]
+    () => [vehicle?.arena_nexa, vehicle?.model].filter(Boolean).join(" · "),
+    [vehicle?.arena_nexa, vehicle?.model],
   );
 
   const pendingSince = useMemo(() => {
@@ -693,6 +787,26 @@ export default function AdvisorSurveyFormScreen() {
   }, [vehicle?.stage_started_at]);
 
   const validateForm = () => {
+    if (approvalStatus === "RECEIVED") {
+      if (workTypesLoading)
+        return "Please wait for Approved Floor Work to load.";
+      if (workTypesError) return workTypesError;
+      const stripping = workTypes.find((item) => item.code === "STRIPPING");
+      if (
+        isInsurance &&
+        (!stripping || !selectedWorkTypeIds.includes(stripping.id))
+      ) {
+        return "STRIPPING must be included in Approved Floor Work.";
+      }
+      if (!selectedWorkTypeIds.length)
+        return "Select at least one approved Floor work type.";
+      if (
+        selectedWorkTypeIds.some(
+          (id) => !workTypes.some((item) => item.id === id && item.is_active),
+        )
+      )
+        return "Select valid active Approved Floor Work.";
+    }
     if (!vehicle) {
       return "Vehicle information is not available.";
     }
@@ -738,7 +852,6 @@ export default function AdvisorSurveyFormScreen() {
     return null;
   };
 
-
   const pickAssessmentPhoto = async (source: "camera" | "gallery") => {
     try {
       if (source === "camera") {
@@ -747,17 +860,18 @@ export default function AdvisorSurveyFormScreen() {
           showPopup(
             "warning",
             "Camera permission required",
-            "Please allow camera access to capture the assessment sheet."
+            "Please allow camera access to capture the assessment sheet.",
           );
           return;
         }
       } else {
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        const permission =
+          await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted && Platform.OS !== "web") {
           showPopup(
             "warning",
             "Photo permission required",
-            "Please allow photo library access to select the assessment sheet."
+            "Please allow photo library access to select the assessment sheet.",
           );
           return;
         }
@@ -784,14 +898,14 @@ export default function AdvisorSurveyFormScreen() {
       showPopup(
         "error",
         "Photo selection failed",
-        error?.message || "The assessment sheet photo could not be selected."
+        error?.message || "The assessment sheet photo could not be selected.",
       );
     }
   };
 
   const uploadAssessmentPhoto = async (
     photo: ImagePicker.ImagePickerAsset,
-    currentVehicleId: string
+    currentVehicleId: string,
   ) => {
     const response = await fetch(photo.uri);
 
@@ -827,6 +941,7 @@ export default function AdvisorSurveyFormScreen() {
   };
 
   const completeSurvey = async () => {
+    if (submittingRef.current || loading || saving || readinessError) return;
     const validationError = validateForm();
 
     if (validationError) {
@@ -838,13 +953,17 @@ export default function AdvisorSurveyFormScreen() {
       showPopup(
         "error",
         "Permission denied",
-        "Only the assigned active Advisor can complete this survey."
+        "Only the assigned active Advisor can complete this survey.",
       );
       return;
     }
 
     if (!visitId || !vehicle) {
-      showPopup("error", "Vehicle unavailable", "The workshop visit information is missing.");
+      showPopup(
+        "error",
+        "Vehicle unavailable",
+        "The workshop visit information is missing.",
+      );
       return;
     }
 
@@ -852,13 +971,22 @@ export default function AdvisorSurveyFormScreen() {
       showPopup(
         "warning",
         "Assessment Sheet Required",
-        "Please upload the assessment sheet photo when Approval is marked as Received."
+        "Please upload the assessment sheet photo when Approval is marked as Received.",
       );
       return;
     }
 
     try {
       setSaving(true);
+      submittingRef.current = true;
+      try {
+        await checkWorkflowReadiness(visitId, vehicle.id, "PENDING_SURVEY");
+      } catch (error: any) {
+        setReadinessError(
+          error?.message || "Unable to verify this vehicle. Please refresh.",
+        );
+        throw error;
+      }
 
       const {
         data: { user },
@@ -875,7 +1003,7 @@ export default function AdvisorSurveyFormScreen() {
       if (approvalStatus === "RECEIVED" && assessmentPhoto) {
         assessmentSheetPath = await uploadAssessmentPhoto(
           assessmentPhoto,
-          vehicle.id
+          vehicle.id,
         );
       }
 
@@ -886,9 +1014,7 @@ export default function AdvisorSurveyFormScreen() {
         {
           p_visit_id: visitId,
           p_paid_amount: isPaid ? amount : null,
-          p_receipt_reference_no: isPaid
-            ? receiptReferenceNo.trim()
-            : null,
+          p_receipt_reference_no: isPaid ? receiptReferenceNo.trim() : null,
           p_remarks: remarks.trim() || null,
           p_survey_completed_at: formatDateTimeForApi(surveyCompletedAt),
           p_approval_status: approvalStatus,
@@ -897,7 +1023,9 @@ export default function AdvisorSurveyFormScreen() {
               ? formatDateTimeForApi(approvalReceivedAt)
               : null,
           p_assessment_sheet_photo_path: assessmentSheetPath,
-        }
+          p_work_type_ids:
+            approvalStatus === "RECEIVED" ? selectedWorkTypeIds : [],
+        },
       );
 
       if (error) {
@@ -909,14 +1037,12 @@ export default function AdvisorSurveyFormScreen() {
         throw error;
       }
 
-      const result = data as
-        | {
-            survey_id?: string;
-            survey_no?: number;
-            stage?: string;
-            status?: string;
-          }
-        | null;
+      const result = data as {
+        survey_id?: string;
+        survey_no?: number;
+        stage?: string;
+        status?: string;
+      } | null;
 
       const surveyNumber = result?.survey_no
         ? `Survey #${result.survey_no}`
@@ -926,14 +1052,14 @@ export default function AdvisorSurveyFormScreen() {
         showPopup(
           "success",
           "Survey & Approval completed",
-          `${surveyNumber} has been completed. Approval was recorded as received and the vehicle has moved directly to Advisor Work.`,
+          `${surveyNumber} has been completed. Approval, assessment sheet and Approved Floor Work scope were saved. The vehicle has moved to Advisor Work.`,
           {
             primaryText: "Go to Advisor Work",
             onPrimary: () => {
               closePopup();
               router.replace("/(tabs)/advisor" as any);
             },
-          }
+          },
         );
       } else {
         showPopup(
@@ -946,7 +1072,7 @@ export default function AdvisorSurveyFormScreen() {
               closePopup();
               router.replace("/(tabs)/advisor" as any);
             },
-          }
+          },
         );
       }
     } catch (error: any) {
@@ -958,6 +1084,7 @@ export default function AdvisorSurveyFormScreen() {
 
       showPopup("error", "Survey could not be completed", message);
     } finally {
+      submittingRef.current = false;
       setSaving(false);
     }
   };
@@ -972,10 +1099,7 @@ export default function AdvisorSurveyFormScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView
-        style={styles.loadingContainer}
-        edges={["top", "bottom"]}
-      >
+      <SafeAreaView style={styles.loadingContainer} edges={["top", "bottom"]}>
         <StatusBar
           barStyle="dark-content"
           backgroundColor={colors.background}
@@ -986,14 +1110,9 @@ export default function AdvisorSurveyFormScreen() {
             <Text style={styles.loadingLogoText}>P</Text>
           </View>
 
-          <ActivityIndicator
-            color={colors.primary}
-            size="large"
-          />
+          <ActivityIndicator color={colors.primary} size="large" />
 
-          <Text style={styles.loadingTitle}>
-            Preparing your survey
-          </Text>
+          <Text style={styles.loadingTitle}>Preparing your survey</Text>
 
           <Text style={styles.loadingSubtitle}>
             Loading vehicle and survey details…
@@ -1005,25 +1124,30 @@ export default function AdvisorSurveyFormScreen() {
     );
   }
 
-  if (!vehicle) {
+  if (!vehicle || readinessError) {
     return (
-      <SafeAreaView
-        style={styles.container}
-        edges={["top", "bottom"]}
-      >
+      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
         <StatusBar
           barStyle="dark-content"
           backgroundColor={colors.background}
         />
 
         <View style={styles.loadingContent}>
-          <Text style={styles.heading}>
-            Survey unavailable
-          </Text>
+          <Text style={styles.heading}>Survey unavailable</Text>
 
           <Text style={styles.subheading}>
-            Vehicle information could not be loaded.
+            {readinessError || "Vehicle information could not be loaded."}
           </Text>
+
+          <Pressable
+            onPress={() => {
+              closePopup();
+              setRefreshVersion((version) => version + 1);
+            }}
+            style={styles.primaryButton}
+          >
+            <Text style={styles.primaryButtonText}>Refresh</Text>
+          </Pressable>
 
           <Pressable
             onPress={handleBack}
@@ -1032,9 +1156,7 @@ export default function AdvisorSurveyFormScreen() {
               pressed && styles.pressed,
             ]}
           >
-            <Text style={styles.primaryButtonText}>
-              Back to Pending Survey
-            </Text>
+            <Text style={styles.primaryButtonText}>Back to Pending Survey</Text>
           </Pressable>
         </View>
 
@@ -1044,14 +1166,8 @@ export default function AdvisorSurveyFormScreen() {
   }
 
   return (
-    <SafeAreaView
-      style={styles.container}
-      edges={["top", "bottom"]}
-    >
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor={colors.background}
-      />
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
 
       <KeyboardAvoidingView
         style={screenStyles.flex}
@@ -1086,21 +1202,15 @@ export default function AdvisorSurveyFormScreen() {
             <View style={styles.heroTopRow}>
               <View style={styles.workspacePill}>
                 <View style={styles.onlineDot} />
-                <Text style={styles.eyebrow}>
-                  ADVISOR WORKSPACE
-                </Text>
+                <Text style={styles.eyebrow}>ADVISOR WORKSPACE</Text>
               </View>
 
               <View style={styles.livePill}>
-                <Text style={styles.livePillText}>
-                  ● PENDING SURVEY
-                </Text>
+                <Text style={styles.livePillText}>● PENDING SURVEY</Text>
               </View>
             </View>
 
-            <Text style={styles.heading}>
-              Complete Vehicle Survey
-            </Text>
+            <Text style={styles.heading}>Complete Vehicle Survey</Text>
 
             <Text style={styles.subheading}>
               Review the vehicle information, enter the survey result, and
@@ -1114,30 +1224,23 @@ export default function AdvisorSurveyFormScreen() {
               </View>
 
               <View style={styles.vehicleHeroCopy}>
-                <Text style={styles.regLabel}>
-                  VEHICLE REGISTRATION
-                </Text>
+                <Text style={styles.regLabel}>VEHICLE REGISTRATION</Text>
 
                 <Text style={styles.regNumber}>
                   {vehicle.vehicle_no || "—"}
                 </Text>
 
                 <Text style={styles.vehicleCustomer}>
-                  {vehicle.customer_name ||
-                    "Customer name not available"}
+                  {vehicle.customer_name || "Customer name not available"}
                 </Text>
 
                 {!!vehicleTitle && (
-                  <Text style={styles.vehicleMeta}>
-                    {vehicleTitle}
-                  </Text>
+                  <Text style={styles.vehicleMeta}>{vehicleTitle}</Text>
                 )}
               </View>
 
               <View style={styles.assignedBadge}>
-                <Text style={styles.assignedBadgeText}>
-                  ASSIGNED
-                </Text>
+                <Text style={styles.assignedBadgeText}>ASSIGNED</Text>
               </View>
             </View>
           </View>
@@ -1149,13 +1252,11 @@ export default function AdvisorSurveyFormScreen() {
             </View>
 
             <View style={screenStyles.statusCopy}>
-              <Text style={screenStyles.statusTitle}>
-                Pending Survey
-              </Text>
+              <Text style={screenStyles.statusTitle}>Pending Survey</Text>
 
               <Text style={screenStyles.statusText}>
-                This vehicle is waiting for the assigned Advisor to
-                complete the survey.
+                This vehicle is waiting for the assigned Advisor to complete the
+                survey.
               </Text>
 
               <Text style={screenStyles.statusMeta}>
@@ -1165,7 +1266,27 @@ export default function AdvisorSurveyFormScreen() {
           </View>
 
           {/* CUSTOMER DETAILS */}
-          <CustomerDetailsCard customer={vehicle} />
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Customer Details</Text>
+            <View style={screenStyles.infoGrid}>
+              <View style={screenStyles.infoItem}>
+                <Text style={screenStyles.infoLabel}>Customer name</Text>
+                <Text selectable style={screenStyles.infoValue}>
+                  {contactValue(vehicleIntake?.customer_name) ||
+                    contactValue(vehicle?.customer_name) ||
+                    "Not recorded"}
+                </Text>
+              </View>
+              <View style={screenStyles.infoItem}>
+                <Text style={screenStyles.infoLabel}>Mobile number</Text>
+                <Text selectable style={screenStyles.infoValue}>
+                  {contactValue(vehicleIntake?.customer_mobile) ||
+                    contactValue(vehicle?.customer_mobile) ||
+                    "Not recorded"}
+                </Text>
+              </View>
+            </View>
+          </View>
 
           {/* VEHICLE DETAILS */}
           <VehicleDetailsCard vehicle={vehicle} />
@@ -1180,9 +1301,7 @@ export default function AdvisorSurveyFormScreen() {
 
             <View style={screenStyles.infoGrid}>
               <View style={screenStyles.infoItem}>
-                <Text style={screenStyles.infoLabel}>
-                  Insurance / Job Type
-                </Text>
+                <Text style={screenStyles.infoLabel}>Insurance / Job Type</Text>
 
                 <View
                   style={[
@@ -1206,45 +1325,33 @@ export default function AdvisorSurveyFormScreen() {
               </View>
 
               <View style={screenStyles.infoItem}>
-                <Text style={screenStyles.infoLabel}>
-                  Job Card No.
+                <Text style={screenStyles.infoLabel}>Job Card No.</Text>
+
+                <Text style={screenStyles.infoValue}>
+                  {displayValue(vehicle.jc_no || vehicleIntake?.job_card_no)}
                 </Text>
+              </View>
+
+              <View style={screenStyles.infoItem}>
+                <Text style={screenStyles.infoLabel}>Vehicle Type</Text>
 
                 <Text style={screenStyles.infoValue}>
                   {displayValue(
-                    vehicle.jc_no ||
-                      vehicleIntake?.job_card_no
+                    vehicle.vehicle_type || vehicleIntake?.vehicle_type,
                   )}
                 </Text>
               </View>
 
               <View style={screenStyles.infoItem}>
-                <Text style={screenStyles.infoLabel}>
-                  Vehicle Type
-                </Text>
+                <Text style={screenStyles.infoLabel}>Arena / Nexa</Text>
 
                 <Text style={screenStyles.infoValue}>
                   {displayValue(
-                    vehicle.vehicle_type ||
-                      vehicleIntake?.vehicle_type
-                  )}
-                </Text>
-              </View>
-
-              <View style={screenStyles.infoItem}>
-                <Text style={screenStyles.infoLabel}>
-                  Arena / Nexa
-                </Text>
-
-                <Text style={screenStyles.infoValue}>
-                  {displayValue(
-                    vehicle.arena_nexa ||
-                      vehicleIntake?.arena_nexa
+                    vehicle.arena_nexa || vehicleIntake?.arena_nexa,
                   )}
                 </Text>
               </View>
             </View>
-
           </View>
 
           {/* PAID DETAILS */}
@@ -1257,8 +1364,7 @@ export default function AdvisorSurveyFormScreen() {
               />
 
               <Text style={styles.label}>
-                Paid Amount{" "}
-                <Text style={styles.required}>*</Text>
+                Paid Amount <Text style={styles.required}>*</Text>
               </Text>
 
               <View style={screenStyles.amountInputWrap}>
@@ -1267,39 +1373,28 @@ export default function AdvisorSurveyFormScreen() {
                 <TextInput
                   value={paidAmount}
                   onChangeText={(value) => {
-                    const cleaned = value.replace(
-                      /[^0-9.]/g,
-                      ""
-                    );
+                    const cleaned = value.replace(/[^0-9.]/g, "");
 
                     const parts = cleaned.split(".");
 
                     if (parts.length > 2) {
-                      setPaidAmount(
-                        `${parts[0]}.${parts.slice(1).join("")}`
-                      );
+                      setPaidAmount(`${parts[0]}.${parts.slice(1).join("")}`);
                     } else {
                       setPaidAmount(cleaned);
                     }
                   }}
                   placeholder="Enter paid amount"
                   placeholderTextColor={colors.textLight}
-                  style={[
-                    styles.input,
-                    screenStyles.amountInput,
-                  ]}
+                  style={[styles.input, screenStyles.amountInput]}
                   keyboardType={
-                    Platform.OS === "ios"
-                      ? "decimal-pad"
-                      : "numeric"
+                    Platform.OS === "ios" ? "decimal-pad" : "numeric"
                   }
                   returnKeyType="next"
                 />
               </View>
 
               <Text style={styles.label}>
-                Receipt / Reference No.{" "}
-                <Text style={styles.required}>*</Text>
+                Receipt / Reference No. <Text style={styles.required}>*</Text>
               </Text>
 
               <TextInput
@@ -1313,13 +1408,11 @@ export default function AdvisorSurveyFormScreen() {
               />
 
               <View style={screenStyles.requiredHint}>
-                <Text style={screenStyles.requiredHintIcon}>
-                  i
-                </Text>
+                <Text style={screenStyles.requiredHintIcon}>i</Text>
 
                 <Text style={screenStyles.requiredHintText}>
-                  Both Paid Amount and Receipt / Reference No. are
-                  required for a Paid vehicle.
+                  Both Paid Amount and Receipt / Reference No. are required for
+                  a Paid vehicle.
                 </Text>
               </View>
             </View>
@@ -1336,9 +1429,7 @@ export default function AdvisorSurveyFormScreen() {
 
               <View style={screenStyles.insuranceInfoBox}>
                 <View style={screenStyles.insuranceInfoIcon}>
-                  <Text style={screenStyles.insuranceInfoIconText}>
-                    🛡
-                  </Text>
+                  <Text style={screenStyles.insuranceInfoIconText}>🛡</Text>
                 </View>
 
                 <View style={screenStyles.insuranceInfoCopy}>
@@ -1347,9 +1438,9 @@ export default function AdvisorSurveyFormScreen() {
                   </Text>
 
                   <Text style={screenStyles.insuranceInfoText}>
-                    Payment fields are not required at the Survey
-                    stage. Claim and approval information will be
-                    handled through the Insurance workflow.
+                    Payment fields are not required at the Survey stage. Claim
+                    and approval information will be handled through the
+                    Insurance workflow.
                   </Text>
                 </View>
               </View>
@@ -1365,10 +1456,7 @@ export default function AdvisorSurveyFormScreen() {
             />
 
             <Text style={styles.label}>
-              Remarks{" "}
-              <Text style={screenStyles.optionalText}>
-                (optional)
-              </Text>
+              Remarks <Text style={screenStyles.optionalText}>(optional)</Text>
             </Text>
 
             <TextInput
@@ -1401,7 +1489,8 @@ export default function AdvisorSurveyFormScreen() {
             <View style={screenStyles.securityNote}>
               <Text style={screenStyles.securityNoteIcon}>🔒</Text>
               <Text style={screenStyles.securityNoteText}>
-                The database verifies your active Advisor role, assignment and current Pending Survey stage before completing this action.
+                The database verifies your active Advisor role, assignment and
+                current Pending Survey stage before completing this action.
               </Text>
             </View>
           </View>
@@ -1424,7 +1513,8 @@ export default function AdvisorSurveyFormScreen() {
                 disabled={saving}
                 style={[
                   screenStyles.approvalOption,
-                  approvalStatus === "PENDING" && screenStyles.approvalOptionSelected,
+                  approvalStatus === "PENDING" &&
+                    screenStyles.approvalOptionSelected,
                 ]}
               >
                 <View
@@ -1433,12 +1523,15 @@ export default function AdvisorSurveyFormScreen() {
                     approvalStatus === "PENDING" && screenStyles.radioSelected,
                   ]}
                 >
-                  {approvalStatus === "PENDING" && <View style={screenStyles.radioDot} />}
+                  {approvalStatus === "PENDING" && (
+                    <View style={screenStyles.radioDot} />
+                  )}
                 </View>
                 <View style={screenStyles.approvalOptionCopy}>
                   <Text style={screenStyles.approvalOptionTitle}>Pending</Text>
                   <Text style={screenStyles.approvalOptionText}>
-                    Vehicle will move to Pending Approval after survey completion.
+                    Vehicle will move to Pending Approval after survey
+                    completion.
                   </Text>
                 </View>
               </Pressable>
@@ -1451,7 +1544,8 @@ export default function AdvisorSurveyFormScreen() {
                 disabled={saving}
                 style={[
                   screenStyles.approvalOption,
-                  approvalStatus === "RECEIVED" && screenStyles.approvalOptionSelected,
+                  approvalStatus === "RECEIVED" &&
+                    screenStyles.approvalOptionSelected,
                 ]}
               >
                 <View
@@ -1460,12 +1554,15 @@ export default function AdvisorSurveyFormScreen() {
                     approvalStatus === "RECEIVED" && screenStyles.radioSelected,
                   ]}
                 >
-                  {approvalStatus === "RECEIVED" && <View style={screenStyles.radioDot} />}
+                  {approvalStatus === "RECEIVED" && (
+                    <View style={screenStyles.radioDot} />
+                  )}
                 </View>
                 <View style={screenStyles.approvalOptionCopy}>
                   <Text style={screenStyles.approvalOptionTitle}>Received</Text>
                   <Text style={screenStyles.approvalOptionText}>
-                    Vehicle will directly move to Advisor Work after the required assessment sheet is uploaded.
+                    Vehicle will move to Advisor Work after the assessment sheet
+                    and Approved Floor Work scope are saved.
                   </Text>
                 </View>
               </Pressable>
@@ -1473,6 +1570,98 @@ export default function AdvisorSurveyFormScreen() {
 
             {approvalStatus === "RECEIVED" && (
               <View style={screenStyles.receivedSection}>
+                <Text style={styles.label}>
+                  Approved Floor Work <Text style={styles.required}>*</Text>
+                </Text>
+                <Text style={screenStyles.approvalOptionText}>
+                  {isPaid
+                    ? "Select at least one approved work type for this Paid job. Select Stripping only when required."
+                    : "Select the approved work for this vehicle. Stripping is required for Insurance jobs."}
+                </Text>
+                <View style={screenStyles.inspectionNotice}>
+                  <Text style={screenStyles.approvalOptionTitle}>
+                    Final Inspection · Mandatory
+                  </Text>
+                  <Text style={screenStyles.approvalOptionText}>
+                    Every vehicle goes to Final Inspection after Floor work. It
+                    is included automatically in the workflow.
+                  </Text>
+                </View>
+                {!workTypesLoading && !workTypesError && (
+                  <Text style={screenStyles.approvalOptionTitle}>
+                    {selectedWorkTypeIds.length} work type
+                    {selectedWorkTypeIds.length === 1 ? "" : "s"} selected
+                  </Text>
+                )}
+                {workTypesLoading ? (
+                  <ActivityIndicator color={colors.primary} />
+                ) : workTypesError ? (
+                  <View>
+                    <Text style={screenStyles.approvalOptionText}>
+                      {workTypesError}
+                    </Text>
+                    <Pressable
+                      disabled={saving}
+                      onPress={() =>
+                        setRefreshVersion((version) => version + 1)
+                      }
+                    >
+                      <Text style={styles.label}>Retry loading work types</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  workTypes.map((item) => {
+                    const required = isInsurance && item.code === "STRIPPING";
+                    const selected = selectedWorkTypeIds.includes(item.id);
+                    return (
+                      <Pressable
+                        key={item.id}
+                        disabled={saving || required}
+                        accessibilityRole="checkbox"
+                        accessibilityLabel={item.name}
+                        accessibilityState={{
+                          checked: selected,
+                          disabled: saving || required,
+                        }}
+                        onPress={() =>
+                          setSelectedWorkTypeIds((previous) =>
+                            previous.includes(item.id)
+                              ? previous.filter((id) => id !== item.id)
+                              : [...previous, item.id],
+                          )
+                        }
+                        style={[
+                          screenStyles.approvalOption,
+                          screenStyles.workTypeOption,
+                          selected && screenStyles.approvalOptionSelected,
+                        ]}
+                      >
+                        <View
+                          style={[
+                            screenStyles.workCheckbox,
+                            selected && screenStyles.workCheckboxSelected,
+                          ]}
+                        >
+                          <Text style={screenStyles.workCheckmark}>
+                            {selected ? "✓" : ""}
+                          </Text>
+                        </View>
+                        <View style={screenStyles.approvalOptionCopy}>
+                          <Text style={screenStyles.approvalOptionTitle}>
+                            {item.name}
+                          </Text>
+                          <Text style={screenStyles.approvalOptionText}>
+                            {required
+                              ? "Required for Insurance"
+                              : selected
+                                ? "Included in approved work"
+                                : "Tap to include"}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })
+                )}
                 <DateTimeField
                   label="Approval Received Date & Time"
                   value={approvalReceivedAt}
@@ -1493,8 +1682,12 @@ export default function AdvisorSurveyFormScreen() {
                       <Text style={screenStyles.selectedPhotoTitle}>
                         Assessment sheet selected
                       </Text>
-                      <Text style={screenStyles.selectedPhotoName} numberOfLines={2}>
-                        {assessmentPhoto.fileName || "Selected assessment sheet"}
+                      <Text
+                        style={screenStyles.selectedPhotoName}
+                        numberOfLines={2}
+                      >
+                        {assessmentPhoto.fileName ||
+                          "Selected assessment sheet"}
                       </Text>
                     </View>
                     <Pressable
@@ -1509,7 +1702,8 @@ export default function AdvisorSurveyFormScreen() {
                   <View style={screenStyles.photoRequiredBox}>
                     <Text style={screenStyles.photoRequiredIcon}>📄</Text>
                     <Text style={screenStyles.photoRequiredText}>
-                      Assessment sheet photo is mandatory when approval is received.
+                      Assessment sheet photo is mandatory when approval is
+                      received.
                     </Text>
                   </View>
                 )}
@@ -1551,12 +1745,12 @@ export default function AdvisorSurveyFormScreen() {
               </View>
 
               <View style={styles.submitCopy}>
-                <Text style={styles.submitTitle}>
-                  Ready to complete?
-                </Text>
+                <Text style={styles.submitTitle}>Ready to complete?</Text>
 
                 <Text style={styles.submitSubtitle}>
-                  After completion, the vehicle will move to the next workflow stage based on the Approval selection. This survey cannot be submitted again.
+                  After completion, the vehicle will move to the next workflow
+                  stage based on the Approval selection. This survey cannot be
+                  submitted again.
                 </Text>
               </View>
             </View>
@@ -1576,19 +1770,13 @@ export default function AdvisorSurveyFormScreen() {
                 <>
                   <ActivityIndicator color="#FFFFFF" />
 
-                  <Text style={styles.primaryButtonText}>
-                    Saving Survey…
-                  </Text>
+                  <Text style={styles.primaryButtonText}>Saving Survey…</Text>
                 </>
               ) : (
                 <>
-                  <Text style={styles.primaryButtonText}>
-                    Complete Survey
-                  </Text>
+                  <Text style={styles.primaryButtonText}>Complete Survey</Text>
 
-                  <Text style={styles.primaryButtonArrow}>
-                    →
-                  </Text>
+                  <Text style={styles.primaryButtonArrow}>→</Text>
                 </>
               )}
             </Pressable>
@@ -1602,22 +1790,15 @@ export default function AdvisorSurveyFormScreen() {
                 pressed && !saving && styles.pressed,
               ]}
             >
-              <Text style={styles.secondaryButtonText}>
-                Cancel & Go Back
-              </Text>
+              <Text style={styles.secondaryButtonText}>Cancel & Go Back</Text>
             </Pressable>
           </View>
 
-          <Text style={styles.footer}>
-            PAGARIYA AUTO • ADVISOR WORKSPACE
-          </Text>
+          <Text style={styles.footer}>PAGARIYA AUTO • ADVISOR WORKSPACE</Text>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      <CustomPopup
-        popup={popup}
-        onClose={closePopup}
-      />
+      <CustomPopup popup={popup} onClose={closePopup} />
     </SafeAreaView>
   );
 }
@@ -1935,7 +2116,6 @@ const screenStyles = StyleSheet.create({
     color: "#667085",
   },
 
-
   dateFieldWrap: {
     marginBottom: 2,
   },
@@ -2095,6 +2275,26 @@ const screenStyles = StyleSheet.create({
   approvalOptions: {
     gap: 10,
   },
+
+  inspectionNotice: {
+    backgroundColor: "#EEF7F1",
+    borderRadius: 12,
+    padding: 14,
+    marginVertical: 12,
+  },
+  workTypeOption: { alignItems: "center", minHeight: 64, marginBottom: 8 },
+  workCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#A7B1BF",
+    marginRight: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  workCheckboxSelected: { backgroundColor: "#1F5EFF", borderColor: "#1F5EFF" },
+  workCheckmark: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
 
   approvalOption: {
     flexDirection: "row",

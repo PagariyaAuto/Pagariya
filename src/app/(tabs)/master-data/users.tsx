@@ -801,6 +801,7 @@ export default function UsersScreen() {
         animationType="fade"
         onRequestClose={() => setRoleFilterModalVisible(false)}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.filterModal}>
             <View style={styles.modalHeader}>
@@ -881,6 +882,7 @@ export default function UsersScreen() {
             })}
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* Change Role Modal */}
@@ -894,6 +896,7 @@ export default function UsersScreen() {
           }
         }}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
@@ -985,6 +988,7 @@ export default function UsersScreen() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* Status Confirmation Modal */}
@@ -998,6 +1002,7 @@ export default function UsersScreen() {
           }
         }}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.confirmModal}>
             <View
@@ -1066,6 +1071,7 @@ export default function UsersScreen() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* Message Modal */}
@@ -1075,6 +1081,7 @@ export default function UsersScreen() {
         animationType="fade"
         onRequestClose={() => setMessageModalVisible(false)}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.messageModal}>
             <View style={styles.messageIcon}>
@@ -1097,6 +1104,7 @@ export default function UsersScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

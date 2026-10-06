@@ -1,10 +1,9 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -13,2243 +12,808 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
 import { supabase } from "../../../../lib/supabase";
-import { colors, radius, spacing, typography } from "../../../theme";
+import { colors } from "../../../theme";
 
-type VisitRow = {
+type Visit = {
   id: string;
   vehicle_id: string;
-  visit_no: string | null;
+  visit_no: number | string | null;
   current_stage: string;
   current_status: string;
-  current_assigned_to: string | null;
   stage_started_at: string | null;
   created_at: string | null;
 };
-
-type VehicleRow = {
+type Vehicle = {
   id: string;
   vehicle_no: string;
+  customer_name: string | null;
+  customer_mobile: string | null;
 };
-
-type IntakeRow = {
+type Intake = {
   visit_id: string;
   vehicle_id: string;
-  customer_name: string;
-  customer_mobile: string;
-  vehicle_type: string;
-  arena_nexa: string;
-  insurance_type: string;
+  customer_name: string | null;
+  customer_mobile: string | null;
+  vehicle_type: string | null;
+  arena_nexa: string | null;
+  insurance_type: string | null;
   mi_type_id: string | null;
   insurance_company_id: string | null;
-  job_card_no: string;
+  job_card_no: string | null;
+};
+type Master = { id: string; name: string | null };
+type Profile = { id: string; role: string };
+type Item = {
+  visit: Visit;
+  vehicle: Vehicle | null;
+  intake: Intake | null;
+  company: string | null;
+  mi: string | null;
 };
 
-type InsuranceCompanyRow = {
-  id: string;
-  name: string;
-};
+const textValue = (value: string | null | undefined) => value?.trim() || null;
+const startTime = (item: Item) =>
+  item.visit.stage_started_at || item.visit.created_at;
+function elapsed(value: string | null, now: number) {
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? Math.max(0, now - time) : null;
+}
+function waiting(value: string | null, now: number) {
+  const ms = elapsed(value, now);
+  if (ms === null) return "Time unavailable";
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ""}`;
+  return `${Math.floor(hours / 24)}d${hours % 24 ? ` ${hours % 24}h` : ""}`;
+}
+function formatTime(value: string | null) {
+  if (!value || !Number.isFinite(new Date(value).getTime()))
+    return "Not recorded";
+  return (
+    new Date(value).toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }) + " IST"
+  );
+}
+function issue(item: Item) {
+  if (!item.vehicle)
+    return "Vehicle details are unavailable. Refresh or contact CEO Admin.";
+  if (!item.intake || item.intake.vehicle_id !== item.visit.vehicle_id)
+    return "Intake details are missing or do not match this visit. Contact CEO Admin.";
+  if (item.intake.insurance_type !== "INSURANCE")
+    return "This visit is not marked as an Insurance job. Contact CEO Admin.";
+  return null;
+}
 
-type MiTypeRow = {
-  id: string;
-  name: string;
-};
-
-type ClaimVehicle = {
-  visit: VisitRow;
-  vehicle: VehicleRow;
-  intake: IntakeRow;
-  insuranceCompany: InsuranceCompanyRow | null;
-  miType: MiTypeRow | null;
-};
-
-type Profile = {
-  id: string;
-  role: string;
-  name: string | null;
-};
-
-type PopupType = "error" | "info";
-
-type PopupState = {
-  visible: boolean;
-  type: PopupType;
-  title: string;
-  message: string;
-};
-
-function formatDateTime(value: string | null) {
-  if (!value) return "—";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "—";
+async function fetchQueue(profile: Profile): Promise<Item[]> {
+  // Paginate the queue so the API's default row limit cannot hide vehicles.
+  const visits: Visit[] = [];
+  for (let offset = 0; ; offset += 500) {
+    let query = supabase
+      .from("workshop_visits")
+      .select(
+        "id, vehicle_id, visit_no, current_stage, current_status, stage_started_at, created_at",
+      )
+      .eq("current_stage", "CLAIM_INTIMATION")
+      .in("current_status", ["PENDING", "IN_PROGRESS"])
+      .is("closed_at", null)
+      .order("stage_started_at", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true })
+      .range(offset, offset + 499);
+    if (profile.role === "advisor")
+      query = query.eq("current_assigned_to", profile.id);
+    const { data, error } = await query;
+    if (error) throw error;
+    const page = (data || []) as Visit[];
+    visits.push(...page);
+    if (page.length < 500) break;
   }
+  if (!visits.length) return [];
 
-  return date.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
+  const vehicleMap = new Map<string, Vehicle>();
+  const intakeMap = new Map<string, Intake>();
+  // Small batches also keep filter URLs within practical limits.
+  for (let offset = 0; offset < visits.length; offset += 100) {
+    const batch = visits.slice(offset, offset + 100);
+    const results = await Promise.all([
+      supabase
+        .from("vehicles")
+        .select("id, vehicle_no, customer_name, customer_mobile")
+        .in("id", [...new Set(batch.map((v) => v.vehicle_id))]),
+      supabase
+        .from("vehicle_intake")
+        .select(
+          "visit_id, vehicle_id, customer_name, customer_mobile, vehicle_type, arena_nexa, insurance_type, mi_type_id, insurance_company_id, job_card_no",
+        )
+        .in(
+          "visit_id",
+          batch.map((v) => v.id),
+        ),
+    ]);
+    for (const result of results) if (result.error) throw result.error;
+    for (const vehicle of (results[0].data || []) as Vehicle[])
+      vehicleMap.set(vehicle.id, vehicle);
+    for (const intake of (results[1].data || []) as Intake[])
+      intakeMap.set(intake.visit_id, intake);
+  }
+  const companyMap = new Map<string, string | null>();
+  const miMap = new Map<string, string | null>();
+  const companyIds = [
+    ...new Set(
+      [...intakeMap.values()]
+        .map((i) => i.insurance_company_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  const miIds = [
+    ...new Set(
+      [...intakeMap.values()]
+        .map((i) => i.mi_type_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  await Promise.all([
+    (async () => {
+      for (let offset = 0; offset < companyIds.length; offset += 100) {
+        const { data, error } = await supabase
+          .from("insurance_companies")
+          .select("id, name")
+          .in("id", companyIds.slice(offset, offset + 100));
+        if (error) throw error;
+        for (const row of (data || []) as Master[])
+          companyMap.set(row.id, row.name);
+      }
+    })(),
+    (async () => {
+      for (let offset = 0; offset < miIds.length; offset += 100) {
+        const { data, error } = await supabase
+          .from("mi_types")
+          .select("id, name")
+          .in("id", miIds.slice(offset, offset + 100));
+        if (error) throw error;
+        for (const row of (data || []) as Master[]) miMap.set(row.id, row.name);
+      }
+    })(),
+  ]);
+  return visits.map((visit) => {
+    const intake = intakeMap.get(visit.id) || null;
+    return {
+      visit,
+      intake,
+      vehicle: vehicleMap.get(visit.vehicle_id) || null,
+      company: intake?.insurance_company_id
+        ? companyMap.get(intake.insurance_company_id) || null
+        : null,
+      mi: intake?.mi_type_id ? miMap.get(intake.mi_type_id) || null : null,
+    };
   });
-}
-
-function getWaitingTime(value: string | null) {
-  if (!value) return "—";
-
-  const start = new Date(value).getTime();
-
-  if (Number.isNaN(start)) {
-    return "—";
-  }
-
-  const now = Date.now();
-  const diff = Math.max(0, now - start);
-
-  const totalMinutes = Math.floor(diff / (1000 * 60));
-
-  if (totalMinutes < 1) {
-    return "Just now";
-  }
-
-  if (totalMinutes < 60) {
-    return `${totalMinutes} min`;
-  }
-
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  if (hours < 24) {
-    return minutes > 0
-      ? `${hours}h ${minutes}m`
-      : `${hours}h`;
-  }
-
-  const days = Math.floor(hours / 24);
-  const remainingHours = hours % 24;
-
-  return remainingHours > 0
-    ? `${days}d ${remainingHours}h`
-    : `${days}d`;
-}
-
-function normalizeSearch(value: string) {
-  return value.trim().toLowerCase();
 }
 
 export default function ClaimIntimationScreen() {
   const router = useRouter();
-
+  const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [vehicles, setVehicles] = useState<ClaimVehicle[]>([]);
+  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [scope, setScope] = useState("Your Insurance vehicles");
+  const [now, setNow] = useState(Date.now());
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const focused = useRef(false);
+  const request = useRef(0);
+  const inFlight = useRef(false);
+  const navigating = useRef(false);
 
-  const [profile, setProfile] = useState<Profile | null>(null);
-
-  const [popup, setPopup] = useState<PopupState>({
-    visible: false,
-    type: "info",
-    title: "",
-    message: "",
-  });
-
-  const showPopup = (
-    type: PopupType,
-    title: string,
-    message: string
-  ) => {
-    setPopup({
-      visible: true,
-      type,
-      title,
-      message,
-    });
-  };
-
-  const closePopup = () => {
-    setPopup((current) => ({
-      ...current,
-      visible: false,
-    }));
-  };
-
-  const loadProfile = useCallback(async () => {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError) {
-      throw userError;
-    }
-
-    if (!user) {
-      throw new Error("You are not logged in.");
-    }
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, role, name")
-      .eq("id", user.id)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!data) {
-      throw new Error("Active user profile not found.");
-    }
-
-    const currentProfile = data as Profile;
-
-    if (
-      currentProfile.role !== "advisor" &&
-      currentProfile.role !== "ceo_admin"
-    ) {
-      throw new Error(
-        "Only Advisor or CEO Admin can access Claim Intimation."
-      );
-    }
-
-    setProfile(currentProfile);
-
-    return currentProfile;
-  }, []);
-
-  const loadVehicles = useCallback(async () => {
-    const currentProfile = profile;
-
-    if (!currentProfile) {
-      return;
-    }
-
-    let visitQuery = supabase
-      .from("workshop_visits")
-      .select(
-        `
-          id,
-          vehicle_id,
-          visit_no,
-          current_stage,
-          current_status,
-          current_assigned_to,
-          stage_started_at,
-          created_at
-        `
-      )
-      .eq("current_stage", "CLAIM_INTIMATION")
-      .in("current_status", ["PENDING", "IN_PROGRESS"])
-      .order("stage_started_at", {
-        ascending: true,
-        nullsFirst: false,
-      });
-
-    if (currentProfile.role === "advisor") {
-      visitQuery = visitQuery.eq(
-        "current_assigned_to",
-        currentProfile.id
-      );
-    }
-
-    const { data: visits, error: visitsError } =
-      await visitQuery;
-
-    if (visitsError) {
-      throw visitsError;
-    }
-
-    const visitRows = (visits || []) as VisitRow[];
-
-    if (visitRows.length === 0) {
-      setVehicles([]);
-      return;
-    }
-
-    const vehicleIds = Array.from(
-      new Set(
-        visitRows.map((item) => item.vehicle_id)
-      )
-    );
-
-    const visitIds = Array.from(
-      new Set(
-        visitRows.map((item) => item.id)
-      )
-    );
-
-    const [
-      vehiclesResult,
-      intakeResult,
-    ] = await Promise.all([
-      supabase
-        .from("vehicles")
-        .select("id, vehicle_no")
-        .in("id", vehicleIds),
-
-      supabase
-        .from("vehicle_intake")
-        .select(
-          `
-            visit_id,
-            vehicle_id,
-            customer_name,
-            customer_mobile,
-            vehicle_type,
-            arena_nexa,
-            insurance_type,
-            mi_type_id,
-            insurance_company_id,
-            job_card_no
-          `
-        )
-        .in("visit_id", visitIds),
-    ]);
-
-    if (vehiclesResult.error) {
-      throw vehiclesResult.error;
-    }
-
-    if (intakeResult.error) {
-      throw intakeResult.error;
-    }
-
-    const vehicleRows =
-      (vehiclesResult.data || []) as VehicleRow[];
-
-    const intakeRows =
-      (intakeResult.data || []) as IntakeRow[];
-
-    const insuranceCompanyIds = Array.from(
-      new Set(
-        intakeRows
-          .map(
-            (item) =>
-              item.insurance_company_id
-          )
-          .filter(
-            (id): id is string =>
-              Boolean(id)
-          )
-      )
-    );
-
-    const miTypeIds = Array.from(
-      new Set(
-        intakeRows
-          .map(
-            (item) => item.mi_type_id
-          )
-          .filter(
-            (id): id is string =>
-              Boolean(id)
-          )
-      )
-    );
-
-    let insuranceCompanies:
-      InsuranceCompanyRow[] = [];
-
-    let miTypes: MiTypeRow[] = [];
-
-    if (insuranceCompanyIds.length > 0) {
-      const { data, error } =
-        await supabase
-          .from("insurance_companies")
-          .select("id, name")
-          .in(
-            "id",
-            insuranceCompanyIds
-          );
-
-      if (error) {
-        throw error;
-      }
-
-      insuranceCompanies =
-        (data || []) as InsuranceCompanyRow[];
-    }
-
-    if (miTypeIds.length > 0) {
-      const { data, error } =
-        await supabase
-          .from("mi_types")
-          .select("id, name")
-          .in("id", miTypeIds);
-
-      if (error) {
-        throw error;
-      }
-
-      miTypes =
-        (data || []) as MiTypeRow[];
-    }
-
-    const vehicleMap = new Map<
-      string,
-      VehicleRow
-    >();
-
-    vehicleRows.forEach((vehicle) => {
-      vehicleMap.set(
-        vehicle.id,
-        vehicle
-      );
-    });
-
-    const intakeMap = new Map<
-      string,
-      IntakeRow
-    >();
-
-    intakeRows.forEach((intake) => {
-      intakeMap.set(
-        intake.visit_id,
-        intake
-      );
-    });
-
-    const insuranceCompanyMap =
-      new Map<
-        string,
-        InsuranceCompanyRow
-      >();
-
-    insuranceCompanies.forEach(
-      (company) => {
-        insuranceCompanyMap.set(
-          company.id,
-          company
+  const load = useCallback(async (refresh = false) => {
+    if (!focused.current || inFlight.current) return;
+    inFlight.current = true;
+    const current = ++request.current;
+    const isCurrent = () => focused.current && request.current === current;
+    refresh ? setRefreshing(true) : setLoading(true);
+    setError("");
+    try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      if (!user)
+        throw new Error("Your session has ended. Please sign in again.");
+      const { data, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, role")
+        .eq("id", user.id)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (profileError) throw profileError;
+      if (!data || !["advisor", "ceo_admin"].includes(data.role))
+        throw new Error(
+          "Only an active Advisor or CEO Admin can access Claim Intimation.",
         );
-      }
-    );
-
-    const miTypeMap = new Map<
-      string,
-      MiTypeRow
-    >();
-
-    miTypes.forEach((miType) => {
-      miTypeMap.set(
-        miType.id,
-        miType
+      if (!isCurrent()) return;
+      const queue = await fetchQueue(data as Profile);
+      if (!isCurrent()) return;
+      setItems(queue);
+      setScope(
+        data.role === "ceo_admin"
+          ? "All Insurance vehicles"
+          : "Your Insurance vehicles",
       );
-    });
-
-    const combined: ClaimVehicle[] =
-      [];
-
-    visitRows.forEach((visit) => {
-      const vehicle =
-        vehicleMap.get(
-          visit.vehicle_id
+      setNow(Date.now());
+      setUpdatedAt(new Date().toISOString());
+    } catch (caught: unknown) {
+      if (isCurrent())
+        setError(
+          typeof caught === "object" && caught !== null && "message" in caught
+            ? String(caught.message)
+            : "Unable to load Claim Intimation. Please retry.",
         );
-
-      const intake =
-        intakeMap.get(visit.id);
-
-      if (!vehicle || !intake) {
-        return;
-      }
-
-      const insuranceCompany =
-        intake.insurance_company_id
-          ? insuranceCompanyMap.get(
-              intake.insurance_company_id
-            ) || null
-          : null;
-
-      const miType =
-        intake.mi_type_id
-          ? miTypeMap.get(
-              intake.mi_type_id
-            ) || null
-          : null;
-
-      combined.push({
-        visit,
-        vehicle,
-        intake,
-        insuranceCompany,
-        miType,
-      });
-    });
-
-    setVehicles(combined);
-  }, [profile]);
-
-  const loadAll = useCallback(
-    async (showLoader = true) => {
-      try {
-        if (showLoader) {
-          setLoading(true);
-        }
-
-        const currentProfile =
-          await loadProfile();
-
-        if (!currentProfile) {
-          return;
-        }
-
-        await loadVehicles();
-      } catch (error: any) {
-        console.error(
-          "Claim Intimation load error:",
-          error
-        );
-
-        showPopup(
-          "error",
-          "Unable to Load",
-          error?.message ||
-            "Something went wrong while loading Claim Intimation."
-        );
-      } finally {
+    } finally {
+      if (isCurrent()) {
+        inFlight.current = false;
         setLoading(false);
+        setRefreshing(false);
       }
-    },
-    [loadProfile, loadVehicles]
-  );
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
-
-      const run = async () => {
-        try {
-          setLoading(true);
-
-          const currentProfile =
-            await loadProfile();
-
-          if (
-            !active ||
-            !currentProfile
-          ) {
-            return;
-          }
-
-          let visitQuery = supabase
-            .from("workshop_visits")
-            .select(
-              `
-                id,
-                vehicle_id,
-                visit_no,
-                current_stage,
-                current_status,
-                current_assigned_to,
-                stage_started_at,
-                created_at
-              `
-            )
-            .eq(
-              "current_stage",
-              "CLAIM_INTIMATION"
-            )
-            .in("current_status", [
-              "PENDING",
-              "IN_PROGRESS",
-            ])
-            .order("stage_started_at", {
-              ascending: true,
-              nullsFirst: false,
-            });
-
-          if (
-            currentProfile.role ===
-            "advisor"
-          ) {
-            visitQuery =
-              visitQuery.eq(
-                "current_assigned_to",
-                currentProfile.id
-              );
-          }
-
-          const {
-            data: visits,
-            error: visitsError,
-          } = await visitQuery;
-
-          if (visitsError) {
-            throw visitsError;
-          }
-
-          const visitRows =
-            (visits || []) as VisitRow[];
-
-          if (!active) {
-            return;
-          }
-
-          if (visitRows.length === 0) {
-            setVehicles([]);
-            return;
-          }
-
-          const vehicleIds =
-            Array.from(
-              new Set(
-                visitRows.map(
-                  (item) =>
-                    item.vehicle_id
-                )
-              )
-            );
-
-          const visitIds =
-            Array.from(
-              new Set(
-                visitRows.map(
-                  (item) => item.id
-                )
-              )
-            );
-
-          const [
-            vehiclesResult,
-            intakeResult,
-          ] = await Promise.all([
-            supabase
-              .from("vehicles")
-              .select(
-                "id, vehicle_no"
-              )
-              .in(
-                "id",
-                vehicleIds
-              ),
-
-            supabase
-              .from("vehicle_intake")
-              .select(
-                `
-                  visit_id,
-                  vehicle_id,
-                  customer_name,
-                  customer_mobile,
-                  vehicle_type,
-                  arena_nexa,
-                  insurance_type,
-                  mi_type_id,
-                  insurance_company_id,
-                  job_card_no
-                `
-              )
-              .in(
-                "visit_id",
-                visitIds
-              ),
-          ]);
-
-          if (vehiclesResult.error) {
-            throw vehiclesResult.error;
-          }
-
-          if (intakeResult.error) {
-            throw intakeResult.error;
-          }
-
-          const vehicleRows =
-            (vehiclesResult.data ||
-              []) as VehicleRow[];
-
-          const intakeRows =
-            (intakeResult.data ||
-              []) as IntakeRow[];
-
-          const insuranceCompanyIds =
-            Array.from(
-              new Set(
-                intakeRows
-                  .map(
-                    (item) =>
-                      item.insurance_company_id
-                  )
-                  .filter(
-                    (
-                      id
-                    ): id is string =>
-                      Boolean(id)
-                  )
-              )
-            );
-
-          const miTypeIds =
-            Array.from(
-              new Set(
-                intakeRows
-                  .map(
-                    (item) =>
-                      item.mi_type_id
-                  )
-                  .filter(
-                    (
-                      id
-                    ): id is string =>
-                      Boolean(id)
-                  )
-              )
-            );
-
-          let insuranceCompanies:
-            InsuranceCompanyRow[] =
-            [];
-
-          let miTypes:
-            MiTypeRow[] = [];
-
-          if (
-            insuranceCompanyIds.length >
-            0
-          ) {
-            const {
-              data,
-              error,
-            } =
-              await supabase
-                .from(
-                  "insurance_companies"
-                )
-                .select(
-                  "id, name"
-                )
-                .in(
-                  "id",
-                  insuranceCompanyIds
-                );
-
-            if (error) {
-              throw error;
-            }
-
-            insuranceCompanies =
-              (data || []) as InsuranceCompanyRow[];
-          }
-
-          if (
-            miTypeIds.length > 0
-          ) {
-            const {
-              data,
-              error,
-            } =
-              await supabase
-                .from("mi_types")
-                .select(
-                  "id, name"
-                )
-                .in(
-                  "id",
-                  miTypeIds
-                );
-
-            if (error) {
-              throw error;
-            }
-
-            miTypes =
-              (data || []) as MiTypeRow[];
-          }
-
-          const vehicleMap =
-            new Map<
-              string,
-              VehicleRow
-            >();
-
-          vehicleRows.forEach(
-            (vehicle) => {
-              vehicleMap.set(
-                vehicle.id,
-                vehicle
-              );
-            }
-          );
-
-          const intakeMap =
-            new Map<
-              string,
-              IntakeRow
-            >();
-
-          intakeRows.forEach(
-            (intake) => {
-              intakeMap.set(
-                intake.visit_id,
-                intake
-              );
-            }
-          );
-
-          const insuranceCompanyMap =
-            new Map<
-              string,
-              InsuranceCompanyRow
-            >();
-
-          insuranceCompanies.forEach(
-            (company) => {
-              insuranceCompanyMap.set(
-                company.id,
-                company
-              );
-            }
-          );
-
-          const miTypeMap =
-            new Map<
-              string,
-              MiTypeRow
-            >();
-
-          miTypes.forEach(
-            (miType) => {
-              miTypeMap.set(
-                miType.id,
-                miType
-              );
-            }
-          );
-
-          const combined:
-            ClaimVehicle[] = [];
-
-          visitRows.forEach(
-            (visit) => {
-              const vehicle =
-                vehicleMap.get(
-                  visit.vehicle_id
-                );
-
-              const intake =
-                intakeMap.get(
-                  visit.id
-                );
-
-              if (
-                !vehicle ||
-                !intake
-              ) {
-                return;
-              }
-
-              const insuranceCompany =
-                intake.insurance_company_id
-                  ? insuranceCompanyMap.get(
-                      intake.insurance_company_id
-                    ) || null
-                  : null;
-
-              const miType =
-                intake.mi_type_id
-                  ? miTypeMap.get(
-                      intake.mi_type_id
-                    ) || null
-                  : null;
-
-              combined.push({
-                visit,
-                vehicle,
-                intake,
-                insuranceCompany,
-                miType,
-              });
-            }
-          );
-
-          if (active) {
-            setVehicles(
-              combined
-            );
-          }
-        } catch (error: any) {
-          console.error(
-            "Claim Intimation load error:",
-            error
-          );
-
-          if (active) {
-            showPopup(
-              "error",
-              "Unable to Load",
-              error?.message ||
-                "Something went wrong while loading Claim Intimation."
-            );
-          }
-        } finally {
-          if (active) {
-            setLoading(false);
-          }
-        }
-      };
-
-      run();
-
+      focused.current = true;
+      inFlight.current = false;
+      navigating.current = false;
+      setItems([]);
+      setUpdatedAt(null);
+      void load();
+      const timer = setInterval(() => setNow(Date.now()), 30000);
       return () => {
-        active = false;
+        focused.current = false;
+        request.current += 1;
+        inFlight.current = false;
+        clearInterval(timer);
       };
-    }, [loadProfile])
+    }, [load]),
   );
 
-  const handleRefresh = async () => {
-    try {
-      setRefreshing(true);
-
-      const currentProfile =
-        await loadProfile();
-
-      if (!currentProfile) {
-        return;
-      }
-
-      let visitQuery = supabase
-        .from("workshop_visits")
-        .select(
-          `
-            id,
-            vehicle_id,
-            visit_no,
-            current_stage,
-            current_status,
-            current_assigned_to,
-            stage_started_at,
-            created_at
-          `
-        )
-        .eq(
-          "current_stage",
-          "CLAIM_INTIMATION"
-        )
-        .in("current_status", [
-          "PENDING",
-          "IN_PROGRESS",
-        ])
-        .order("stage_started_at", {
-          ascending: true,
-          nullsFirst: false,
-        });
-
-      if (
-        currentProfile.role ===
-        "advisor"
-      ) {
-        visitQuery =
-          visitQuery.eq(
-            "current_assigned_to",
-            currentProfile.id
-          );
-      }
-
-      const {
-        data: visits,
-        error,
-      } = await visitQuery;
-
-      if (error) {
-        throw error;
-      }
-
-      const visitRows =
-        (visits || []) as VisitRow[];
-
-      if (visitRows.length === 0) {
-        setVehicles([]);
-        return;
-      }
-
-      const vehicleIds =
-        Array.from(
-          new Set(
-            visitRows.map(
-              (item) =>
-                item.vehicle_id
-            )
-          )
-        );
-
-      const visitIds =
-        Array.from(
-          new Set(
-            visitRows.map(
-              (item) => item.id
-            )
-          )
-        );
-
-      const [
-        vehiclesResult,
-        intakeResult,
-      ] = await Promise.all([
-        supabase
-          .from("vehicles")
-          .select(
-            "id, vehicle_no"
-          )
-          .in(
-            "id",
-            vehicleIds
-          ),
-
-        supabase
-          .from("vehicle_intake")
-          .select(
-            `
-              visit_id,
-              vehicle_id,
-              customer_name,
-              customer_mobile,
-              vehicle_type,
-              arena_nexa,
-              insurance_type,
-              mi_type_id,
-              insurance_company_id,
-              job_card_no
-            `
-          )
-          .in(
-            "visit_id",
-            visitIds
-          ),
-      ]);
-
-      if (vehiclesResult.error) {
-        throw vehiclesResult.error;
-      }
-
-      if (intakeResult.error) {
-        throw intakeResult.error;
-      }
-
-      const vehicleRows =
-        (vehiclesResult.data ||
-          []) as VehicleRow[];
-
-      const intakeRows =
-        (intakeResult.data ||
-          []) as IntakeRow[];
-
-      const insuranceCompanyIds =
-        Array.from(
-          new Set(
-            intakeRows
-              .map(
-                (item) =>
-                  item.insurance_company_id
-              )
-              .filter(
-                (
-                  id
-                ): id is string =>
-                  Boolean(id)
-              )
-          )
-        );
-
-      const miTypeIds =
-        Array.from(
-          new Set(
-            intakeRows
-              .map(
-                (item) =>
-                  item.mi_type_id
-              )
-              .filter(
-                (
-                  id
-                ): id is string =>
-                  Boolean(id)
-              )
-          )
-        );
-
-      let insuranceCompanies:
-        InsuranceCompanyRow[] =
-        [];
-
-      let miTypes:
-        MiTypeRow[] = [];
-
-      if (
-        insuranceCompanyIds.length >
-        0
-      ) {
-        const {
-          data,
-          error,
-        } =
-          await supabase
-            .from(
-              "insurance_companies"
-            )
-            .select(
-              "id, name"
-            )
-            .in(
-              "id",
-              insuranceCompanyIds
-            );
-
-        if (error) {
-          throw error;
-        }
-
-        insuranceCompanies =
-          (data || []) as InsuranceCompanyRow[];
-      }
-
-      if (miTypeIds.length > 0) {
-        const {
-          data,
-          error,
-        } =
-          await supabase
-            .from("mi_types")
-            .select(
-              "id, name"
-            )
-            .in(
-              "id",
-              miTypeIds
-            );
-
-        if (error) {
-          throw error;
-        }
-
-        miTypes =
-          (data || []) as MiTypeRow[];
-      }
-
-      const vehicleMap =
-        new Map<
-          string,
-          VehicleRow
-        >();
-
-      vehicleRows.forEach(
-        (vehicle) => {
-          vehicleMap.set(
-            vehicle.id,
-            vehicle
-          );
-        }
+  const visible = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const compact = term.replace(/\s+/g, "");
+    if (!term) return items;
+    return items.filter((item) => {
+      const values = [
+        item.vehicle?.vehicle_no,
+        item.intake?.customer_name,
+        item.vehicle?.customer_name,
+        item.intake?.customer_mobile,
+        item.vehicle?.customer_mobile,
+        item.intake?.job_card_no,
+        item.company,
+        item.mi,
+      ];
+      return values.some(
+        (value) =>
+          value &&
+          (value.toLowerCase().includes(term) ||
+            value.toLowerCase().replace(/\s+/g, "").includes(compact)),
       );
-
-      const intakeMap =
-        new Map<
-          string,
-          IntakeRow
-        >();
-
-      intakeRows.forEach(
-        (intake) => {
-          intakeMap.set(
-            intake.visit_id,
-            intake
-          );
-        }
-      );
-
-      const insuranceCompanyMap =
-        new Map<
-          string,
-          InsuranceCompanyRow
-        >();
-
-      insuranceCompanies.forEach(
-        (company) => {
-          insuranceCompanyMap.set(
-            company.id,
-            company
-          );
-        }
-      );
-
-      const miTypeMap =
-        new Map<
-          string,
-          MiTypeRow
-        >();
-
-      miTypes.forEach(
-        (miType) => {
-          miTypeMap.set(
-            miType.id,
-            miType
-          );
-        }
-      );
-
-      const combined:
-        ClaimVehicle[] = [];
-
-      visitRows.forEach(
-        (visit) => {
-          const vehicle =
-            vehicleMap.get(
-              visit.vehicle_id
-            );
-
-          const intake =
-            intakeMap.get(
-              visit.id
-            );
-
-          if (
-            !vehicle ||
-            !intake
-          ) {
-            return;
-          }
-
-          const insuranceCompany =
-            intake.insurance_company_id
-              ? insuranceCompanyMap.get(
-                  intake.insurance_company_id
-                ) || null
-              : null;
-
-          const miType =
-            intake.mi_type_id
-              ? miTypeMap.get(
-                  intake.mi_type_id
-                ) || null
-              : null;
-
-          combined.push({
-            visit,
-            vehicle,
-            intake,
-            insuranceCompany,
-            miType,
-          });
-        }
-      );
-
-      setVehicles(
-        combined
-      );
-    } catch (error: any) {
-      console.error(
-        "Claim Intimation refresh error:",
-        error
-      );
-
-      showPopup(
-        "error",
-        "Refresh Failed",
-        error?.message ||
-          "Unable to refresh Claim Intimation."
-      );
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  const filteredVehicles =
-    useMemo(() => {
-      const term =
-        normalizeSearch(search);
-
-      if (!term) {
-        return vehicles;
-      }
-
-      return vehicles.filter(
-        (item) => {
-          const vehicleNumber =
-            item.vehicle.vehicle_no ||
-            "";
-
-          const customerName =
-            item.intake.customer_name ||
-            "";
-
-          const customerMobile =
-            item.intake.customer_mobile ||
-            "";
-
-          const insuranceCompany =
-            item.insuranceCompany
-              ?.name || "";
-
-          const jobCard =
-            item.intake.job_card_no ||
-            "";
-
-          return (
-            normalizeSearch(
-              vehicleNumber
-            ).includes(term) ||
-            normalizeSearch(
-              customerName
-            ).includes(term) ||
-            normalizeSearch(
-              customerMobile
-            ).includes(term) ||
-            normalizeSearch(
-              insuranceCompany
-            ).includes(term) ||
-            normalizeSearch(
-              jobCard
-            ).includes(term)
-          );
-        }
-      );
-    }, [vehicles, search]);
-
-  const openClaimIntimation = (
-    item: ClaimVehicle
-  ) => {
+    });
+  }, [items, search]);
+  const longWait = items.filter(
+    (item) => (elapsed(startTime(item), now) || 0) >= 86400000,
+  ).length;
+  const blocked = loading || refreshing || !!error;
+  const open = (item: Item) => {
+    if (blocked || issue(item) || navigating.current) return;
+    navigating.current = true;
     router.push({
-      pathname:
-        "/(tabs)/advisor/claim-intimation-form",
-      params: {
-        visitId: item.visit.id,
-        vehicleId: item.vehicle.id,
-      },
+      pathname: "/(tabs)/advisor/claim-intimation-form",
+      params: { visitId: item.visit.id, vehicleId: item.visit.vehicle_id },
     });
   };
 
-  const renderVehicle = ({
-    item,
-  }: {
-    item: ClaimVehicle;
-  }) => {
-    const insuranceLabel =
-      item.insuranceCompany?.name ||
-      "Insurance Company not available";
-
-    const miLabel =
-      item.miType?.name ||
-      "MI / NON-MI not available";
-
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardTopRow}>
-          <View style={styles.vehicleIcon}>
-            <Ionicons
-              name="car-sport-outline"
-              size={23}
-              color={colors.primary}
-            />
-          </View>
-
-          <View style={styles.vehicleMain}>
-            <Text
-              style={
-                styles.vehicleNumber
-              }
-            >
-              {item.vehicle.vehicle_no}
-            </Text>
-
-            <Text
-              style={styles.customerName}
-              numberOfLines={1}
-            >
-              {item.intake.customer_name}
-            </Text>
-          </View>
-
-          <View
-            style={styles.waitingBadge}
-          >
-            <Ionicons
-              name="time-outline"
-              size={14}
-              color={colors.warning}
-            />
-
-            <Text
-              style={styles.waitingText}
-            >
-              {getWaitingTime(
-                item.visit
-                  .stage_started_at
-              )}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.divider} />
-
-        <View style={styles.infoGrid}>
-          <View style={styles.infoItem}>
-            <Text
-              style={styles.infoLabel}
-            >
-              Insurance
-            </Text>
-
-            <Text
-              style={styles.infoValue}
-              numberOfLines={1}
-            >
-              {insuranceLabel}
-            </Text>
-          </View>
-
-          <View style={styles.infoItem}>
-            <Text
-              style={styles.infoLabel}
-            >
-              Type
-            </Text>
-
-            <Text
-              style={styles.infoValue}
-              numberOfLines={1}
-            >
-              {miLabel}
-            </Text>
-          </View>
-
-          <View style={styles.infoItem}>
-            <Text
-              style={styles.infoLabel}
-            >
-              Vehicle
-            </Text>
-
-            <Text
-              style={styles.infoValue}
-              numberOfLines={1}
-            >
-              {item.intake.arena_nexa ||
-                "—"}
-            </Text>
-          </View>
-
-          <View style={styles.infoItem}>
-            <Text
-              style={styles.infoLabel}
-            >
-              Job Card
-            </Text>
-
-            <Text
-              style={styles.infoValue}
-              numberOfLines={1}
-            >
-              {item.intake.job_card_no ||
-                "—"}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.stageRow}>
-          <View style={styles.stageIcon}>
-            <Ionicons
-              name="shield-checkmark-outline"
-              size={16}
-              color={colors.primary}
-            />
-          </View>
-
-          <View
-            style={styles.stageTextContainer}
-          >
-            <Text
-              style={styles.stageTitle}
-            >
-              Claim Intimation Pending
-            </Text>
-
-            <Text
-              style={styles.stageSubtitle}
-            >
-              Since{" "}
-              {formatDateTime(
-                item.visit
-                  .stage_started_at
-              )}
-            </Text>
-          </View>
-        </View>
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionButton,
-            pressed &&
-              styles.actionButtonPressed,
-          ]}
-          onPress={() =>
-            openClaimIntimation(item)
-          }
-        >
-          <Text
-            style={
-              styles.actionButtonText
-            }
-          >
-            Start Claim Intimation
-          </Text>
-
-          <Ionicons
-            name="arrow-forward"
-            size={18}
-            color={colors.white}
-          />
-        </Pressable>
-      </View>
-    );
-  };
-
-  if (loading) {
-    return (
-      <SafeAreaView
-        style={styles.safeArea}
-        edges={["top", "bottom"]}
-      >
-        <View
-          style={
-            styles.loadingContainer
-          }
-        >
-          <ActivityIndicator
-            size="large"
-            color={colors.primary}
-          />
-
-          <Text
-            style={styles.loadingText}
-          >
-            Loading Claim Intimation...
-          </Text>
-        </View>
-
-        <Modal
-          transparent
-          visible={popup.visible}
-          animationType="fade"
-          onRequestClose={closePopup}
-        >
-          <View
-            style={styles.modalBackdrop}
-          >
-            <View
-              style={styles.popupCard}
-            >
-              <View
-                style={[
-                  styles.popupIcon,
-                  popup.type ===
-                  "error"
-                    ? styles.popupIconError
-                    : styles.popupIconInfo,
-                ]}
-              >
-                <Ionicons
-                  name={
-                    popup.type ===
-                    "error"
-                      ? "alert-circle"
-                      : "information-circle"
-                  }
-                  size={27}
-                  color={
-                    popup.type ===
-                    "error"
-                      ? colors.danger
-                      : colors.info
-                  }
-                />
-              </View>
-
-              <Text
-                style={styles.popupTitle}
-              >
-                {popup.title}
-              </Text>
-
-              <Text
-                style={
-                  styles.popupMessage
-                }
-              >
-                {popup.message}
-              </Text>
-
-              <Pressable
-                style={
-                  styles.popupButton
-                }
-                onPress={
-                  closePopup
-                }
-              >
-                <Text
-                  style={
-                    styles.popupButtonText
-                  }
-                >
-                  OK
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </Modal>
-      </SafeAreaView>
-    );
-  }
-
   return (
-    <SafeAreaView
-      style={styles.safeArea}
-      edges={["top", "bottom"]}
-    >
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <View
-            style={
-              styles.headerTextContainer
+    <SafeAreaView style={styles.screen} edges={["top", "left", "right"]}>
+      <View style={styles.page}>
+        <View style={styles.topBar}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to dashboard"
+            onPress={() =>
+              router.canGoBack() ? router.back() : router.replace("/(tabs)")
             }
+            style={styles.back}
           >
-            <Text
-              style={styles.title}
-            >
-              Claim Intimation
-            </Text>
-
-            <Text
-              style={styles.subtitle}
-            >
-              Insurance vehicles waiting for claim intimation
-            </Text>
-          </View>
-
-          <View
-            style={styles.countBadge}
-          >
-            <Text
-              style={styles.countText}
-            >
-              {vehicles.length}
-            </Text>
-          </View>
+            <Ionicons
+              name="chevron-back"
+              size={21}
+              color={colors.textSecondary}
+            />
+            <Text style={styles.backText}>Dashboard</Text>
+          </Pressable>
+          <Text style={styles.brand}>PAGARIYA</Text>
         </View>
-
-        <View
-          style={styles.searchContainer}
-        >
-          <Ionicons
-            name="search-outline"
-            size={20}
-            color={
-              colors.textSecondary
-            }
-          />
-
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search vehicle, customer, mobile..."
-            placeholderTextColor={
-              colors.textLight
-            }
-            style={styles.searchInput}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
-          {search.length > 0 && (
-            <Pressable
-              onPress={() =>
-                setSearch("")
-              }
-              hitSlop={10}
-            >
-              <Ionicons
-                name="close-circle"
-                size={20}
-                color={
-                  colors.textLight
-                }
-              />
-            </Pressable>
-          )}
-        </View>
-
         <FlatList
-          data={filteredVehicles}
-          keyExtractor={(item) =>
-            item.visit.id
-          }
-          renderItem={
-            renderVehicle
-          }
-          contentContainerStyle={[
-            styles.listContent,
-            filteredVehicles.length ===
-              0 &&
-              styles.emptyListContent,
-          ]}
+          data={visible}
+          keyExtractor={(item) => item.visit.id}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.content}
           refreshControl={
             <RefreshControl
-              refreshing={
-                refreshing
-              }
-              onRefresh={
-                handleRefresh
-              }
-              tintColor={
-                colors.primary
-              }
-              colors={[
-                colors.primary,
-              ]}
+              refreshing={refreshing}
+              onRefresh={() => void load(true)}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
             />
           }
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={
-            false
-          }
           ListHeaderComponent={
-            filteredVehicles.length >
-            0 ? (
-              <View
-                style={
-                  styles.listHeader
-                }
-              >
-                <Text
-                  style={
-                    styles.listHeaderText
-                  }
-                >
-                  {
-                    filteredVehicles.length
-                  }{" "}
-                  {filteredVehicles.length ===
-                  1
-                    ? "vehicle"
-                    : "vehicles"}{" "}
-                  pending
+            <>
+              <View style={styles.hero}>
+                <Text style={styles.eyebrowWhite}>ADVISOR · INSURANCE</Text>
+                <Text style={styles.heroTitle}>Claim Intimation</Text>
+                <Text style={styles.heroBody}>
+                  Notify the insurer and record claim details before Survey.
                 </Text>
+                <View style={styles.heroFooter}>
+                  <Ionicons
+                    name="shield-checkmark-outline"
+                    size={18}
+                    color="white"
+                  />
+                  <Text style={styles.heroBody}>{scope}</Text>
+                </View>
               </View>
-            ) : null
-          }
-          ListEmptyComponent={
-            <View
-              style={
-                styles.emptyContainer
-              }
-            >
-              <View
-                style={
-                  styles.emptyIcon
-                }
-              >
-                <Ionicons
-                  name="shield-checkmark-outline"
-                  size={38}
-                  color={
-                    colors.textLight
-                  }
-                />
-              </View>
-
-              <Text
-                style={
-                  styles.emptyTitle
-                }
-              >
-                {search.trim()
-                  ? "No vehicles found"
-                  : "No Claim Intimation pending"}
-              </Text>
-
-              <Text
-                style={
-                  styles.emptyMessage
-                }
-              >
-                {search.trim()
-                  ? "Try searching with another vehicle number, customer name, mobile number or job card."
-                  : "Vehicles will appear here after Insurance intake is completed."}
-              </Text>
-
-              {search.trim()
-                .length > 0 && (
-                <Pressable
-                  style={
-                    styles.clearSearchButton
-                  }
-                  onPress={() =>
-                    setSearch("")
-                  }
-                >
-                  <Text
-                    style={
-                      styles.clearSearchButtonText
-                    }
-                  >
-                    Clear Search
+              <View style={styles.stats}>
+                <View style={styles.stat}>
+                  <Text style={styles.statNumber}>
+                    {loading ? "—" : items.length}
                   </Text>
-                </Pressable>
+                  <Text style={styles.small}>Awaiting intimation</Text>
+                </View>
+                <View style={styles.stat}>
+                  <Text
+                    style={[styles.statNumber, longWait > 0 && styles.amber]}
+                  >
+                    {loading ? "—" : longWait}
+                  </Text>
+                  <Text style={styles.small}>Waiting 24h or more</Text>
+                </View>
+              </View>
+              <View style={styles.searchBox}>
+                <Ionicons
+                  name="search-outline"
+                  size={20}
+                  color={colors.textSecondary}
+                />
+                <TextInput
+                  accessibilityLabel="Search Claim Intimation vehicles"
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Vehicle, customer, mobile or job card"
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.searchInput}
+                />
+                {!!search && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search"
+                    onPress={() => setSearch("")}
+                    style={styles.iconButton}
+                  >
+                    <Ionicons
+                      name="close-circle"
+                      size={21}
+                      color={colors.textSecondary}
+                    />
+                  </Pressable>
+                )}
+              </View>
+              {!!error && (
+                <View style={styles.errorCard} accessibilityRole="alert">
+                  <Text style={styles.cardTitle}>Queue unavailable</Text>
+                  <Text style={styles.body}>{error}</Text>
+                  {!!items.length && (
+                    <Text style={styles.small}>
+                      Previously loaded vehicles are shown. Refresh before
+                      opening a form.
+                    </Text>
+                  )}
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void load(true)}
+                    disabled={loading || refreshing}
+                    style={styles.retry}
+                  >
+                    <Text style={styles.retryText}>Retry loading</Text>
+                  </Pressable>
+                </View>
               )}
-            </View>
+              {!loading && (
+                <View style={styles.queueHeading}>
+                  <Text style={styles.sectionTitle}>
+                    {search.trim()
+                      ? `${visible.length} of ${items.length} vehicles`
+                      : "Pending vehicles"}
+                  </Text>
+                  <Text style={styles.small}>Oldest first</Text>
+                </View>
+              )}
+            </>
+          }
+          renderItem={({ item }) => {
+            const problem = issue(item);
+            const overdue = (elapsed(startTime(item), now) || 0) >= 86400000;
+            return (
+              <View style={styles.card}>
+                <View style={styles.cardTop}>
+                  <View style={styles.carIcon}>
+                    <Ionicons
+                      name="car-sport-outline"
+                      size={24}
+                      color={colors.primary}
+                    />
+                  </View>
+                  <View style={styles.grow}>
+                    <Text style={styles.vehicleNumber}>
+                      {item.vehicle?.vehicle_no || "Vehicle number unavailable"}
+                    </Text>
+                    <Text style={styles.body}>
+                      {textValue(item.intake?.customer_name) ||
+                        textValue(item.vehicle?.customer_name) ||
+                        "Customer not recorded"}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.badgeRow}>
+                  <View
+                    style={[styles.waitBadge, overdue && styles.overdueBadge]}
+                  >
+                    <Ionicons
+                      name="time-outline"
+                      size={14}
+                      color={overdue ? "#946200" : colors.primaryDark}
+                    />
+                    <Text style={[styles.badgeText, overdue && styles.amber]}>
+                      Waiting {waiting(startTime(item), now)}
+                    </Text>
+                  </View>
+                  <Text style={styles.visitBadge}>
+                    Visit {item.visit.visit_no ?? "—"}
+                  </Text>
+                </View>
+                <View style={styles.grid}>
+                  <Detail label="Job card" value={item.intake?.job_card_no} />
+                  <Detail
+                    label="Mobile number"
+                    value={
+                      textValue(item.intake?.customer_mobile) ||
+                      textValue(item.vehicle?.customer_mobile)
+                    }
+                  />
+                  <Detail label="Insurance company" value={item.company} />
+                  <Detail label="MI / NON-MI" value={item.mi} />
+                </View>
+                <Text style={styles.small}>
+                  Awaiting since {formatTime(startTime(item))}
+                </Text>
+                {!!problem && (
+                  <View style={styles.warning}>
+                    <Text style={styles.warningText}>{problem}</Text>
+                  </View>
+                )}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Start Claim Intimation for ${item.vehicle?.vehicle_no || "vehicle"}`}
+                  accessibilityState={{ disabled: blocked || !!problem }}
+                  disabled={blocked || !!problem}
+                  onPress={() => open(item)}
+                  style={({ pressed }) => [
+                    styles.action,
+                    pressed && styles.pressed,
+                    (blocked || !!problem) && styles.disabled,
+                  ]}
+                >
+                  <Text style={styles.actionText}>
+                    {problem
+                      ? "Details need attention"
+                      : "Start Claim Intimation"}
+                  </Text>
+                  {!problem && (
+                    <Ionicons name="arrow-forward" size={18} color="white" />
+                  )}
+                </Pressable>
+              </View>
+            );
+          }}
+          ListEmptyComponent={
+            loading ? (
+              <View style={styles.empty}>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={styles.body}>Loading Claim Intimation…</Text>
+              </View>
+            ) : error ? null : (
+              <View style={styles.empty}>
+                <View style={styles.emptyIcon}>
+                  <Ionicons
+                    name={
+                      search.trim()
+                        ? "search-outline"
+                        : "shield-checkmark-outline"
+                    }
+                    size={34}
+                    color={colors.primary}
+                  />
+                </View>
+                <Text style={styles.cardTitle}>
+                  {search.trim() ? "No matching vehicles" : "All caught up"}
+                </Text>
+                <Text style={[styles.body, styles.center]}>
+                  {search.trim()
+                    ? "Try another vehicle number, customer, mobile or job card."
+                    : "Insurance vehicles appear here after Vehicle Intake is completed."}
+                </Text>
+                {!!search.trim() && (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setSearch("")}
+                    style={styles.retry}
+                  >
+                    <Text style={styles.retryText}>Clear search</Text>
+                  </Pressable>
+                )}
+              </View>
+            )
+          }
+          ListFooterComponent={
+            updatedAt && !loading ? (
+              <Text style={styles.footer}>
+                Updated {formatTime(updatedAt)} · Pull down to refresh
+              </Text>
+            ) : null
           }
         />
       </View>
-
-      <Modal
-        transparent
-        visible={popup.visible}
-        animationType="fade"
-        onRequestClose={
-          closePopup
-        }
-      >
-        <View
-          style={styles.modalBackdrop}
-        >
-          <View
-            style={styles.popupCard}
-          >
-            <View
-              style={[
-                styles.popupIcon,
-                popup.type === "error"
-                  ? styles.popupIconError
-                  : styles.popupIconInfo,
-              ]}
-            >
-              <Ionicons
-                name={
-                  popup.type ===
-                  "error"
-                    ? "alert-circle"
-                    : "information-circle"
-                }
-                size={27}
-                color={
-                  popup.type ===
-                  "error"
-                    ? colors.danger
-                    : colors.info
-                }
-              />
-            </View>
-
-            <Text
-              style={styles.popupTitle}
-            >
-              {popup.title}
-            </Text>
-
-            <Text
-              style={
-                styles.popupMessage
-              }
-            >
-              {popup.message}
-            </Text>
-
-            <Pressable
-              style={
-                styles.popupButton
-              }
-              onPress={
-                closePopup
-              }
-            >
-              <Text
-                style={
-                  styles.popupButtonText
-                }
-              >
-                OK
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
 
+function Detail({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <View style={styles.detail}>
+      <Text style={styles.small}>{label}</Text>
+      <Text selectable style={styles.detailValue}>
+        {textValue(value) || "Not recorded"}
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
-  loadingContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.background,
-    paddingHorizontal: spacing.xxl,
-  },
-
-  loadingText: {
-    marginTop: spacing.md,
-    color: colors.textSecondary,
-    fontSize: typography.body.fontSize,
-  },
-
-  header: {
-    paddingHorizontal: spacing.lg,
-
-    // Extra top breathing room inside the
-    // already-safe area.
-    paddingTop: spacing.sm,
-
-    paddingBottom: spacing.md,
+  screen: { flex: 1, backgroundColor: colors.background },
+  page: { flex: 1, width: "100%", maxWidth: 860, alignSelf: "center" },
+  topBar: {
+    minHeight: 56,
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-
-  headerTextContainer: {
-    flex: 1,
-    paddingRight: spacing.md,
-  },
-
-  title: {
-    ...typography.heading,
+  back: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 4 },
+  backText: { color: colors.textSecondary, fontSize: 13, fontWeight: "700" },
+  brand: {
     color: colors.text,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.2,
   },
-
-  subtitle: {
-    marginTop: 4,
-    ...typography.caption,
-    color: colors.textSecondary,
-    lineHeight: 18,
+  content: { padding: 16, paddingTop: 4, paddingBottom: 40 },
+  hero: {
+    padding: 22,
+    borderRadius: 20,
+    backgroundColor: colors.primary,
+    gap: 10,
   },
-
-  countBadge: {
-    minWidth: 42,
-    height: 42,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.round,
+  eyebrowWhite: {
+    color: "white",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  heroTitle: { color: "white", fontSize: 28, fontWeight: "900" },
+  heroBody: {
+    color: "rgba(255,255,255,.94)",
+    fontSize: 13,
+    lineHeight: 21,
+    flexShrink: 1,
+  },
+  heroFooter: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.primaryLight,
+    gap: 8,
+    marginTop: 4,
   },
-
-  countText: {
-    color: colors.primary,
-    fontSize: 17,
-    fontWeight: "700",
-  },
-
-  searchContainer: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-    minHeight: 50,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.lg,
+  stats: { flexDirection: "row", gap: 12, marginVertical: 16 },
+  stat: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
+    gap: 5,
+  },
+  statNumber: { color: colors.text, fontSize: 25, fontWeight: "900" },
+  small: { color: colors.textSecondary, fontSize: 11, lineHeight: 18 },
+  amber: { color: "#946200" },
+  searchBox: {
+    minHeight: 52,
     flexDirection: "row",
     alignItems: "center",
+    gap: 10,
+    paddingLeft: 14,
+    paddingRight: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
-
   searchInput: {
     flex: 1,
-    marginHorizontal: spacing.sm,
-    paddingVertical: 0,
+    minWidth: 0,
+    paddingVertical: 13,
     color: colors.text,
-    fontSize: 15,
+    fontSize: 13,
   },
-
-  listContent: {
-    paddingHorizontal: spacing.lg,
-
-    // Keeps the last card/action safely above
-    // the bottom system navigation area.
-    paddingBottom: 48,
+  iconButton: {
+    width: 44,
+    height: 44,
+    justifyContent: "center",
+    alignItems: "center",
   },
-
-  emptyListContent: {
-    flexGrow: 1,
-    paddingBottom: 48,
+  queueHeading: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    marginVertical: 16,
   },
-
-  listHeader: {
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
+  sectionTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
   },
-
-  listHeaderText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: "600",
-  },
-
   card: {
-    marginBottom: spacing.md,
-    padding: spacing.lg,
-    borderRadius: radius.xl,
-    backgroundColor: colors.surface,
+    padding: 18,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: colors.border,
+    backgroundColor: colors.surface,
+    marginBottom: 14,
+    gap: 13,
   },
-
-  cardTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  vehicleIcon: {
+  cardTop: { flexDirection: "row", alignItems: "center", gap: 12 },
+  grow: { flex: 1, minWidth: 0, gap: 4 },
+  carIcon: {
     width: 46,
     height: 46,
-    borderRadius: radius.md,
+    borderRadius: 14,
     backgroundColor: colors.primaryLight,
     alignItems: "center",
     justifyContent: "center",
   },
-
-  vehicleMain: {
-    flex: 1,
-    marginLeft: spacing.md,
-  },
-
-  vehicleNumber: {
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: "700",
-  },
-
-  customerName: {
-    marginTop: 3,
-    color: colors.textSecondary,
-    fontSize: 14,
-  },
-
-  waitingBadge: {
-    marginLeft: spacing.sm,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: radius.round,
-    backgroundColor: colors.warningLight,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  waitingText: {
-    marginLeft: 4,
-    color: colors.warning,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: colors.divider,
-    marginVertical: spacing.md,
-  },
-
-  infoGrid: {
+  vehicleNumber: { color: colors.text, fontSize: 20, fontWeight: "900" },
+  body: { color: colors.textSecondary, fontSize: 13, lineHeight: 21 },
+  badgeRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginHorizontal: -5,
+    alignItems: "center",
+    gap: 8,
   },
-
-  infoItem: {
-    width: "50%",
-    paddingHorizontal: 5,
-    marginBottom: spacing.md,
-  },
-
-  infoLabel: {
-    color: colors.textLight,
-    fontSize: 12,
-    marginBottom: 4,
-  },
-
-  infoValue: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-
-  stageRow: {
-    marginTop: 2,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.background,
+  waitBadge: {
     flexDirection: "row",
     alignItems: "center",
-  },
-
-  stageIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.round,
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 8,
     backgroundColor: colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
   },
-
-  stageTextContainer: {
-    flex: 1,
-    marginLeft: spacing.sm,
+  overdueBadge: { backgroundColor: "#FFF6DD" },
+  badgeText: { color: colors.primaryDark, fontSize: 11, fontWeight: "700" },
+  visitBadge: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: "600",
+    padding: 6,
   },
-
-  stageTitle: {
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  detail: {
+    flexGrow: 1,
+    flexBasis: 140,
+    padding: 12,
+    backgroundColor: colors.background,
+    borderRadius: 11,
+    gap: 4,
+  },
+  detailValue: {
     color: colors.text,
     fontSize: 13,
     fontWeight: "700",
+    lineHeight: 20,
   },
-
-  stageSubtitle: {
-    marginTop: 2,
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-
-  actionButton: {
-    marginTop: spacing.md,
-    minHeight: 48,
-    borderRadius: radius.md,
+  action: {
+    minHeight: 50,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 13,
     backgroundColor: colors.primary,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: spacing.lg,
+    gap: 10,
   },
-
-  actionButtonPressed: {
-    backgroundColor: colors.primaryDark,
+  actionText: {
+    color: "white",
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+    flexShrink: 1,
   },
-
-  actionButtonText: {
-    marginRight: spacing.sm,
-    color: colors.white,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-
-  emptyContainer: {
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.xxl,
-    paddingVertical: 60,
-  },
-
-  emptyIcon: {
-    width: 76,
-    height: 76,
-    borderRadius: radius.round,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
+  pressed: { backgroundColor: colors.primaryDark },
+  disabled: { opacity: 0.45 },
+  warning: { padding: 12, borderRadius: 11, backgroundColor: "#FFF6DD" },
+  warningText: { color: "#946200", fontSize: 12, lineHeight: 19 },
+  errorCard: {
+    marginTop: 16,
+    padding: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: 10,
   },
-
-  emptyTitle: {
-    marginTop: spacing.lg,
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: "700",
-    textAlign: "center",
+  cardTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
+  retry: {
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: colors.primaryLight,
+    alignItems: "center",
   },
-
-  emptyMessage: {
-    marginTop: spacing.sm,
-    color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 21,
-    textAlign: "center",
+  retryText: { color: colors.primaryDark, fontSize: 13, fontWeight: "800" },
+  empty: {
+    paddingVertical: 44,
+    paddingHorizontal: 20,
+    alignItems: "center",
+    gap: 14,
   },
-
-  clearSearchButton: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
+  emptyIcon: {
+    width: 74,
+    height: 74,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: colors.primaryLight,
   },
-
-  clearSearchButtonText: {
-    color: colors.primary,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.xl,
-  },
-
-  popupCard: {
-    width: "100%",
-    maxWidth: 420,
-    borderRadius: radius.xl,
-    backgroundColor: colors.surface,
-    padding: spacing.xl,
-    alignItems: "center",
-  },
-
-  popupIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: radius.round,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  popupIconError: {
-    backgroundColor: colors.dangerLight,
-  },
-
-  popupIconInfo: {
-    backgroundColor: colors.infoLight,
-  },
-
-  popupTitle: {
-    marginTop: spacing.md,
-    color: colors.text,
-    fontSize: 19,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-
-  popupMessage: {
-    marginTop: spacing.sm,
+  center: { textAlign: "center" },
+  footer: {
     color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 10,
     textAlign: "center",
-  },
-
-  popupButton: {
-    width: "100%",
-    marginTop: spacing.xl,
-    minHeight: 46,
-    borderRadius: radius.md,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  popupButtonText: {
-    color: colors.white,
-    fontSize: 15,
-    fontWeight: "700",
+    lineHeight: 18,
+    marginVertical: 12,
   },
 });

@@ -68,6 +68,13 @@ type ApprovalCycle = {
   created_at: string | null;
 };
 
+type IntakeContact = {
+  visit_id: string;
+  vehicle_id: string;
+  customer_name: string | null;
+  customer_mobile: string | null;
+};
+
 type HoldItem = {
   visit: WorkshopVisit;
   vehicle: Vehicle;
@@ -105,6 +112,29 @@ const AGE_ORDER: Record<HoldAge, number> = {
 /* ============================================================
    HELPERS
 ============================================================ */
+
+function contactValue(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const text = String(value).trim();
+  return !text || ["—", "-", "null", "undefined"].includes(text.toLowerCase())
+    ? null
+    : text;
+}
+
+function resolveCustomerContact(
+  vehicle: Vehicle,
+  intake: IntakeContact | null,
+) {
+  const matchingIntake = intake?.vehicle_id === vehicle.id ? intake : null;
+  return {
+    customer_name:
+      contactValue(matchingIntake?.customer_name) ||
+      contactValue(vehicle.customer_name),
+    customer_mobile:
+      contactValue(matchingIntake?.customer_mobile) ||
+      contactValue(vehicle.customer_mobile),
+  };
+}
 
 function formatIndiaDateTime(value: string | null | undefined): string {
   if (!value) {
@@ -325,7 +355,7 @@ export default function ApprovalHoldScreen() {
          LOAD VEHICLES + HOLD CYCLES
       ------------------------------------------------------ */
 
-      const [vehiclesResult, cyclesResult] = await Promise.all([
+      const [vehiclesResult, cyclesResult, intakeResult] = await Promise.all([
         supabase
           .from("vehicles")
           .select(
@@ -370,7 +400,15 @@ export default function ApprovalHoldScreen() {
           .order("cycle_no", {
             ascending: false,
           }),
+        supabase
+          .from("vehicle_intake")
+          .select("visit_id, vehicle_id, customer_name, customer_mobile")
+          .in("visit_id", visitIds),
       ]);
+
+      if (intakeResult.error) {
+        throw intakeResult.error;
+      }
 
       if (vehiclesResult.error) {
         throw vehiclesResult.error;
@@ -393,6 +431,11 @@ export default function ApprovalHoldScreen() {
       vehicles.forEach((vehicle) => {
         vehicleMap.set(vehicle.id, vehicle);
       });
+
+      const intakeMap = new Map<string, IntakeContact>();
+      for (const intake of (intakeResult.data ?? []) as IntakeContact[]) {
+        intakeMap.set(intake.visit_id, intake);
+      }
 
       const latestHoldByVisit = new Map<string, ApprovalCycle>();
 
@@ -450,7 +493,10 @@ export default function ApprovalHoldScreen() {
 
         combined.push({
           visit,
-          vehicle,
+          vehicle: {
+            ...vehicle,
+            ...resolveCustomerContact(vehicle, intakeMap.get(visit.id) || null),
+          },
           hold,
           heldByName: hold.decided_by
             ? profileMap.get(hold.decided_by) || "User name unavailable"

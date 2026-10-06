@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
+import { getCurrentWorkflowRoute } from "../../../lib/workflow-route";
 import { colors, spacing, typography } from "../../../theme";
 
 type Visit = {
@@ -38,6 +39,8 @@ type Vehicle = {
 };
 
 type Intake = {
+  customer_name: string | null;
+  customer_mobile: string | null;
   visit_id: string;
   vehicle_id: string;
   insurance_type: string | null;
@@ -79,6 +82,27 @@ type Item = {
 
 type Priority = "Urgent" | "High" | "Medium" | "Low";
 type PriorityFilter = "All" | Priority;
+
+function contactValue(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const text = String(value).trim();
+  return !text || ["—", "-", "null", "undefined"].includes(text.toLowerCase())
+    ? null
+    : text;
+}
+
+function resolveCustomerContact(vehicle: Vehicle, intake: Intake | null) {
+  // Intake belongs to a specific visit; never use a mismatched vehicle's contact.
+  const matchingIntake = intake?.vehicle_id === vehicle.id ? intake : null;
+  return {
+    customer_name:
+      contactValue(matchingIntake?.customer_name) ||
+      contactValue(vehicle.customer_name),
+    customer_mobile:
+      contactValue(matchingIntake?.customer_mobile) ||
+      contactValue(vehicle.customer_mobile),
+  };
+}
 
 const PAGE_SIZE = 25;
 const DAY = 86400000;
@@ -291,6 +315,8 @@ export default function ApprovalVehiclesScreen() {
             `
                 visit_id,
                 vehicle_id,
+                customer_name,
+                customer_mobile,
                 insurance_type,
                 mi_type_id,
                 insurance_company_id,
@@ -434,7 +460,7 @@ export default function ApprovalVehiclesScreen() {
 
         combined.push({
           visit,
-          vehicle,
+          vehicle: { ...vehicle, ...resolveCustomerContact(vehicle, intake) },
           intake,
           survey,
           insuranceCompany,
@@ -578,14 +604,12 @@ export default function ApprovalVehiclesScreen() {
 
   const paginatedItems = filteredItems.slice(startIndex, endIndex);
 
-  const openApproval = (item: Item) => {
-    router.push({
-      pathname: "/(tabs)/advisor/approval_form",
-      params: {
-        visitId: item.visit.id,
-        vehicleId: item.vehicle.id,
-      },
-    });
+  const openApproval = async (item: Item) => {
+    try {
+      router.push(await getCurrentWorkflowRoute(item.vehicle.id));
+    } catch (e: any) {
+      setError(e.message || "Unable to open approval. Refresh the queue.");
+    }
   };
 
   if (loading) {

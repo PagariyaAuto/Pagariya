@@ -1007,6 +1007,7 @@ export default function MITypes() {
         animationType="fade"
         onRequestClose={closeModal}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
@@ -1184,6 +1185,7 @@ export default function MITypes() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* DEACTIVATE CONFIRMATION */}
@@ -1196,6 +1198,7 @@ export default function MITypes() {
           closeConfirmModal
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.confirmCard}>
             <View
@@ -1321,6 +1324,7 @@ export default function MITypes() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* MESSAGE POPUP */}
@@ -1333,6 +1337,7 @@ export default function MITypes() {
           setMessageModalVisible(false)
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.messageCard}>
             <View
@@ -1379,6 +1384,7 @@ export default function MITypes() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

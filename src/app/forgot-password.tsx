@@ -306,6 +306,7 @@ Please check your email and open the link to create a new password.`,
             setPopupVisible(false)
           }
         >
+          <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
           <View style={styles.popupOverlay}>
             <View style={styles.popupContainer}>
               <View
@@ -368,6 +369,7 @@ Please check your email and open the link to create a new password.`,
               </Pressable>
             </View>
           </View>
+          </SafeAreaView>
         </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>

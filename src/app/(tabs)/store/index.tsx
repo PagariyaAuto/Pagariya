@@ -13,6 +13,10 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  requirementView,
+  supplementaryRequirements,
+} from "../../../lib/supplementary-store";
 
 import { supabase } from "../../../../lib/supabase";
 import { colors } from "../../../theme";
@@ -76,6 +80,7 @@ type PartRequisition = {
   visit_id: string;
   vehicle_id: string;
   advisor_work_id: string | null;
+  supplementary_cycle_id: string | null;
   requisition_no: string;
   requisition_at: string;
   requested_by: string;
@@ -302,6 +307,7 @@ function CustomPopup({
       animationType="fade"
       onRequestClose={onClose}
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View style={styles.popupOverlay}>
         <View style={styles.popupCard}>
           <View
@@ -351,6 +357,7 @@ function CustomPopup({
           </View>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -624,7 +631,7 @@ export default function StoreDashboardScreen() {
           supabase
             .from("part_requisitions")
             .select(
-              "id,visit_id,vehicle_id,advisor_work_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
+              "id,visit_id,vehicle_id,advisor_work_id,supplementary_cycle_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
             )
             .in("status", ["PENDING", "ORDERED"])
             .order("created_at", {
@@ -636,12 +643,7 @@ export default function StoreDashboardScreen() {
             .select(
               "id,visit_id,vehicle_id,part_requisition_id,part_order_no,order_type,ordered_at,ordered_by,parts_received_at,parts_received_by,status,remarks,created_at",
             )
-            .in("status", [
-              "ORDERED",
-              "PARTIALLY_RECEIVED",
-              "RECEIVED",
-              "HANDED_TO_FLOOR",
-            ])
+            .in("status", ["ORDERED", "PARTIALLY_RECEIVED", "RECEIVED"])
             .order("created_at", {
               ascending: false,
             }),
@@ -730,6 +732,11 @@ export default function StoreDashboardScreen() {
           }
         }
 
+        const cycleRequirements = await supplementaryRequirements(
+          requisitions
+            .filter((row) => row.supplementary_cycle_id)
+            .map((row) => row.id),
+        );
         const advisorWorkByVehicle = new Map<string, AdvisorWork>();
 
         for (const work of advisorWorks) {
@@ -738,37 +745,20 @@ export default function StoreDashboardScreen() {
           }
         }
 
+        /*
+         * Active Store queue is authoritative from the current vehicle stage.
+         * Historical requisitions/orders must never re-add a vehicle that has
+         * already moved to Floor or another workflow stage.
+         */
         const vehicleMap = new Map<string, Vehicle>();
 
         for (const vehicle of vehicles) {
-          vehicleMap.set(vehicle.id, vehicle);
-        }
-
-        const allVehicleIds = new Set<string>();
-
-        requisitions.forEach((item) => allVehicleIds.add(item.vehicle_id));
-
-        orders.forEach((item) => allVehicleIds.add(item.vehicle_id));
-
-        vehicles.forEach((item) => allVehicleIds.add(item.id));
-
-        const missingVehicleIds = Array.from(allVehicleIds).filter(
-          (id) => !vehicleMap.has(id),
-        );
-
-        if (missingVehicleIds.length > 0) {
-          const { data: missingVehicles, error } = await supabase
-            .from("vehicles")
-            .select(
-              "id,vehicle_no,customer_name,customer_mobile,model,arena_nexa,vehicle_type,jc_no,current_stage,current_status,current_assigned_to,stage_started_at",
+          if (
+            vehicle.current_stage === "STORE" &&
+            ["PENDING", "IN_PROGRESS"].includes(
+              String(vehicle.current_status || ""),
             )
-            .in("id", missingVehicleIds);
-
-          if (error) {
-            throw error;
-          }
-
-          for (const vehicle of (missingVehicles || []) as Vehicle[]) {
+          ) {
             vehicleMap.set(vehicle.id, vehicle);
           }
         }
@@ -778,18 +768,24 @@ export default function StoreDashboardScreen() {
         for (const vehicle of vehicleMap.values()) {
           const requisition = requisitionByVehicle.get(vehicle.id) || null;
 
-          const order = orderByVehicle.get(vehicle.id) || null;
+          const latestOrder = orderByVehicle.get(vehicle.id) || null;
+          const order =
+            !requisition || latestOrder?.part_requisition_id === requisition.id
+              ? latestOrder
+              : null;
 
-          const advisorWork = advisorWorkByVehicle.get(vehicle.id) || null;
+          const advisorWork = requirementView(
+            advisorWorkByVehicle.get(vehicle.id) || null,
+            requisition ? cycleRequirements.get(requisition.id) : undefined,
+            requisition,
+          );
 
-          if (vehicle.current_stage === "STORE" || requisition || order) {
-            queueMap.set(vehicle.id, {
-              vehicle,
-              requisition,
-              order,
-              advisorWork,
-            });
-          }
+          queueMap.set(vehicle.id, {
+            vehicle,
+            requisition,
+            order,
+            advisorWork,
+          });
         }
 
         setProfile(profileData);
@@ -1519,6 +1515,7 @@ export default function StoreDashboardScreen() {
         animationType="slide"
         onRequestClose={closeVehicleDetails}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.detailOverlay}>
           <View style={styles.detailModal}>
             <View style={styles.detailHandle} />
@@ -1791,6 +1788,7 @@ export default function StoreDashboardScreen() {
             ) : null}
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       <CustomPopup popup={popup} onClose={closePopup} />

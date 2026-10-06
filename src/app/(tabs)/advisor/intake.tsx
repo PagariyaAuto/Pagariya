@@ -1718,6 +1718,7 @@ function PopupModal({
       animationType="fade"
       onRequestClose={onClose}
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View
         style={styles.modalOverlay}
       >
@@ -1775,6 +1776,7 @@ function PopupModal({
           </Pressable>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }

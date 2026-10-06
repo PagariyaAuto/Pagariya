@@ -227,7 +227,7 @@ export default function WorkScreen() {
           return;
 
         case "floor_incharge":
-          router.replace("/(tabs)/work/floor-incharge");
+          router.replace("/(tabs)/floor-incharge");
           return;
 
         case "supervisor":

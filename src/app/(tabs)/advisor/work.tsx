@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
+import { getCurrentWorkflowRoute } from "../../../lib/workflow-route";
 import { colors, spacing } from "../../../theme";
 
 type Priority = "URGENT" | "HIGH" | "MEDIUM" | "LOW";
@@ -465,15 +466,10 @@ export default function AdvisorWorkScreen() {
     setPage(1);
   }, []);
 
-  const openVehicle = useCallback((item: WorkItem) => {
-    router.push({
-      pathname: "/(tabs)/advisor/advisor_work_form",
-      params: {
-        visitId: item.visit.id,
-        vehicleId: item.vehicle.id,
-      },
-    });
-  }, []);
+  const openVehicle = useCallback(async (item: WorkItem) => {
+    try { router.push(await getCurrentWorkflowRoute(item.vehicle.id)); }
+    catch (e: any) { showPopup("error", "Unable to Open Work", e.message || "Refresh and try again."); }
+  }, [showPopup]);
 
   const goBack = useCallback(() => {
     router.back();
@@ -843,6 +839,7 @@ export default function AdvisorWorkScreen() {
         animationType="fade"
         onRequestClose={closePopup}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.popupCard}>
             <View
@@ -875,6 +872,7 @@ export default function AdvisorWorkScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
