@@ -1,5 +1,12 @@
 # PROJECT_CONTEXT.md — Pagariya Auto
 
+## GitHub sync note — 2026-10-06
+
+Current source includes the Floor Incharge, Final Inspector, Advisor Billing, Billing Executive and Ready for Delivery screens. Live database verification covered Billing handoff, Advisor clearance, Watchman Gate Out, job closure and return visits. Gate Out now closes its explicitly linked job and remaining visit assignments. Intake now copies customer_mobile to the vehicle master; Survey, Approval and Approval Hold display the current visit's Intake contact before falling back to the vehicle master. Claim Intimation has editable IST timestamps and explicit return-to-queue navigation.
+
+The full local lifecycle and Android visual verification remain NEEDS VERIFICATION; the owner has reported working UI but has not tested every flow. Backend reference SQL applied during this work is in docs/backend/2026-10-06. These files are records of deployed changes, not a sequential fresh-database installer. The sync also corrects the legacy Work route to the current Floor Incharge dashboard. TypeScript and whitespace validation passed for this snapshot.
+
+
 ## Approved navigation update — 2026-10-06
 
 Back navigation now uses explicit module parents and allowlisted callers, restores selected visits after Advisor inspection history, carries Billing/Inspector queue filters, preserves Floor/Supplementary mode, and scopes custom hardware Back listeners to focused screens. Missing ordinary Back controls were added to Advisor Inspection Management and three Watchman modules. Existing save/transfer destinations, Supabase calls, workflow rules, dependencies and themes are unchanged. TypeScript and focused navigation/scope checks passed; Android interaction, browser history, overlays and visual placement remain NEEDS VERIFICATION.
