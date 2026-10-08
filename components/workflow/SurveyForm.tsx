@@ -1,3 +1,4 @@
+import useVisitDateTimeBounds from "../../src/components/inputs/useVisitDateTimeBounds";
 import DateTimeField from "../../src/components/inputs/DateTimeField";
 import { TextInput } from "../../src/components/inputs/KeyboardAware";
 
@@ -16,6 +17,8 @@ type InsuranceCompany = {
 };
 
 type Props = {
+  visitId: string;
+  onDateTimeValidationError: (field: "claim" | "survey" | "approval", error: string | null) => void;
   jobType: "INSURANCE" | "PAID" | null;
   setJobType: (value: "INSURANCE" | "PAID") => void;
 
@@ -79,6 +82,7 @@ const formatIndianDateTime = (value: string) => {
 };
 
 export default function SurveyForm({
+  visitId, onDateTimeValidationError,
   jobType,
   setJobType,
   jobCardNo,
@@ -104,6 +108,7 @@ export default function SurveyForm({
   advisorRemarks,
   setAdvisorRemarks,
 }: Props) {
+  const visitDates = useVisitDateTimeBounds(visitId);
   const isWeb = Platform.OS === "web";
 
   const handleSelectInsurance = () => {
@@ -135,7 +140,7 @@ export default function SurveyForm({
   };
 
   const renderDateTime = (value: string, placeholder: string, target: "claim" | "survey") =>
-    <DateTimeField title={target === "claim" ? "Claim Intimation" : "Survey Date & Time"} value={value || null}
+    <DateTimeField {...visitDates.bounds()} error={visitDates.error} onValidationError={error => onDateTimeValidationError(target, error)} title={target === "claim" ? "Claim Intimation" : "Survey Date & Time"} value={value || null}
       onChange={next => (target === "claim" ? setClaimIntimationAt : setSurveyAt)(next || "")} />;
 
   return (
@@ -287,7 +292,7 @@ export default function SurveyForm({
         <>
           <Text style={styles.fieldLabel}>Customer Approval</Text>
 
-          <DateTimeField title="Customer Approval" value={customerApprovalAt || null} onChange={next => setCustomerApprovalAt(next || "")} />
+          <DateTimeField {...visitDates.bounds()} error={visitDates.error} onValidationError={error => onDateTimeValidationError("approval", error)} title="Customer Approval" value={customerApprovalAt || null} onChange={next => setCustomerApprovalAt(next || "")} />
 
           <Text style={styles.fieldLabel}>Paid Job Remarks</Text>
 

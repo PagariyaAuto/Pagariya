@@ -1,7 +1,7 @@
 import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 
@@ -96,6 +96,7 @@ export default function WatchmanVehiclesScreen() {
   const [remarks, setRemarks] = useState("");
 
   const [assigning, setAssigning] = useState(false);
+  const assignmentBusy = useRef(false);
 
   const [showAssignModal, setShowAssignModal] =
     useState(false);
@@ -196,6 +197,7 @@ export default function WatchmanVehiclesScreen() {
             "current_stage",
             "PENDING_ADVISOR"
           )
+          .is("closed_at", null)
           .in("current_status", [
             "PENDING",
             "IN_PROGRESS",
@@ -684,6 +686,7 @@ export default function WatchmanVehiclesScreen() {
    */
 
   const confirmAssignment = async () => {
+    if (assignmentBusy.current) return;
     if (
       !selectedVisit ||
       !selectedAdvisor
@@ -692,9 +695,10 @@ export default function WatchmanVehiclesScreen() {
     }
 
     try {
+      assignmentBusy.current = true;
       setAssigning(true);
 
-      const { error } =
+      const { data, error } =
         await supabase.rpc(
           "new_workflow_assign_advisor",
           {
@@ -710,6 +714,8 @@ export default function WatchmanVehiclesScreen() {
       if (error) {
         throw error;
       }
+
+      if (data?.success !== true) throw new Error("The assignment could not be confirmed. Refresh before trying again.");
 
       const vehicle =
         getVehicle(
@@ -761,6 +767,7 @@ export default function WatchmanVehiclesScreen() {
           "Unable to assign the vehicle to the selected Advisor."
       );
     } finally {
+      assignmentBusy.current = false;
       setAssigning(false);
     }
   };
@@ -1349,6 +1356,8 @@ export default function WatchmanVehiclesScreen() {
           <View
             style={styles.modalCard}
           >
+            <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="always" nestedScrollEnabled>
+
             <View
               style={
                 styles.modalHandle
@@ -1637,6 +1646,7 @@ export default function WatchmanVehiclesScreen() {
                 Continue
               </Text>
             </Pressable>
+          </ScrollView>
           </View>
         </View>
         </SafeAreaView>

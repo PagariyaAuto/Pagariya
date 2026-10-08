@@ -1876,3 +1876,151 @@ Verify single-open-stage behavior, active job selection, billing role identifier
 - Database calls, RPC arguments, routing destinations, dependencies and native build configuration unchanged by this refactor.
 - Checks: TypeScript; node scripts/check-ui-inputs.cjs; Android/iOS/web Expo bundle export; comparison of database calls and route arguments against the synced baseline.
 - NEEDS VERIFICATION: hands-on Android/iOS keyboard scrolling, first-tap buttons, modal forms and picker dismissal on physical devices. Bundling and simulated callback tests do not establish device UX verification.
+
+
+## Advisor/Admin dashboard counts — 8 October 2026
+
+- Advisor cards count their assigned active visits; early Advisor stages use current_assigned_to, and later operational stages retain the active visit-level ADVISOR assignment. CEO Admin counts all active visits.
+- Intake counts assigned intake work for Advisors and all pending intake for Admin; unassigned vehicles remain available through the existing shared Intake queue without inflating personal workload.
+- Floor, Supplementary, Final Inspection management, Billing preparation and Ready for Delivery badges use their existing authorized queues and count distinct visits. Closed history is excluded and database reads are paginated.
+- The dashboard labels its scope and ignores stale refresh responses. No schema, RLS, RPC or stored assignment changes. Live read-only verification confirmed the test Advisor's Survey count is 1 and all other cards are 0; Admin retains workshop-wide totals.
+- Checks: node scripts/tests/advisor-dashboard-counts.cjs; node scripts/tests/advisor-dashboard-loader.cjs; TypeScript. Visual dashboard refresh on device remains NEEDS VERIFICATION.
+
+
+## Approved interface wording — 8 October 2026
+
+- Keep familiar workshop terms and consistent stage names such as Gate In, Pending Survey, Claim Number, Job Card and Billing.
+- Use simple, direct, respectful English. Instructions explain the next task; buttons name an action or destination.
+- Remove software explanations (database checks, backend operations, RPCs and internal status codes) from user-facing copy. Avoid repeated headings or notices; retain necessary guidance.
+- Be precise about payment and other requirements. Confirm only known outcomes; if saving is uncertain, say so and provide a recovery step. Errors explain what the user can do.
+- Preferred displayed date: 08 Oct 2026, 11:34 AM, in IST. Mention IST where useful rather than on every line. Preserve stored timestamps and existing date validation.
+- Survey copy uses the approved short Insurance Survey introduction, removes the repeated Insurance vehicle notice, and retains Pending Survey with a direct instruction and Waiting since label. Other screens should adopt this guide during their reviews; an application-wide copy audit has not been performed.
+
+- Follow-up: owner requested removal of the informational Insurance Survey section entirely; removed it without changing conditional payment fields or survey behavior.
+
+- UI consistency checks must cover conditional sections, numbering and surrounding layout after removals. Survey heading numbers now follow visible section order: Insurance 01–04; Paid 01–05. Approval details do not add numbered sections.
+
+- Survey success dialog: short confirmed-save copy, Dashboard plus Approval queue buttons for Pending Approval; Dashboard plus Advisor Work queue buttons when approval was received. Corrected the previous next-step buttons that both routed to Dashboard. Submission behavior is unchanged.
+
+- Survey UI polish: responsive read-only detail grids (single column below 600px), readable stage display, neutral supporting cards, clear approval choices, Pagariya red/outlined success buttons with vehicle registration. Client validation highlights the relevant control with an inline message and scrolls there after the popup closes; entered values are retained.
+- Checks passed: TypeScript, shared input regression suite including 10 Survey field-target/popup-scroll checks, visible section numbering and unchanged Supabase call comparison. Hands-on mobile/web visual scrolling remains NEEDS VERIFICATION. No database, dependency or submission-rule changes.
+
+
+## Watchman Gate In polish — 8 October 2026
+
+- Gate In now uses an aligned Back/BrandPill row, centered responsive form, Pagariya hero, two numbered registration/photo sections, readable capture/retry statuses and an explicit photo-viewer Close control. Unnecessary repeated step indicators and technical workflow explanations were removed.
+- Shared vehicle-registration helper uppercases input and removes spaces/hyphens; rejects unknown state codes, malformed or zero-only serials. Supports normal state marks, Delhi-style one-digit authority/three-letter series, older marks without a series, historical state codes and BH marks from 2021 through the current IST year. This validates supported registration formats only; it does not verify ownership or four-wheeler class through RC/VAHAN. Temporary, military and diplomatic marks are outside this validator.
+- Input errors use inline feedback plus the existing custom popup. Gate In RPC remains unchanged; its number argument is now normalized before submission. No database/dependency changes.
+- Fixed client retry reporting when Gate In was recorded in the current submission but the photo upload failed; local recorded-entry state preserves retry-only behavior. An immediate submit guard prevents duplicate taps.
+- Passed: TypeScript, node scripts/tests/gate-in.cjs (32 registration cases, 6 save/validation/retry/concurrency scenarios), existing shared input tests. Device camera, keyboard and visual layout verification remain NEEDS VERIFICATION.
+
+
+## Keyboard visibility correction — 8 October 2026
+
+- Shared TextInput/ScrollView now measure focused inputs against the visible scroll viewport. Fully visible fields do not trigger scrolling; hidden fields receive only the necessary movement with a small margin. Removed unconditional scrollResponderScrollNativeHandleToKeyboard/scrollIntoView calls.
+- Tracks actual scroll offsets, keyboard show/hide and iOS frame changes, viewport/layout changes, and the mobile browser visual viewport. Adds only unhandled overlay space; avoids stacking full keyboard padding on native resizing, iOS insets or KeyboardAvoidingView. No automatic scroll-to-top on keyboard dismissal.
+- Rejects stale measurements after blur/unmount and preserves new focus if an older input blurs late. Input values, refs, caller callbacks, outside-tap dismissal and first-tap buttons remain intact. Tall editors retain their visible top while relying on native internal caret scrolling.
+- Audited current inputs: all use shared inputs. Connected Claim Intimation and Vehicle Management FlatList headers through renderScrollComponent; made assignment dialogs for Advisor Final Inspection and Watchman scrollable. Returned Vehicles search/header now shares the page scroll. Survey search and Intake already use the shared wrappers.
+- Checks: TypeScript; shared input suite including 40 measured keyboard scenarios; database/navigation call comparison for all five integration screens; Android/iOS/web bundle export. Existing static route warnings about components under app remain outside this keyboard scope.
+- No database, dependency, native configuration, workflow or navigation changes. Physical Android/iOS keyboard behavior, floating keyboards and oversized multiline caret behavior remain NEEDS VERIFICATION; simulated measurement tests and bundle exports do not establish device UX verification.
+
+## Project-wide keyboard rollout confirmation — 8 October 2026
+
+- Owner confirmed the corrected keyboard behavior is working in the tested screens and approved applying it throughout the project.
+- Re-audited authentication, Advisor, CEO Admin shared screens, Store, Floor Incharge, Final Inspector, Billing, Watchman and Master Data. Current editable controls already use the shared keyboard components, including extracted Intake/Billing/Supplementary controls, form modals and both FlatList scroll connections. No additional screen-specific behavior changes were needed after the shared correction and integration fixes.
+- Added a project-wide source guard to the shared input check runner: reject native input/scroll/modal JSX that bypasses the shared components, and require native list scroll connections. This checks source integration; runtime visibility and outside-touch tests remain separate.
+- Owner acceptance covers the screens they tested. Full physical Android/iOS, floating-keyboard and oversized multiline caret coverage remains NEEDS VERIFICATION. No database, dependency, navigation or workflow changes in this rollout audit.
+
+## Store Incharge assignments — 8 October 2026
+
+- Owner approved assigned-only Store access, Advisor selection when sending parts work to Store, and CEO Admin reassignment.
+- Added Store selection to regular Advisor Work and supplementary parts requirements; Admin operational Store cards now have Assign / Change Store Incharge. Original Advisor ownership remains active for monitoring.
+- Installed Store assignment/scope and authenticated Store-action grants migrations in nnbijpmsixebfqeqamdd. Reuses STORE_TEAM assignment history, synchronizes visit/vehicle assignee, logs changes, rejects stale Admin saves, scopes Store reads with restrictive RLS and checks ownership in order/receipt/Floor handover functions. Store assignment closes on Floor handover. Legacy parts paths without selection are blocked; no-parts Floor route retained.
+- Fixed Store action loading callback dependency that could repeatedly reload after setting the vehicle. Assignment/load failures now clear stale details and offer Return to Store.
+- Existing Store vehicles MHOL1212, MHPL3636 and MH12LK6655 still require explicit Admin Store assignment; no automatic allocation or historical-record edits performed.
+- Passed: TypeScript, client Store assignment checks, shared input regressions, rollback-only fresh Paid/Insurance/supplementary assignment and authenticated RLS/action tests, no-parts and regular Store-to-Floor tests, Android/iOS/web bundle export. Zero synthetic vehicles remain.
+- Security advisors reviewed; narrowed existing anonymous execution grants on the two changed Store order/receipt functions. Other legacy/Auth advisory findings remain outside scope. True simultaneous-device contention, physical UI acceptance and full supplementary Floor-return UI remain NEEDS VERIFICATION.
+- Full usage/validation notes and installed SQL: docs/STORE_ASSIGNMENT.md, docs/store_incharge_assignment.sql, docs/store_incharge_assignment_tests.sql. Local changes not pushed; installed test APK needs rebuilding for the new UI.
+
+
+## Assignment route verification — 8 October 2026
+
+- Traced Watchman Advisor selection, atomic Intake acceptance, regular Advisor Work (Store / direct Floor), supplementary parts and no-extra-parts return, Store-to-Floor handover and Final Inspection rework. Advisor selection remains active-Advisors only; Intake self-acceptance remains unchanged.
+- Fixed vehicle details showing the current Store/Floor assignee as Advisor. It now loads the active job's Advisor and limits job lookup to the current open job; before Intake it uses the Advisor assignment stage. Floor assignment eligibility follows original Advisor ownership, with authoritative server assignment checks.
+- Replaced the job-only assign_floor_incharge implementation with an atomic active-visit operation: validates caller and selected active Floor Incharge, locks records, synchronizes visit/vehicle/job/current Floor cycle, closes old Floor assignment, creates the new assignment and audits the change. Preserves checklist work, original Advisor ownership and stage history. Does not create missing checklists or repair historical records.
+- Supplementary move_stage now sets the visit's Floor assignee consistently with the vehicle. Approved no-extra-parts returns and rejected supplementary continuation retain the prior Floor Incharge and completed items.
+- Watchman assignment now records IN_PROGRESS consistently on both vehicle and visit, validates active visit/current stage history, locks the target Advisor and rejects stale/duplicate submissions. Frontend uses immediate duplicate guards and confirmed-success checks. Advisor Work and Store handover also require confirmed success.
+- Installed floor_assignment_consistency and advisor_assignment_state_consistency migrations. Full SQL: docs/assignment_route_consistency.sql. No table, dependency or native configuration changes.
+- Passed: TypeScript, assignment screen callback tests, Store callback regressions, shared keyboard/date input checks and fresh rollback-only database tests for unauthorized users, personal queues, reassignment, Paid/Insurance direct Floor, Store-to-Floor, both supplementary returns, inspection rework and Watchman assignment. Zero synthetic vehicles remain.
+- NEEDS VERIFICATION: physical-device UI and simultaneous requests from multiple devices. No APK rebuild or GitHub push performed.
+
+
+## Store Vehicle Action UI polish — 8 October 2026
+
+- Back and shared Pagariya Auto brand occupy their own aligned row. Store Workspace / Vehicle Action title moves below it into scrollable content; header/content share an 860px maximum width. Removes crowded three-column mobile header.
+- Create Order shows one Create Part Order heading. Removed repeated Part Order Required / plus / PART ORDER introduction, repeated manual-entry guidance and automatic-number explanation. Manual order number remains mandatory; validation popup now says Enter the Part Order No. before continuing.
+- Removed repeated external Ordered At label; shared date/time field retains its label. Order type choices expose radio selection/disabled state to assistive tools; Part Order No. has an accessible label.
+- Database calls and navigation compared against the pre-polish file and unchanged. No database, dependency or workflow changes. Physical-device visual verification remains NEEDS VERIFICATION.
+
+- Store Vehicle Action follow-up: combined workspace/title and vehicle summary into one Pagariya red hero with decorative circles, prominent registration and wrapping Customer / Vehicle / Job Card / Requisition detail cells. Back/brand remain in a separate row. Existing values, workflow calls and navigation preserved. Device visual verification remains pending.
+
+
+## Store handover completion recovery — 8 October 2026
+
+- MH12HG1212's handover succeeded at 16:30 IST; subsequent Store detail reload failed because assigned-only Store visibility correctly ended. No data repair needed.
+- Stabilized goBack with refs so changing saving state no longer recreates loadData and triggers focus reloads. Successful handover shows Vehicle sent to Floor and returns to Store on its action or dismissal instead of reloading inaccessible vehicle details.
+- Added immediate duplicate/completed handover guards and try/catch/finally so thrown requests release saving state. Prevents any later load from replacing confirmed handover success. Ownership filters and handover RPC payload remain unchanged. No database/dependency changes.
+
+
+## Supplementary parts return preserves completed Floor work — 8 October 2026
+
+- Investigated MH20EN0308: Insurance job; source Floor cycle 1 recorded Stripping completed by Sujeet on 7 October at 15:58 IST and Fitting stopped for supplementary. Returned cycle 2 contained only pending Denting/Painting/Fitting. Insurance UI and start-work RPC correctly required completed Stripping in the active cycle, so all remaining starts were blocked.
+- Root cause: supplementary Store handover copied only source items whose status was not COMPLETED. Changed new_workflow_hand_over_parts_to_floor_core to copy every source work item: completed items retain original status/start/completion actors/timestamps; unfinished items become restartable Pending, with source history preserved. This matches no-extra-parts supplementary return behavior. No relaxation of Stripping, approval or assignment checks.
+- Installed supplementary_parts_preserve_completed_floor_work migration; complete definition in docs/supplementary_parts_floor_completion.sql. Existing frontend already handles the preserved completed row; no frontend/dependency/table changes required.
+- Restored only MH20EN0308's missing completed Stripping row by copying its verified original source completion. Guarded idempotent script and explicit repair audit event preserve original actor/timestamps; source history and other pending items are untouched. Record-specific script: docs/mh20en0308_completion_restoration.sql.
+- Passed fresh rollback-only regression suite: supplementary parts return for both completed and stopped/unfinished Stripping, assigned Floor queue/start/complete, unauthorized actor rejection and onward mandatory Final Inspection, plus prior Store/Advisor assignments, Paid/Insurance direct Floor, approved/rejected no-parts returns and inspection rework. Test fixtures rolled back. Live target now has completed Stripping plus 3 pending repairs. Physical-device interaction remains NEEDS VERIFICATION.
+
+## Advisor Billing date bounds - 8 October 2026
+
+- Owner reported selecting 1 April for MH20EN0308. Live Gate In is 7 October 2026 at 15:08:14 IST for visit 2199a827-f5f8-4ff9-a48f-a1dbbadbdc59. Neither pre-invoice nor liability timestamp was saved; no data repair performed.
+- Added reusable read-only exact-visit Gate In bounds hook. Blocks missing/failed lookup, ignores stale vehicle requests, refreshes on focus/queue refresh. Advisor Billing applies Gate In-to-now to both editable pickers and submission values; liability also cannot precede pre-invoice. Saved history and Paid verification remain unchanged. No database/dependency changes.
+- TypeScript and shared input regressions passed, including actual Billing save blocked with popup/no RPC, April rejection, boundary/IST precision, missing/stale/retried Gate In lookup, Paid verification and saved history. Android/iOS/web bundles emitted; export log contains existing route warnings. Physical device retest remains NEEDS VERIFICATION.
+- This targeted fix covers Advisor Billing preparation. The previously audited project-wide Gate In rule migration has not yet been applied to other remaining pickers; do not mark the full rollout complete.
+
+
+## Independent Advisor Billing dates - 8 October 2026
+
+- Owner clarified that liability can arrive before pre-invoice or vice versa. Both editable dates now independently use Gate In-to-now; removed cross-event ordering from picker and save checks. Either step can be saved first. Both remain mandatory for transfer to Billing. Paid verification unchanged.
+- Backend change necessary: removed handoff_liability_sequence CHECK and its save-RPC ordering check. Existing atomic save RPC now validates each newly recorded date against this exact visit's Gate In; retains future checks, authorization, assignment/stage locks, immutable timestamps and audit events. No historical records changed. Installed advisor_billing_independent_gate_in_dates migration. Complete SQL and rollback tests in docs/billing_independent_dates.sql and docs/billing_independent_dates_tests.sql.
+- Passed TypeScript, shared input regressions, and fresh rollback-only authenticated database tests for both event orders, liability-only save, before-Gate-In/future rejection, unauthorized role, overwrite protection, missing-step transfer rejection, Paid verification and successful transfer/assignment/audits. Physical UI retest remains NEEDS VERIFICATION. Other project-wide date migration remains pending.
+
+## Project-wide Gate In picker rule - 8 October 2026
+
+- Applied exact-visit Gate In-to-now bounds to Survey completion/received approval, Approval decision, Advisor Work requisition, Store order/receipt/Floor handover, Supplementary survey/decision/requisition, Billing invoice generation/sending/payment, and unused legacy SurveyForm pickers. Claim Intimation and Advisor Billing already enforce the rule. No other native or raw editable date/time controls found in the source audit.
+- Rechecks current values at submission, including untouched defaults and Store/Supplementary confirmation actions. Rejected selections retain existing custom popup handling. Hidden Advisor no-parts and timestamp-free supplementary actions are not given new date requirements. Saved Billing timestamps and idempotent payment retry payloads remain unchanged. Shared lookup rejects missing/future Gate In, cancels stale vehicle reads and retries through existing refresh actions.
+- Legacy SurveyForm currently has no live callers; now requires explicit visitId and date-error callback for future reuse. Read-only timestamps and automatic system timestamps unchanged. Existing dedicated RPC workflow chronology/authorization checks retained. This rollout changed no database, dependencies, routing or build configuration.
+- Passed TypeScript, shared picker/platform/keyboard tests, 25 project-wide actual submission/history/picker coverage checks, Store handover/assignment and assignment-screen regressions, and Android/iOS/web export. Physical-device retest remains NEEDS VERIFICATION. Local changes not pushed; APK needs rebuilding.
+
+
+## Internal Bill No. retired - 8 October 2026
+
+- Owner no longer needs separate Internal Bill No. Removed its Billing form/state/payload/required validation, Advisor handoff copy, Home placeholder and Ready for Delivery display/blocker. Tax invoice number remains required for generation.
+- Invoice section now uses Tax invoice heading with receipt icon, Generated badge, customer-difference or balance-after-advance preview, and Save Draft/Save Tax Invoice actions. Existing payment history and remaining balance remain authoritative after save.
+- Backend change required to avoid downstream failure: replaced complete definitions of invoice save, Billing completion and delivery-clearance RPCs to remove Bill No. requirements. Save no longer writes bill_no; existing nullable column/historical values and compatible queue responses preserved. No historical records or table columns deleted. Installed billing_remove_internal_number_requirement migration; full SQL and rollback tests in docs/billing_without_internal_number.sql and docs/billing_without_internal_number_tests.sql.
+- Passed TypeScript, shared input/date regressions, new actual invoice-payload/delivery-blocker tests, and authenticated fresh rollback database tests for Paid/Insurance draft/generation, missing tax invoice rejection, immutable invoices, legacy bill preservation, advance/difference calculation, full-payment checks, Billing completion and Advisor clearance to Pending Gate Out. Zero test fixtures remain. Android/iOS/web export passed.
+- Reviewed security advisors: changed functions retain intentional authenticated SECURITY DEFINER execution with existing role/assignment/stage/row-lock checks and grants. No new anonymous grants. Physical-device visual acceptance remains NEEDS VERIFICATION; rebuild APK to install UI changes. No GitHub push performed.
+
+
+## Billing Advisor handoff card polish - 8 October 2026
+
+- Replaced paragraph-like handoff content with labeled responsive tiles for customer mobile, job card, Advisor and assignment time. Insurance events use independent tiles without implying chronological order; Paid jobs show advance and receipt/reference. Remarks have a separate red-tinted panel. Values wrap without truncation and are selectable. Existing fields, timestamps, missing-value labels, RPCs and workflow preserved.
+- UI-only change; TypeScript checked. Physical mobile/web visual review remains NEEDS VERIFICATION.
+
+## Billing navigation row alignment - 8 October 2026
+
+- Moved shared BackButton from a centered standalone position below the title into a top navigation row, left aligned. Added shared Pagariya Auto BrandPill at right; Billing dashboard also gets the brand, with its existing no-Back behavior retained. Title/Refresh stay in their own row below. Existing queue/detail back destinations, hardware-back and saving guards unchanged.
+- UI-only; TypeScript passed. Device visual acceptance remains pending.
+
+## Combined Vehicle Billing hero - 8 October 2026
+
+- Combined Billing Department / Vehicle Billing / description, vehicle registration / model / customer, job type and invoice status into one Pagariya red hero. Refresh is aligned within the card; Back and BrandPill remain above. Responsive wrapping status badges and readable vehicle summary separated by a subtle divider. Existing title remains for queue/dashboard/loading/unavailable states only. UI-only, existing callbacks/workflow untouched. TypeScript passed; device visual review pending.

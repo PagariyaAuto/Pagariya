@@ -1,27 +1,15 @@
 import { Modal, ScrollView } from "../../../components/inputs/KeyboardAware";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
 import { colors, radius, spacing, typography } from "../../../theme";
 
-type CountKey =
-  | "INTAKE"
-  | "CLAIM_INTIMATION"
-  | "SURVEY"
-  | "APPROVAL"
-  | "APPROVAL_HOLD"
-  | "SUPPLEMENTARY"
-  | "ADVISOR_WORK"
-  | "STORE"
-  | "FLOOR"
-  | "FINAL_INSPECTION"
-  | "BILLING"
-  | "READY_FOR_DELIVERY";
-
-type DashboardCounts = Record<CountKey, number>;
+import { countDashboardVisits, readAllPages, queueItems, uniqueVisitCount,
+  type CountKey, type DashboardCounts, type DashboardVisit,
+} from "../../../lib/advisor-dashboard-counts";
 
 type WorkflowItem = {
   number: string;
@@ -193,30 +181,10 @@ const adminItems: AdminItem[] = [
   },
 ];
 
-const EMPTY_COUNTS: DashboardCounts = {
-  INTAKE: 0,
-  CLAIM_INTIMATION: 0,
-  SURVEY: 0,
-  APPROVAL: 0,
-  APPROVAL_HOLD: 0,
-  SUPPLEMENTARY: 0,
-  ADVISOR_WORK: 0,
-  STORE: 0,
-  FLOOR: 0,
-  FINAL_INSPECTION: 0,
-  BILLING: 0,
-  READY_FOR_DELIVERY: 0,
-};
-
-function createCounts(): DashboardCounts {
-  return {
-    ...EMPTY_COUNTS,
-  };
-}
-
 export default function AdvisorDashboard() {
   const { width } = useWindowDimensions();
 
+  const dashboardRequest = useRef(0);
   const [counts, setCounts] = useState<DashboardCounts | null>(null);
   const [countError, setCountError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -256,8 +224,11 @@ export default function AdvisorDashboard() {
     workflowItems.length + (isCeoAdmin ? adminItems.length : 0);
 
   const loadDashboardCounts = useCallback(async () => {
+    const request = ++dashboardRequest.current;
     setRefreshing(true);
     setCountError(false);
+    setCounts(null);
+    setIsCeoAdmin(false);
 
     try {
       const {
@@ -293,129 +264,71 @@ export default function AdvisorDashboard() {
         );
       }
 
+      if (request !== dashboardRequest.current) return;
       setIsCeoAdmin(profile.role === "ceo_admin");
 
-      const { data: visits, error: visitsError } = await supabase
-        .from("workshop_visits")
-        .select("id,current_stage,current_status,current_assigned_to")
-        .in("current_status", ["PENDING", "IN_PROGRESS", "ON_HOLD"]);
-
-      if (visitsError) {
-        throw visitsError;
+      const role = profile.role as "advisor" | "ceo_admin";
+      const assignedVisitIds = new Set<string>();
+      if (role === "advisor") {
+        const assignments = await readAllPages<{ visit_id: string }>((from, to) =>
+          supabase.from("vehicle_assignments").select("visit_id")
+            .eq("assigned_to", user.id).eq("assignment_role", "ADVISOR")
+            .is("unassigned_at", null).not("visit_id", "is", null).order("id").range(from, to));
+        assignments.forEach(assignment => assignedVisitIds.add(assignment.visit_id));
       }
-
-      const nextCounts = createCounts();
-
-      for (const visit of visits ?? []) {
-        const stage = String(visit.current_stage ?? "");
-
-        switch (stage) {
-          case "PENDING_ADVISOR":
-            if (!visit.current_assigned_to) {
-              nextCounts.INTAKE += 1;
-            }
-            break;
-
-          case "CLAIM_INTIMATION":
-            nextCounts.CLAIM_INTIMATION += 1;
-            break;
-
-          case "PENDING_SURVEY":
-            nextCounts.SURVEY += 1;
-            break;
-
-          case "PENDING_APPROVAL":
-            nextCounts.APPROVAL += 1;
-            break;
-
-          case "APPROVAL_HOLD":
-            nextCounts.APPROVAL_HOLD += 1;
-            break;
-
-          case "SUPPLEMENTARY_SURVEY":
-          case "SUPPLEMENTARY_APPROVAL":
-            nextCounts.SUPPLEMENTARY += 1;
-            break;
-
-          case "ADVISOR_WORK":
-            nextCounts.ADVISOR_WORK += 1;
-            break;
-
-          case "STORE":
-            nextCounts.STORE += 1;
-            break;
-
-          case "FLOOR":
-            nextCounts.FLOOR += 1;
-            break;
-
-          case "FINAL_INSPECTION":
-            nextCounts.FINAL_INSPECTION += 1;
-            break;
-
-          default:
-            break;
+      const visitQuery = () => supabase.from("workshop_visits")
+        .select("id,current_stage,current_status,current_assigned_to,closed_at")
+        .is("closed_at", null).in("current_status", ["PENDING", "IN_PROGRESS", "ON_HOLD"]);
+      const visits: DashboardVisit[] = [];
+      if (role === "ceo_admin") {
+        visits.push(...await readAllPages<DashboardVisit>((from, to) =>
+          visitQuery().order("id").range(from, to)));
+      } else {
+        visits.push(...await readAllPages<DashboardVisit>((from, to) =>
+          visitQuery().eq("current_assigned_to", user.id).order("id").range(from, to)));
+        // Later-stage responsibility remains with the Advisor even when the
+        // current assignee is Store, Floor Incharge or Final Inspector.
+        const ids = [...assignedVisitIds];
+        for (let offset = 0; offset < ids.length; offset += 100) {
+          const chunk = ids.slice(offset, offset + 100);
+          visits.push(...await readAllPages<DashboardVisit>((from, to) =>
+            visitQuery().in("id", chunk).order("id").range(from, to)));
         }
       }
-
-      const { data: supplementaryQueue, error: supplementaryError } =
-        await supabase.rpc("new_workflow_supplementary_queue", {
-          p_floor: false,
-        });
-      if (supplementaryError) throw supplementaryError;
-      nextCounts.SUPPLEMENTARY = (supplementaryQueue?.items || []).filter(
-        (row: { supplementary: { status: string } | null }) =>
-          row.supplementary &&
-          [
-            "SURVEY",
-            "APPROVAL",
-            "APPROVAL_HOLD",
-            "APPROVED",
-            "CLAIM_REJECTED",
-          ].includes(row.supplementary.status),
-      ).length;
-      // Use the same authorized queue as the Advisor Billing screen.
-      // Vehicles transferred to a Billing Executive no longer belong here.
-      const { data: billingQueue, error: billingError } = await supabase.rpc(
-        "new_workflow_advisor_billing_queue",
-      );
-      if (billingError) throw billingError;
-      if (
-        !billingQueue ||
-        !["advisor", "ceo_admin"].includes(billingQueue.role) ||
-        !Array.isArray(billingQueue.items)
-      ) {
-        throw new Error("The Billing preparation count could not be loaded.");
-      }
-      nextCounts.BILLING = billingQueue.items.length;
-
-      const { data: deliveryQueue, error: deliveryError } = await supabase.rpc(
-        "new_workflow_ready_for_delivery_queue",
-      );
-      if (deliveryError) throw deliveryError;
-      if (
-        !deliveryQueue ||
-        !["advisor", "ceo_admin"].includes(deliveryQueue.role) ||
-        !Array.isArray(deliveryQueue.items)
-      ) {
-        throw new Error("The delivery clearance count could not be loaded.");
-      }
-      nextCounts.READY_FOR_DELIVERY = deliveryQueue.items.filter(
-        (item: { stage: string }) => item.stage === "READY_FOR_DELIVERY",
-      ).length;
-
+      const nextCounts = countDashboardVisits(visits, role, user.id, assignedVisitIds);
+      // These screens have additional job/inspection/approval requirements.
+      // Their existing authorized queues are the source for dashboard badges.
+      const results = await Promise.all([
+        supabase.rpc("new_workflow_supplementary_queue", { p_floor: false }),
+        supabase.rpc("new_workflow_advisor_billing_queue"),
+        supabase.rpc("new_workflow_ready_for_delivery_queue"),
+        supabase.rpc("new_workflow_final_inspection_management_queue"),
+        supabase.rpc("new_workflow_supplementary_queue", { p_floor: true }),
+      ]);
+      for (const result of results) if (result.error) throw result.error;
+      const supplementary = queueItems<{ visit_id: string; supplementary: { status: string } | null }>(results[0].data, role);
+      nextCounts.SUPPLEMENTARY = uniqueVisitCount(supplementary.filter(row => row.supplementary &&
+        ["SURVEY", "APPROVAL", "APPROVAL_HOLD", "APPROVED", "CLAIM_REJECTED"].includes(row.supplementary.status)));
+      nextCounts.BILLING = uniqueVisitCount(queueItems<{ visit_id: string }>(results[1].data, role));
+      nextCounts.READY_FOR_DELIVERY = uniqueVisitCount(queueItems<{ visit_id: string; stage: string }>(results[2].data, role)
+        .filter(item => item.stage === "READY_FOR_DELIVERY"));
+      nextCounts.FINAL_INSPECTION = uniqueVisitCount(queueItems<{ visit_id: string }>(results[3].data, role));
+      nextCounts.FLOOR = uniqueVisitCount(queueItems<{ visit_id: string; current_status: string }>(results[4].data, role)
+        .filter(item => ["PENDING", "IN_PROGRESS", "ON_HOLD"].includes(item.current_status)));
+      if (request !== dashboardRequest.current) return;
       setCounts(nextCounts);
     } catch (error) {
       console.error("Failed to load Advisor Dashboard:", error);
-      setCountError(true);
+      if (request === dashboardRequest.current) setCountError(true);
     } finally {
-      setRefreshing(false);
+      if (request === dashboardRequest.current) setRefreshing(false);
     }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
-      loadDashboardCounts();
+      void loadDashboardCounts();
+      return () => { dashboardRequest.current += 1; };
     }, [loadDashboardCounts]),
   );
 
@@ -576,7 +489,7 @@ export default function AdvisorDashboard() {
             <Text style={styles.sectionTitle}>Your Workflow</Text>
 
             <Text style={styles.sectionSubtitle}>
-              Select a task to continue
+              {isCeoAdmin ? "All active vehicles" : "Your assigned vehicles"}
             </Text>
           </View>
 
@@ -632,7 +545,7 @@ export default function AdvisorDashboard() {
                     )}
 
                     <Text style={styles.waitingLabel}>
-                      {countError ? "Unavailable" : item.countLabel}
+                      {countError ? "Unavailable" : item.countKey === "INTAKE" ? (isCeoAdmin ? "pending" : "assigned") : item.countLabel}
                     </Text>
                   </View>
                 </View>

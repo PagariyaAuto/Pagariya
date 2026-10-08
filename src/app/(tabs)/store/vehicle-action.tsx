@@ -1,10 +1,12 @@
+import useVisitDateTimeBounds from "../../../components/inputs/useVisitDateTimeBounds";
 import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
 import { returnToRoute } from "../../../lib/back-navigation";
 import DateValueField from "../../../components/inputs/DateValueField";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, BackHandler, Platform, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -384,14 +386,20 @@ export default function StoreVehicleActionScreen() {
 
   const [resolvedVisitId, setResolvedVisitId] =
     useState<string>(initialVisitId);
+  const visitDates = useVisitDateTimeBounds(resolvedVisitId);
 
   /* ==========================================================
      UI STATE
   ========================================================== */
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  savingRef.current = saving;
+  const handoverBusy = useRef(false);
+  const handoverCompleted = useRef(false);
 
   const [popup, setPopup] = useState<PopupConfig>({
     visible: false,
@@ -459,9 +467,9 @@ export default function StoreVehicleActionScreen() {
   ========================================================== */
 
   const goBack = useCallback(() => {
-    if (saving) return;
+    if (savingRef.current || handoverBusy.current) return;
     returnToRoute("/(tabs)/store");
-  }, [saving]);
+  }, []);
 
   useFocusEffect(useCallback(() => {
     const subscription = BackHandler.addEventListener(
@@ -483,6 +491,8 @@ export default function StoreVehicleActionScreen() {
 
   const loadData = useCallback(
     async (showErrors = false) => {
+      if (handoverCompleted.current) return;
+      visitDates.reload();
       if (!vehicleId) {
         if (showErrors) {
           showPopup({
@@ -501,9 +511,8 @@ export default function StoreVehicleActionScreen() {
       }
 
       try {
-        if (!vehicle) {
-          setLoading(true);
-        }
+        setLoading(true);
+        setLoadError("");
 
         const userResult = await supabase.auth.getUser();
 
@@ -521,20 +530,25 @@ export default function StoreVehicleActionScreen() {
            VEHICLE
         ------------------------------------------------------ */
 
-        const vehicleResult = await supabase
+        const { data: profile, error: profileError } = await supabase.from("profiles").select("role,is_active").eq("id", userId).single();
+        if (profileError) throw profileError;
+        if (!profile?.is_active || !["store_team", "ceo_admin"].includes(profile.role)) throw new Error("Your account cannot process Store vehicles.");
+
+        let vehicleQuery = supabase
           .from("vehicles")
           .select(
             "id,vehicle_no,customer_name,customer_mobile,model,arena_nexa,vehicle_type,jc_no,current_stage,current_status",
           )
-          .eq("id", vehicleId)
-          .maybeSingle();
+          .eq("id", vehicleId).eq("current_stage", "STORE").in("current_status", ["PENDING", "IN_PROGRESS"]);
+        if (profile.role === "store_team") vehicleQuery = vehicleQuery.eq("current_assigned_to", userId);
+        const vehicleResult = await vehicleQuery.maybeSingle();
 
         if (vehicleResult.error) {
           throw vehicleResult.error;
         }
 
         if (!vehicleResult.data) {
-          throw new Error("Vehicle could not be found.");
+          throw new Error("This vehicle is no longer available in your Store queue. Return to Store and refresh the list.");
         }
 
         setVehicle(vehicleResult.data as Vehicle);
@@ -623,6 +637,8 @@ export default function StoreVehicleActionScreen() {
 
         setFloorIncharges(parsedFloorResponse.items);
       } catch (error) {
+        setVehicle(null); setRequisition(null); setOrder(null); setResolvedVisitId("");
+        setLoadError(getErrorMessage(error));
         console.error("Store vehicle action load error:", error);
 
         if (showErrors) {
@@ -644,7 +660,7 @@ export default function StoreVehicleActionScreen() {
         setRefreshing(false);
       }
     },
-    [closePopup, goBack, initialVisitId, showPopup, vehicle, vehicleId],
+    [closePopup, goBack, initialVisitId, showPopup, vehicleId, visitDates.reload],
   );
 
   /* ==========================================================
@@ -709,6 +725,9 @@ export default function StoreVehicleActionScreen() {
   ========================================================== */
 
   const submitCreateOrder = useCallback(async () => {
+    const rangeError = dateValidation.getError() || visitDates.validate(orderedAt);
+    if (rangeError) { showPopup({type: "warning", title: "Check date & time", message: rangeError}); return; }
+
     if (saving) {
       return;
     }
@@ -790,6 +809,8 @@ export default function StoreVehicleActionScreen() {
     orderRemarks,
     orderType,
     orderedAt,
+    visitDates.validate,
+    dateValidation,
     partOrderNo,
     resolvedVisitId,
     saving,
@@ -797,7 +818,7 @@ export default function StoreVehicleActionScreen() {
   ]);
 
   const confirmCreateOrder = () => {
-    const dateError = dateValidation.getError();
+    const dateError = dateValidation.getError() || visitDates.validate(orderedAt);
     if (dateError) { showPopup({type: "warning", title: "Check date & time", message: dateError}); return; }
     const trimmedOrderNo = partOrderNo.trim();
 
@@ -806,7 +827,7 @@ export default function StoreVehicleActionScreen() {
         type: "warning",
         title: "Part Order No. Required",
         message:
-          "Enter the Part Order No. manually. The system will not generate one automatically.",
+          "Enter the Part Order No. before continuing.",
         primaryText: "Enter Order No.",
       });
 
@@ -834,6 +855,9 @@ export default function StoreVehicleActionScreen() {
   ============================================================ */
 
   const submitReceiveParts = useCallback(async () => {
+    const rangeError = dateValidation.getError() || visitDates.validate(receivedAt);
+    if (rangeError) { showPopup({type: "warning", title: "Check date & time", message: rangeError}); return; }
+
     if (saving) {
       return;
     }
@@ -886,13 +910,15 @@ export default function StoreVehicleActionScreen() {
     loadData,
     receiveRemarks,
     receivedAt,
+    visitDates.validate,
+    dateValidation,
     resolvedVisitId,
     saving,
     showPopup,
   ]);
 
   const confirmReceiveParts = () => {
-    const dateError = dateValidation.getError();
+    const dateError = dateValidation.getError() || visitDates.validate(receivedAt);
     if (dateError) { showPopup({type: "warning", title: "Check date & time", message: dateError}); return; }
     if (!currentOrder) {
       showPopup({
@@ -924,6 +950,10 @@ export default function StoreVehicleActionScreen() {
   ============================================================ */
 
   const submitHandover = async () => {
+    if (handoverBusy.current || savingRef.current || handoverCompleted.current) return;
+    const rangeError = dateValidation.getError() || visitDates.validate(handoverAt);
+    if (rangeError) { showPopup({type: "warning", title: "Check date & time", message: rangeError}); return; }
+
     if (!currentOrder?.id) {
       showPopup({
         type: "error",
@@ -942,44 +972,49 @@ export default function StoreVehicleActionScreen() {
       return;
     }
 
+    handoverBusy.current = true;
+    savingRef.current = true;
     setSaving(true);
 
-    const { error } = await supabase.rpc(
-      "new_workflow_hand_over_parts_to_floor",
-      {
-        p_part_order_id: currentOrder.id,
-        p_floor_incharge_id: selectedFloorInchargeId,
-        p_handed_over_at: handoverAt.toISOString(),
-        p_remarks: handoverRemarks.trim() || null,
-      },
-    );
+    try {
+      const { data, error } = await supabase.rpc(
+        "new_workflow_hand_over_parts_to_floor",
+        {
+          p_part_order_id: currentOrder.id,
+          p_floor_incharge_id: selectedFloorInchargeId,
+          p_handed_over_at: handoverAt.toISOString(),
+          p_remarks: handoverRemarks.trim() || null,
+        },
+      );
+      if (error) throw error;
+      if (data?.success !== true) throw new Error("The handover could not be confirmed. Return to Store and refresh before trying again.");
 
-    setSaving(false);
-
-    if (error) {
+      handoverCompleted.current = true;
+      showPopup({
+        type: "success",
+        title: "Vehicle sent to Floor",
+        message: "The vehicle has been assigned to " + (selectedFloorIncharge?.name || "the selected Floor Incharge") + ". You can continue with your other Store vehicles.",
+        primaryText: "Return to Store",
+        onPrimary: () => {
+          closePopup();
+          goBack();
+        },
+      });
+    } catch (error) {
       showPopup({
         type: "error",
         title: "Unable to Hand Over Parts",
-        message: error.message,
+        message: getErrorMessage(error),
       });
-      return;
+    } finally {
+      handoverBusy.current = false;
+      savingRef.current = false;
+      setSaving(false);
     }
-
-    showPopup({
-      type: "success",
-      title: "Parts Handed Over",
-      message:
-        "Parts have been successfully handed over to the Floor Incharge.",
-      primaryText: "Continue",
-      onPrimary: async () => {
-        closePopup();
-        await loadData();
-      },
-    });
   };
 
   const confirmHandover = () => {
-    const dateError = dateValidation.getError();
+    const dateError = dateValidation.getError() || visitDates.validate(handoverAt);
     if (dateError) { showPopup({type: "warning", title: "Check date & time", message: dateError}); return; }
     if (!currentOrder) {
       showPopup({
@@ -1028,31 +1063,15 @@ export default function StoreVehicleActionScreen() {
     if (actionMode === "CREATE_ORDER") {
       return (
         <>
-          <View style={styles.actionHeader}>
-            <View style={[styles.actionIcon, styles.actionIconRequest]}>
-              <Text style={styles.actionIconText}>+</Text>
-            </View>
-
-            <View style={styles.actionHeaderCopy}>
-              <Text style={styles.actionEyebrow}>PART ORDER</Text>
-
-              <Text style={styles.actionTitle}>Create Part Order</Text>
-
-              <Text style={styles.actionDescription}>
-                Enter the Store Part Order No. manually and create the order for
-                this vehicle.
-              </Text>
-            </View>
-          </View>
-
           <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Part Order Details</Text>
+            <Text style={styles.sectionTitle}>Create Part Order</Text>
 
             <Text style={styles.fieldLabel}>
               Part Order No. <Text style={styles.required}>*</Text>
             </Text>
 
             <TextInput
+              accessibilityLabel="Part Order No. required"
               value={partOrderNo}
               onChangeText={setPartOrderNo}
               placeholder="Enter Part Order No."
@@ -1062,11 +1081,6 @@ export default function StoreVehicleActionScreen() {
               autoCorrect={false}
               editable={!saving}
             />
-
-            <Text style={styles.fieldHint}>
-              Enter the order number provided by the Store. It will not be
-              generated automatically.
-            </Text>
 
             <Text style={styles.fieldLabel}>
               Order Type <Text style={styles.required}>*</Text>
@@ -1079,6 +1093,9 @@ export default function StoreVehicleActionScreen() {
                 return (
                   <Pressable
                     key={item.value}
+                    accessibilityRole="radio"
+                    accessibilityLabel={item.label}
+                    accessibilityState={{ checked: selected, disabled: saving }}
                     onPress={() => setOrderType(item.value)}
                     disabled={saving}
                     style={({ pressed }) => [
@@ -1117,9 +1134,7 @@ export default function StoreVehicleActionScreen() {
               })}
             </View>
 
-            <Text style={styles.fieldLabel}>Ordered At</Text>
-
-            <DateValueField onValidationError={dateValidation.field("Ordered At")} label="Ordered At" value={orderedAt} onChange={setOrderedAt} disabled={saving} active={!popup.visible} />
+            <DateValueField {...visitDates.bounds()} error={visitDates.error} onValidationError={dateValidation.field("Ordered At")} label="Ordered At" value={orderedAt} onChange={setOrderedAt} disabled={saving} active={!popup.visible} />
 
             <Text style={styles.fieldLabel}>Remarks</Text>
 
@@ -1213,7 +1228,7 @@ export default function StoreVehicleActionScreen() {
 
             <Text style={styles.fieldLabel}>Parts Received At</Text>
 
-            <DateValueField onValidationError={dateValidation.field("Parts Received At")} label="Parts Received At" value={receivedAt} onChange={setReceivedAt} disabled={saving} active={!popup.visible} />
+            <DateValueField {...visitDates.bounds()} error={visitDates.error} onValidationError={dateValidation.field("Parts Received At")} label="Parts Received At" value={receivedAt} onChange={setReceivedAt} disabled={saving} active={!popup.visible} />
 
             <Text style={styles.fieldLabel}>Remarks</Text>
 
@@ -1355,7 +1370,7 @@ export default function StoreVehicleActionScreen() {
 
             <Text style={styles.fieldLabel}>Handover At</Text>
 
-            <DateValueField onValidationError={dateValidation.field("Handover At")} label="Handover At" value={handoverAt} onChange={setHandoverAt} disabled={saving} active={!popup.visible} />
+            <DateValueField {...visitDates.bounds()} error={visitDates.error} onValidationError={dateValidation.field("Handover At")} label="Handover At" value={handoverAt} onChange={setHandoverAt} disabled={saving} active={!popup.visible} />
 
             <Text style={styles.fieldLabel}>Remarks</Text>
 
@@ -1464,6 +1479,16 @@ export default function StoreVehicleActionScreen() {
      LOADING
   ============================================================ */
 
+  if (loadError && !loading) {
+    return <SafeAreaView style={{ flex: 1, padding: 20, gap: 16 }}>
+      <BackButton onPress={goBack} />
+      <Text style={{ fontSize: 20, fontWeight: "800" }}>Vehicle unavailable</Text>
+      <Text>{loadError}</Text>
+      <Pressable accessibilityRole="button" onPress={() => void loadData(true)}><Text>Refresh</Text></Pressable>
+      <Pressable accessibilityRole="button" onPress={goBack}><Text>Return to Store</Text></Pressable>
+    </SafeAreaView>;
+  }
+
   if (loading) {
     return (
       <SafeAreaView
@@ -1507,18 +1532,7 @@ export default function StoreVehicleActionScreen() {
       >
         <View style={styles.header}>
           <BackButton onPress={goBack} />
-
-          <View style={styles.headerCopy}>
-            <Text style={styles.headerEyebrow}>STORE WORKSPACE</Text>
-
-            <Text style={styles.headerTitle}>Vehicle Action</Text>
-          </View>
-
-          <View style={styles.headerStatus}>
-            <View style={styles.headerStatusDot} />
-
-            <Text style={styles.headerStatusText}>STORE</Text>
-          </View>
+          <BrandPill />
         </View>
 
         <ScrollView
@@ -1527,55 +1541,32 @@ export default function StoreVehicleActionScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.vehicleCard}>
-            <View style={styles.vehicleTop}>
-              <View style={styles.vehicleIconBox}>
-                <Text style={styles.vehicleIcon}>🚗</Text>
+            <View pointerEvents="none" accessible={false} style={styles.heroCircleTop} />
+            <View pointerEvents="none" accessible={false} style={styles.heroCircleBottom} />
+            <View style={styles.heroContent}>
+              <View style={styles.heroPill}>
+                <Text style={styles.heroPillText}>STORE WORKSPACE</Text>
               </View>
-
-              <View style={styles.vehicleMain}>
-                <Text style={styles.vehicleNumber}>
-                  {vehicle?.vehicle_no || "Vehicle"}
-                </Text>
-
-                <Text style={styles.vehicleCustomer}>
-                  {vehicle?.customer_name || "Customer name unavailable"}
-                </Text>
-
-                <View style={styles.vehicleMetaRow}>
-                  {vehicle?.arena_nexa ? (
-                    <View style={styles.metaPill}>
-                      <Text style={styles.metaPillText}>
-                        {vehicle.arena_nexa}
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  {vehicle?.model ? (
-                    <View style={styles.metaPill}>
-                      <Text style={styles.metaPillText}>{vehicle.model}</Text>
-                    </View>
-                  ) : null}
+              <Text style={styles.heroHeading}>Vehicle Action</Text>
+              <Text style={styles.vehicleNumber}>{vehicle?.vehicle_no || "Vehicle"}</Text>
+              <View style={styles.vehicleDivider} />
+              <View style={styles.vehicleInfoGrid}>
+                <View style={styles.vehicleInfoItem}>
+                  <Text style={styles.vehicleInfoLabel}>CUSTOMER</Text>
+                  <Text style={styles.vehicleInfoValue}>{vehicle?.customer_name || "Not recorded"}</Text>
                 </View>
-              </View>
-            </View>
-
-            <View style={styles.vehicleDivider} />
-
-            <View style={styles.vehicleInfoGrid}>
-              <View style={styles.vehicleInfoItem}>
-                <Text style={styles.vehicleInfoLabel}>JC NO.</Text>
-
-                <Text style={styles.vehicleInfoValue}>
-                  {vehicle?.jc_no || "—"}
-                </Text>
-              </View>
-
-              <View style={styles.vehicleInfoItem}>
-                <Text style={styles.vehicleInfoLabel}>REQUISITION</Text>
-
-                <Text style={styles.vehicleInfoValue}>
-                  {requisition?.requisition_no || "—"}
-                </Text>
+                <View style={styles.vehicleInfoItem}>
+                  <Text style={styles.vehicleInfoLabel}>VEHICLE</Text>
+                  <Text style={styles.vehicleInfoValue}>{[vehicle?.model, vehicle?.arena_nexa].filter(Boolean).join(" · ") || "Not recorded"}</Text>
+                </View>
+                <View style={styles.vehicleInfoItem}>
+                  <Text style={styles.vehicleInfoLabel}>JOB CARD NO.</Text>
+                  <Text style={styles.vehicleInfoValue}>{vehicle?.jc_no || "Not recorded"}</Text>
+                </View>
+                <View style={styles.vehicleInfoItem}>
+                  <Text style={styles.vehicleInfoLabel}>REQUISITION NO.</Text>
+                  <Text style={styles.vehicleInfoValue}>{requisition?.requisition_no || "Not recorded"}</Text>
+                </View>
               </View>
             </View>
           </View>
@@ -1703,14 +1694,12 @@ export default function StoreVehicleActionScreen() {
             </View>
           ) : null}
 
-          <View style={styles.currentActionHeading}>
+          {actionMode !== "CREATE_ORDER" && <View style={styles.currentActionHeading}>
             <View>
               <Text style={styles.currentActionEyebrow}>CURRENT ACTION</Text>
 
               <Text style={styles.currentActionTitle}>
-                {actionMode === "CREATE_ORDER"
-                  ? "Part Order Required"
-                  : actionMode === "RECEIVE_PARTS"
+                {actionMode === "RECEIVE_PARTS"
                     ? "Parts Awaiting Receipt"
                     : actionMode === "HAND_OVER"
                       ? "Ready for Floor"
@@ -1719,7 +1708,7 @@ export default function StoreVehicleActionScreen() {
                         : "Review Status"}
               </Text>
             </View>
-          </View>
+          </View>}
 
           {renderActionContent()}
 
@@ -1829,7 +1818,7 @@ export default function StoreVehicleActionScreen() {
 
 
 
-      <CustomPopup popup={popup} onClose={closePopup} />
+      <CustomPopup popup={popup} onClose={() => { closePopup(); if (handoverCompleted.current) goBack(); }} />
     </SafeAreaView>
   );
 }
@@ -1852,6 +1841,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 40,
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
   },
 
   pressed: {
@@ -1893,11 +1885,16 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    minHeight: 76,
+    minHeight: 54,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 5,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
     backgroundColor: COLORS.background,
   },
 
@@ -1922,7 +1919,8 @@ const styles = StyleSheet.create({
   },
 
   headerCopy: {
-    flex: 1,
+    gap: 4,
+    marginBottom: 16,
   },
 
   headerEyebrow: {
@@ -1963,13 +1961,20 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
 
+  heroContent: { position: "relative" },
+  heroPill: { alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  heroPillText: { fontSize: 10, fontWeight: "900", letterSpacing: 0.8, color: COLORS.white },
+  heroHeading: { marginTop: 14, fontSize: 17, lineHeight: 23, fontWeight: "700", color: "rgba(255,255,255,0.92)" },
+  heroCircleTop: { position: "absolute", width: 160, height: 160, borderRadius: 80, top: -70, right: -45, backgroundColor: "rgba(255,255,255,0.08)" },
+  heroCircleBottom: { position: "absolute", width: 110, height: 110, borderRadius: 55, bottom: -65, right: 25, backgroundColor: "rgba(255,255,255,0.06)" },
+
   vehicleCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: COLORS.primary,
     borderRadius: 23,
-    padding: 17,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginBottom: 12,
+    padding: 20,
+    overflow: "hidden",
+    position: "relative",
+    marginBottom: 16,
   },
 
   vehicleTop: {
@@ -1995,10 +2000,12 @@ const styles = StyleSheet.create({
   },
 
   vehicleNumber: {
-    fontSize: 21,
-    lineHeight: 25,
+    marginTop: 6,
+    fontSize: 27,
+    lineHeight: 34,
     fontWeight: "900",
-    color: COLORS.text,
+    color: COLORS.white,
+    flexShrink: 1,
   },
 
   vehicleCustomer: {
@@ -2032,34 +2039,39 @@ const styles = StyleSheet.create({
 
   vehicleDivider: {
     height: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 15,
+    backgroundColor: "rgba(255,255,255,0.24)",
+    marginVertical: 16,
   },
 
   vehicleInfoGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
   },
 
   vehicleInfoItem: {
-    flex: 1,
-    padding: 11,
-    borderRadius: 14,
-    backgroundColor: COLORS.surfaceSoft,
+    flexGrow: 1,
+    flexBasis: 140,
+    minWidth: 0,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.12)",
   },
 
   vehicleInfoLabel: {
-    fontSize: 9,
-    fontWeight: "900",
-    color: COLORS.textMuted,
-    letterSpacing: 0.8,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.85)",
+    letterSpacing: 0.6,
   },
 
   vehicleInfoValue: {
-    marginTop: 4,
-    fontSize: 13,
+    marginTop: 5,
+    fontSize: 14,
+    lineHeight: 21,
     fontWeight: "800",
-    color: COLORS.text,
+    color: COLORS.white,
   },
 
   workflowCard: {
@@ -2271,6 +2283,7 @@ const styles = StyleSheet.create({
   },
 
   actionHeaderCopy: {
+    minWidth: 0,
     flex: 1,
   },
 

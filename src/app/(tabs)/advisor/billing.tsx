@@ -1,7 +1,8 @@
 import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import DateTimeField from "../../../components/inputs/DateTimeField";
-import { parseIndiaLocal } from "../../../lib/date-time";
+import useVisitDateTimeBounds from "../../../components/inputs/useVisitDateTimeBounds";
+import { parseIndiaLocal, type DateTimeBounds } from "../../../lib/date-time";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
 import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
@@ -149,6 +150,7 @@ export default function AdvisorBillingScreen() {
   const requests = useRef(0);
   const selected =
     queue.items.find((item) => item.visit_id === selectedId) || null;
+  const visitDates = useVisitDateTimeBounds(selected?.visit_id);
   const metrics = useMemo(
     () => ({
       total: queue.items.length,
@@ -189,6 +191,7 @@ export default function AdvisorBillingScreen() {
 
   const load = useCallback(async (refresh = false, afterSave = false) => {
     if (busy.current && !afterSave) return;
+    visitDates.reload();
     const request = ++requests.current;
     refresh ? setRefreshing(true) : setLoading(true);
     setError("");
@@ -223,7 +226,7 @@ export default function AdvisorBillingScreen() {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [visitDates.reload]);
   useFocusEffect(
     useCallback(() => {
       void load();
@@ -288,14 +291,18 @@ export default function AdvisorBillingScreen() {
     const liability =
       selected.handoff?.liability_received_at ||
       (liabilityReceived ? parseIndiaInput(liabilityTime) : null);
-    if (!pre)
-      throw new Error(
-        "Confirm that the pre-invoice has been sent and enter its date and time.",
-      );
-    if (liability && new Date(liability).getTime() < new Date(pre).getTime())
-      throw new Error(
-        "Liability received cannot be earlier than pre-invoice sent.",
-      );
+    if (!pre && !liability)
+      throw new Error("Record pre-invoice sent or liability received before saving.");
+    // Recheck editable values at submission, including untouched defaults.
+    if (pre && !selected.handoff?.pre_invoice_sent_at) {
+      const error = visitDates.validate(pre);
+      if (error) throw new Error(error);
+    }
+    if (liability && !selected.handoff?.liability_received_at) {
+      const error = visitDates.validate(liability);
+      if (error) throw new Error(error);
+    }
+
     return {
       p_visit_id: selected.visit_id,
       p_pre_invoice_sent_at: pre,
@@ -354,7 +361,9 @@ export default function AdvisorBillingScreen() {
             selected.job_type === "INSURANCE" &&
             !payload.p_liability_received_at
               ? "Pre-invoice sent is recorded. Return here when liability is received."
-              : "The Advisor requirements are recorded. You can now assign a Billing Executive.",
+              : selected.job_type === "INSURANCE" && !payload.p_pre_invoice_sent_at
+                ? "Liability received is recorded. Record pre-invoice sent before assigning a Billing Executive."
+                : "The Advisor requirements are recorded. You can now assign a Billing Executive.",
         });
       }
       await load(true, true);
@@ -760,8 +769,8 @@ export default function AdvisorBillingScreen() {
               />
               <Text style={[styles.body, styles.grow]}>
                 Paid: verify details and assign. Insurance: record pre-invoice
-                and liability, then assign. Billing records the Bill No.,
-                invoices and payment details.
+                and liability, then assign. Billing records the tax invoice
+                and payment details.
               </Text>
             </View>
           </>
@@ -828,9 +837,8 @@ export default function AdvisorBillingScreen() {
                 </Text>
                 <Text style={styles.title}>Pre-invoice & liability</Text>
                 <Text style={styles.body}>
-                  Record the actual date and time of each event in IST. Save the
-                  pre-invoice step while liability is still awaited. Saved
-                  timestamps remain in history.
+                  Record each step when it happens. You can save either step first.
+                  Both are needed before transfer to Billing.
                 </Text>
                 <Check
                   title="Pre-invoice sent"
@@ -838,12 +846,13 @@ export default function AdvisorBillingScreen() {
                   disabled={disabled || !!selected.handoff?.pre_invoice_sent_at}
                   onPress={() => {
                     setPreSent(!preSent);
-                    if (preSent) setLiabilityReceived(false);
                   }}
                 />
                 {preSent && (
                   <DateField onValidationError={dateValidation.field("Pre-invoice sent date & time")}
                     label="Pre-invoice sent date & time"
+                    bounds={visitDates.bounds()}
+                    error={visitDates.error}
                     value={preTime}
                     onChange={setPreTime}
                     locked={!!selected.handoff?.pre_invoice_sent_at}
@@ -855,7 +864,6 @@ export default function AdvisorBillingScreen() {
                   checked={liabilityReceived}
                   disabled={
                     disabled ||
-                    !preSent ||
                     !!selected.handoff?.liability_received_at
                   }
                   onPress={() => setLiabilityReceived(!liabilityReceived)}
@@ -863,6 +871,8 @@ export default function AdvisorBillingScreen() {
                 {liabilityReceived && (
                   <DateField onValidationError={dateValidation.field("Liability received date & time")}
                     label="Liability received date & time"
+                    bounds={visitDates.bounds()}
+                    error={visitDates.error}
                     value={liabilityTime}
                     onChange={setLiabilityTime}
                     locked={!!selected.handoff?.liability_received_at}
@@ -873,7 +883,7 @@ export default function AdvisorBillingScreen() {
                   secondary
                   title="Save Insurance Progress"
                   onPress={() => void save(false)}
-                  disabled={disabled || !preSent}
+                  disabled={disabled || (!preSent && !liabilityReceived)}
                 />
               </View>
             ) : (
@@ -902,9 +912,8 @@ export default function AdvisorBillingScreen() {
               <Text style={styles.eyebrow}>TRANSFER TO BILLING DEPARTMENT</Text>
               <Text style={styles.title}>Assign Billing Executive</Text>
               <Text style={styles.body}>
-                The Executive will record the internal Bill No., tax invoice
-                number, invoice amounts and the remaining billing and payment
-                details.
+                The Executive will record the tax invoice number, amounts and
+                payment details.
               </Text>
               {!queue.executives.length && (
                 <Text style={styles.body}>
@@ -1080,11 +1089,11 @@ function Check({
     </Pressable>
   );
 }
-function DateField({ label, value, onChange, onValidationError, disabled, locked }: {
- label: string; value: string; onChange: (value: string) => void; onValidationError: (error: string | null) => void; disabled: boolean; locked: boolean;
+function DateField({ label, value, onChange, onValidationError, disabled, locked, bounds, error }: {
+ label: string; value: string; onChange: (value: string) => void; onValidationError: (error: string | null) => void; disabled: boolean; locked: boolean; bounds: DateTimeBounds; error?: string | null;
 }) {
  if (locked) return <View style={styles.dateField}><Text style={styles.label}>{label} · IST</Text><Text style={styles.detailValue}>{value} · saved</Text></View>;
- return <DateTimeField required onValidationError={onValidationError} title={label} label={label} disabled={disabled} maximumDate="now"
+ return <DateTimeField {...bounds} error={error} required onValidationError={onValidationError} title={label} label={label} disabled={disabled} maximumDate="now"
  value={parseIndiaLocal(value.replace(" ", "T"))?.toISOString() || null}
  onChange={next => onChange(next ? indiaInput(next) : "")} />;
 }

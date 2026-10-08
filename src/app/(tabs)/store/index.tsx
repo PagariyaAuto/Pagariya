@@ -1,3 +1,4 @@
+import StoreAssignmentControl from "../../../components/store/StoreAssignmentControl";
 import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
@@ -612,19 +613,18 @@ export default function StoreDashboardScreen() {
           throw new Error("Your session has expired. Please log in again.");
         }
 
-        const [
-          profileResult,
-          requisitionsResult,
-          ordersResult,
-          advisorWorkResult,
-          vehiclesResult,
-        ] = await Promise.all([
-          supabase
-            .from("profiles")
-            .select("id,name,phone,role,is_active")
-            .eq("id", user.id)
-            .single(),
-
+        const profileResult = await supabase.from("profiles").select("id,name,phone,role,is_active").eq("id", user.id).single();
+        if (profileResult.error) throw profileResult.error;
+        const profileData = profileResult.data as Profile | null;
+        if (!profileData?.is_active || !["store_team", "ceo_admin"].includes(profileData.role)) {
+          throw new Error("Your account is not authorized for the Store workspace.");
+        }
+        let vehiclesQuery = supabase.from("vehicles")
+          .select("id,vehicle_no,customer_name,customer_mobile,model,arena_nexa,vehicle_type,jc_no,current_stage,current_status,current_assigned_to,stage_started_at")
+          .eq("current_stage", "STORE").in("current_status", ["PENDING", "IN_PROGRESS"])
+          .order("stage_started_at", { ascending: true });
+        if (profileData.role === "store_team") vehiclesQuery = vehiclesQuery.eq("current_assigned_to", user.id);
+        const [requisitionsResult, ordersResult, advisorWorkResult, vehiclesResult] = await Promise.all([
           supabase
             .from("part_requisitions")
             .select(
@@ -652,20 +652,8 @@ export default function StoreDashboardScreen() {
             )
             .eq("parts_required", true),
 
-          supabase
-            .from("vehicles")
-            .select(
-              "id,vehicle_no,customer_name,customer_mobile,model,arena_nexa,vehicle_type,jc_no,current_stage,current_status,current_assigned_to,stage_started_at",
-            )
-            .eq("current_stage", "STORE")
-            .order("stage_started_at", {
-              ascending: true,
-            }),
+          vehiclesQuery,
         ]);
-
-        if (profileResult.error) {
-          throw profileResult.error;
-        }
 
         if (requisitionsResult.error) {
           throw requisitionsResult.error;
@@ -681,27 +669,6 @@ export default function StoreDashboardScreen() {
 
         if (vehiclesResult.error) {
           throw vehiclesResult.error;
-        }
-
-        const profileData = profileResult.data as Profile | null;
-
-        if (!profileData) {
-          throw new Error("Your user profile could not be loaded.");
-        }
-
-        if (!profileData.is_active) {
-          throw new Error(
-            "Your account is inactive. Please contact the CEO Admin.",
-          );
-        }
-
-        if (
-          profileData.role !== "store_team" &&
-          profileData.role !== "ceo_admin"
-        ) {
-          throw new Error(
-            "This workspace is available only to Store Team and CEO Admin users.",
-          );
         }
 
         const requisitions = (requisitionsResult.data ||
@@ -788,6 +755,8 @@ export default function StoreDashboardScreen() {
         setProfile(profileData);
         setItems(Array.from(queueMap.values()));
       } catch (error: any) {
+        setItems([]);
+        setSelectedItem(null);
         console.error("Store dashboard load error:", error);
 
         showPopup(
@@ -1011,8 +980,9 @@ export default function StoreDashboardScreen() {
             <Text style={styles.heroTitle}>Store Operations</Text>
 
             <Text style={styles.heroDescription}>
-              Manage parts requests, create part orders, receive parts, and
-              prepare vehicles for Floor handover.
+              {profile?.role === "ceo_admin"
+                ? "Manage Store assignments, parts orders, receipts and Floor handover."
+                : "Manage parts orders, receipts and Floor handover for vehicles assigned to you."}
             </Text>
 
             <View style={styles.heroStats}>
@@ -1293,8 +1263,8 @@ export default function StoreDashboardScreen() {
               const hasReceived = !!order?.parts_received_at;
 
               return (
+                <View key={vehicle.id}>
                 <Pressable
-                  key={vehicle.id}
                   onPress={() => openVehicleDetails(item)}
                   style={({ pressed }) => [
                     styles.vehicleCard,
@@ -1476,6 +1446,8 @@ export default function StoreDashboardScreen() {
                     </View>
                   </View>
                 </Pressable>
+                {profile?.role === "ceo_admin" && <StoreAssignmentControl vehicleId={vehicle.id} vehicleNo={vehicle.vehicle_no || "Vehicle"} onAssigned={() => { setSelectedItem(null); void loadData(true); }} />}
+                </View>
               );
             })}
           </View>

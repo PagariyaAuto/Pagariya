@@ -19,7 +19,6 @@ export function IntakeJobTypeSection({ jobType, miType, selectedInsurance, selec
       <Text style={styles.conditionalTitle}>Insurance Type</Text>
       <Text style={styles.conditionalSubtitle}>Select MI or NON-MI and then select the insurance company.</Text>
       <SegmentedTabs options={[{ value: "MI", label: "MI", icon: "business-outline" }, { value: "NON-MI", label: "NON-MI", icon: "business-outline" }]} value={miType} onChange={v => onMiTypeChange(v as MiType)} styles={styles} />
-      <View style={styles.miStatusRow}><Ionicons name="checkmark-circle-outline" size={17} color={colors.success} /><Text style={styles.miStatusText}>{selectedMiMaster?.name ?? miType}</Text></View>
       <View style={styles.insuranceDropdownContainer}>
         <FieldLabel label="Insurance Company" required styles={styles} />
         <Pressable onPress={onOpenInsuranceDropdown} style={({ pressed }) => [styles.dropdownButton, pressed && styles.pressed]}>

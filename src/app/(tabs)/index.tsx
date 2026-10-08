@@ -180,7 +180,7 @@ export default function HomeScreen() {
           </Text>
           <Text style={styles.hint}>
             {isBilling
-              ? "This workspace will handle internal Bill No., tax invoices, amounts and payment details after the Advisor transfers the vehicle."
+              ? "This workspace will handle tax invoices, amounts and payment details after the Advisor transfers the vehicle."
               : "You can view your account information from My Profile."}
           </Text>
         </View>

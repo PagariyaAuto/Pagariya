@@ -1,3 +1,4 @@
+import useVisitDateTimeBounds from "../../../components/inputs/useVisitDateTimeBounds";
 import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import BackButton from "../../../components/navigation/BackButton";
@@ -7,7 +8,7 @@ import DateValueField from "../../../components/inputs/DateValueField";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, StatusBar, StyleSheet, Text, View, Keyboard, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
@@ -52,6 +53,8 @@ type Profile = {
 
 type WorkType = { id: string; code: string; name: string; is_active: boolean };
 
+type SurveyField = "amount" | "receipt" | "work" | "surveyDate" | "approvalDate" | "photo";
+
 type PopupType = "success" | "error" | "warning" | "info";
 
 type PopupState = {
@@ -59,6 +62,7 @@ type PopupState = {
   type: PopupType;
   title: string;
   message: string;
+  vehicleNo?: string;
   primaryText?: string;
   secondaryText?: string;
   onPrimary?: () => void;
@@ -77,12 +81,12 @@ function formatIndiaDateTime(date: Date) {
     return new Intl.DateTimeFormat("en-IN", {
       timeZone: "Asia/Kolkata",
       day: "2-digit",
-      month: "2-digit",
+      month: "short",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
       hour12: true,
-    }).format(date);
+    }).format(date).replace(/\b(am|pm)\b/gi, (value) => value.toUpperCase());
   } catch {
     return date.toLocaleString();
   }
@@ -188,6 +192,7 @@ function CustomPopup({
               <Text style={popupStyles.iconText}>{icon}</Text>
             </View>
 
+            {!!popup.vehicleNo && <Text style={popupStyles.vehicleNo}>{popup.vehicleNo}</Text>}
             <Text style={popupStyles.title}>{popup.title}</Text>
 
             <Text style={popupStyles.message}>{popup.message}</Text>
@@ -240,6 +245,32 @@ function CustomPopup({
 
 export default function AdvisorSurveyFormScreen() {
   const dateValidation = useDateTimeValidation();
+  const { width } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView>(null);
+  const viewportRef = useRef<View>(null);
+  const scrollOffset = useRef(0);
+  const fieldViews = useRef<Partial<Record<SurveyField, View | null>>>({});
+  const pendingErrorField = useRef<SurveyField | null>(null);
+  const dateErrors = useRef<Partial<Record<SurveyField, string>>>({});
+  const [fieldError, setFieldError] = useState<{ field: SurveyField; message: string } | null>(null);
+  const markInvalid = (field: SurveyField, message: string) => {
+    pendingErrorField.current = field;
+    setFieldError({ field, message });
+    return message;
+  };
+  const clearFieldError = (field: SurveyField) => {
+    setFieldError(current => current?.field === field ? null : current);
+  };
+  const recordDateError = (key: string, field: SurveyField, error: string | null) => {
+    dateValidation.field(key)(error);
+    if (error) dateErrors.current[field] = error;
+    else { delete dateErrors.current[field]; clearFieldError(field); }
+  };
+  const fieldProps = (field: SurveyField) => ({
+    ref: (view: View | null) => { fieldViews.current[field] = view; },
+    collapsable: false,
+    style: fieldError?.field === field ? screenStyles.invalidField : undefined,
+  });
   const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
   const handleNavigationBack = () => {
     if (saving) return;
@@ -280,6 +311,7 @@ export default function AdvisorSurveyFormScreen() {
   const submittingRef = useRef(false);
   const [readinessError, setReadinessError] = useState("");
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const visitDates = useVisitDateTimeBounds(visitId, refreshVersion);
 
   const [popup, setPopup] = useState<PopupState>(INITIAL_POPUP);
 
@@ -345,8 +377,24 @@ export default function AdvisorSurveyFormScreen() {
   const [assessmentPhoto, setAssessmentPhoto] =
     useState<ImagePicker.ImagePickerAsset | null>(null);
 
+  useEffect(() => { if (assessmentPhoto) clearFieldError("photo"); }, [assessmentPhoto]);
+
   const closePopup = () => {
     setPopup(INITIAL_POPUP);
+    const field = pendingErrorField.current;
+    pendingErrorField.current = null;
+    if (!field) return;
+    Keyboard.dismiss();
+    requestAnimationFrame(() => {
+      const target = fieldViews.current[field];
+      const scroll = scrollRef.current;
+      if (!target || !scroll) return;
+      viewportRef.current?.measureInWindow((_x, top) => {
+        target.measureInWindow((_fieldX, fieldTop) => {
+          scrollRef.current?.scrollTo({ y: Math.max(0, scrollOffset.current + fieldTop - top - 20), animated: true });
+        });
+      });
+    });
   };
 
   const showPopup = (
@@ -365,6 +413,7 @@ export default function AdvisorSurveyFormScreen() {
       type,
       title,
       message,
+      vehicleNo: type === "success" ? vehicle?.vehicle_no : undefined,
       primaryText: options?.primaryText || "OK",
       secondaryText: options?.secondaryText,
       onPrimary: options?.onPrimary,
@@ -589,6 +638,16 @@ export default function AdvisorSurveyFormScreen() {
   const isPaid = insuranceType === "PAID";
   const isInsurance = insuranceType === "INSURANCE";
 
+  const visibleSections = [
+    "details",
+    ...(isPaid ? ["payment"] : []),
+    "remarks",
+    "dateTime",
+    "approval",
+  ];
+  const sectionNumber = (section: "details" | "payment" | "remarks" | "dateTime" | "approval") =>
+    String(visibleSections.indexOf(section) + 1).padStart(2, "0");
+
   useEffect(() => {
     if (!isInsurance) return;
     const stripping = workTypes.find((item) => item.code === "STRIPPING");
@@ -621,26 +680,33 @@ export default function AdvisorSurveyFormScreen() {
 
   const validateForm = () => {
     const dateError = dateValidation.getError();
-    if (dateError) return dateError;
+    if (dateError) {
+      const field = (Object.keys(dateErrors.current) as SurveyField[]).find(key => dateErrors.current[key] === dateError) || "surveyDate";
+      return markInvalid(field, dateError);
+    }
+    const surveyDateError = visitDates.validate(surveyCompletedAt);
+    if (surveyDateError) return markInvalid("surveyDate", surveyDateError);
     if (approvalStatus === "RECEIVED") {
+      const approvalDateError = visitDates.validate(approvalReceivedAt);
+      if (approvalDateError) return markInvalid("approvalDate", approvalDateError);
       if (workTypesLoading)
-        return "Please wait for Approved Floor Work to load.";
-      if (workTypesError) return workTypesError;
+        return markInvalid("work", "Please wait for approved work to load.");
+      if (workTypesError) return markInvalid("work", workTypesError);
       const stripping = workTypes.find((item) => item.code === "STRIPPING");
       if (
         isInsurance &&
         (!stripping || !selectedWorkTypeIds.includes(stripping.id))
       ) {
-        return "STRIPPING must be included in Approved Floor Work.";
+        return markInvalid("work", "Stripping is required for Insurance jobs.");
       }
       if (!selectedWorkTypeIds.length)
-        return "Select at least one approved Floor work type.";
+        return markInvalid("work", "Select at least one approved work type.");
       if (
         selectedWorkTypeIds.some(
           (id) => !workTypes.some((item) => item.id === id && item.is_active),
         )
       )
-        return "Select valid active Approved Floor Work.";
+        return markInvalid("work", "Choose from the available approved work types.");
     }
     if (!vehicle) {
       return "Vehicle information is not available.";
@@ -666,21 +732,21 @@ export default function AdvisorSurveyFormScreen() {
       const cleanedAmount = paidAmount.trim();
 
       if (!cleanedAmount) {
-        return "Enter the Paid Amount.";
+        return markInvalid("amount", "Enter the Paid Amount.");
       }
 
       const amount = Number(cleanedAmount);
 
       if (!Number.isFinite(amount)) {
-        return "Paid Amount must be a valid number.";
+        return markInvalid("amount", "Paid Amount must be a valid number.");
       }
 
       if (amount < 0) {
-        return "Paid Amount cannot be negative.";
+        return markInvalid("amount", "Paid Amount cannot be negative.");
       }
 
       if (!receiptReferenceNo.trim()) {
-        return "Enter the Receipt / Reference No.";
+        return markInvalid("receipt", "Enter the Receipt / Reference No.");
       }
     }
 
@@ -777,6 +843,8 @@ export default function AdvisorSurveyFormScreen() {
 
   const completeSurvey = async () => {
     if (submittingRef.current || loading || saving || readinessError) return;
+    pendingErrorField.current = null;
+    setFieldError(null);
     const validationError = validateForm();
 
     if (validationError) {
@@ -806,7 +874,7 @@ export default function AdvisorSurveyFormScreen() {
       showPopup(
         "warning",
         "Assessment Sheet Required",
-        "Please upload the assessment sheet photo when Approval is marked as Received.",
+        markInvalid("photo", "Add the assessment sheet photo to record approval."),
       );
       return;
     }
@@ -883,16 +951,23 @@ export default function AdvisorSurveyFormScreen() {
         ? `Survey #${result.survey_no}`
         : "Survey";
 
+      const goToDashboard = () => {
+        closePopup();
+        router.replace("/(tabs)/advisor");
+      };
+
       if (approvalStatus === "RECEIVED") {
         showPopup(
           "success",
           "Survey & Approval completed",
-          `${surveyNumber} has been completed. Approval, assessment sheet and Approved Floor Work scope were saved. The vehicle has moved to Advisor Work.`,
+          `${surveyNumber} saved. Approval is recorded, and this vehicle is ready for Advisor Work.`,
           {
-            primaryText: "Go to Advisor Work",
+            secondaryText: "Dashboard",
+            onSecondary: goToDashboard,
+            primaryText: "Advisor Work",
             onPrimary: () => {
               closePopup();
-              router.replace("/(tabs)/advisor" as any);
+              router.replace("/(tabs)/advisor/work");
             },
           },
         );
@@ -900,12 +975,14 @@ export default function AdvisorSurveyFormScreen() {
         showPopup(
           "success",
           "Survey completed",
-          `${surveyNumber} has been completed successfully. The vehicle has been moved to Pending Approval.`,
+          `${surveyNumber} saved. This vehicle is now waiting for approval.`,
           {
-            primaryText: "Go to Approval",
+            secondaryText: "Dashboard",
+            onSecondary: goToDashboard,
+            primaryText: "Approval",
             onPrimary: () => {
               closePopup();
-              router.replace("/(tabs)/advisor" as any);
+              router.replace("/(tabs)/advisor/approval_vehicles");
             },
           },
         );
@@ -1008,7 +1085,11 @@ export default function AdvisorSurveyFormScreen() {
         style={screenStyles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        <View ref={viewportRef} collapsable={false} style={screenStyles.flex}>
         <ScrollView
+          ref={scrollRef}
+          onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
@@ -1078,12 +1159,11 @@ export default function AdvisorSurveyFormScreen() {
               <Text style={screenStyles.statusTitle}>Pending Survey</Text>
 
               <Text style={screenStyles.statusText}>
-                This vehicle is waiting for the assigned Advisor to complete the
-                survey.
+                Complete the survey to move this vehicle forward.
               </Text>
 
               <Text style={screenStyles.statusMeta}>
-                Pending since: {pendingSince}
+                Waiting since: {pendingSince}
               </Text>
             </View>
           </View>
@@ -1091,8 +1171,8 @@ export default function AdvisorSurveyFormScreen() {
           {/* CUSTOMER DETAILS */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Customer Details</Text>
-            <View style={screenStyles.infoGrid}>
-              <View style={screenStyles.infoItem}>
+            <View style={[screenStyles.infoGrid, width >= 600 && screenStyles.infoGridWide]}>
+              <View style={[screenStyles.infoItem, width >= 600 && screenStyles.infoItemWide]}>
                 <Text style={screenStyles.infoLabel}>Customer name</Text>
                 <Text selectable style={screenStyles.infoValue}>
                   {contactValue(vehicleIntake?.customer_name) ||
@@ -1100,7 +1180,7 @@ export default function AdvisorSurveyFormScreen() {
                     "Not recorded"}
                 </Text>
               </View>
-              <View style={screenStyles.infoItem}>
+              <View style={[screenStyles.infoItem, width >= 600 && screenStyles.infoItemWide]}>
                 <Text style={screenStyles.infoLabel}>Mobile number</Text>
                 <Text selectable style={screenStyles.infoValue}>
                   {contactValue(vehicleIntake?.customer_mobile) ||
@@ -1117,13 +1197,13 @@ export default function AdvisorSurveyFormScreen() {
           {/* SURVEY SUMMARY */}
           <View style={styles.card}>
             <SectionHeading
-              number="01"
+              number={sectionNumber("details")}
               title="Survey Details"
               subtitle="Information already recorded during Vehicle Intake"
             />
 
-            <View style={screenStyles.infoGrid}>
-              <View style={screenStyles.infoItem}>
+            <View style={[screenStyles.infoGrid, width >= 600 && screenStyles.infoGridWide]}>
+              <View style={[screenStyles.infoItem, width >= 600 && screenStyles.infoItemWide]}>
                 <Text style={screenStyles.infoLabel}>Insurance / Job Type</Text>
 
                 <View
@@ -1147,7 +1227,7 @@ export default function AdvisorSurveyFormScreen() {
                 </View>
               </View>
 
-              <View style={screenStyles.infoItem}>
+              <View style={[screenStyles.infoItem, width >= 600 && screenStyles.infoItemWide]}>
                 <Text style={screenStyles.infoLabel}>Job Card No.</Text>
 
                 <Text style={screenStyles.infoValue}>
@@ -1155,7 +1235,7 @@ export default function AdvisorSurveyFormScreen() {
                 </Text>
               </View>
 
-              <View style={screenStyles.infoItem}>
+              <View style={[screenStyles.infoItem, width >= 600 && screenStyles.infoItemWide]}>
                 <Text style={screenStyles.infoLabel}>Vehicle Type</Text>
 
                 <Text style={screenStyles.infoValue}>
@@ -1165,7 +1245,7 @@ export default function AdvisorSurveyFormScreen() {
                 </Text>
               </View>
 
-              <View style={screenStyles.infoItem}>
+              <View style={[screenStyles.infoItem, width >= 600 && screenStyles.infoItemWide]}>
                 <Text style={screenStyles.infoLabel}>Arena / Nexa</Text>
 
                 <Text style={screenStyles.infoValue}>
@@ -1181,7 +1261,7 @@ export default function AdvisorSurveyFormScreen() {
           {isPaid && (
             <View style={styles.card}>
               <SectionHeading
-                number="02"
+                number={sectionNumber("payment")}
                 title="Paid Survey Details"
                 subtitle="Record the payment collected for this vehicle"
               />
@@ -1190,12 +1270,13 @@ export default function AdvisorSurveyFormScreen() {
                 Paid Amount <Text style={styles.required}>*</Text>
               </Text>
 
-              <View style={screenStyles.amountInputWrap}>
+              <View {...fieldProps("amount")}><View style={screenStyles.amountInputWrap}>
                 <Text style={screenStyles.currencySymbol}>₹</Text>
 
                 <TextInput
                   value={paidAmount}
                   onChangeText={(value) => {
+                    clearFieldError("amount");
                     const cleaned = value.replace(/[^0-9.]/g, "");
 
                     const parts = cleaned.split(".");
@@ -1209,26 +1290,32 @@ export default function AdvisorSurveyFormScreen() {
                   placeholder="Enter paid amount"
                   placeholderTextColor={colors.textLight}
                   style={[styles.input, screenStyles.amountInput]}
+                  accessibilityLabel="Paid Amount"
+                  aria-invalid={fieldError?.field === "amount"}
                   keyboardType={
                     Platform.OS === "ios" ? "decimal-pad" : "numeric"
                   }
                   returnKeyType="next"
                 />
-              </View>
+              </View></View>
+              {fieldError?.field === "amount" && <Text accessibilityRole="alert" style={screenStyles.fieldError}>{fieldError.message}</Text>}
 
               <Text style={styles.label}>
                 Receipt / Reference No. <Text style={styles.required}>*</Text>
               </Text>
 
-              <TextInput
+              <View {...fieldProps("receipt")}><TextInput
+                accessibilityLabel="Receipt / Reference No."
+                aria-invalid={fieldError?.field === "receipt"}
                 value={receiptReferenceNo}
-                onChangeText={setReceiptReferenceNo}
+                onChangeText={value => { clearFieldError("receipt"); setReceiptReferenceNo(value); }}
                 placeholder="Enter receipt or reference number"
                 placeholderTextColor={colors.textLight}
                 style={styles.input}
                 autoCapitalize="characters"
                 returnKeyType="next"
-              />
+              /></View>
+              {fieldError?.field === "receipt" && <Text accessibilityRole="alert" style={screenStyles.fieldError}>{fieldError.message}</Text>}
 
               <View style={screenStyles.requiredHint}>
                 <Text style={screenStyles.requiredHintIcon}>i</Text>
@@ -1241,39 +1328,10 @@ export default function AdvisorSurveyFormScreen() {
             </View>
           )}
 
-          {/* INSURANCE DETAILS */}
-          {isInsurance && (
-            <View style={styles.card}>
-              <SectionHeading
-                number="02"
-                title="Insurance Survey"
-                subtitle="Complete the survey without recording payment"
-              />
-
-              <View style={screenStyles.insuranceInfoBox}>
-                <View style={screenStyles.insuranceInfoIcon}>
-                  <Text style={screenStyles.insuranceInfoIconText}>🛡</Text>
-                </View>
-
-                <View style={screenStyles.insuranceInfoCopy}>
-                  <Text style={screenStyles.insuranceInfoTitle}>
-                    Insurance vehicle
-                  </Text>
-
-                  <Text style={screenStyles.insuranceInfoText}>
-                    Payment fields are not required at the Survey stage. Claim
-                    and approval information will be handled through the
-                    Insurance workflow.
-                  </Text>
-                </View>
-              </View>
-            </View>
-          )}
-
           {/* REMARKS */}
           <View style={styles.card}>
             <SectionHeading
-              number="03"
+              number={sectionNumber("remarks")}
               title="Advisor Remarks"
               subtitle="Add any relevant observations before completing the survey"
             />
@@ -1297,32 +1355,26 @@ export default function AdvisorSurveyFormScreen() {
           {/* SURVEY DATE & TIME */}
           <View style={styles.card}>
             <SectionHeading
-              number="04"
+              number={sectionNumber("dateTime")}
               title="Survey Date & Time"
               subtitle="Enter the actual date and time when the survey was completed"
             />
 
-            <DateValueField onValidationError={dateValidation.field("Survey Completion Date & Time")}
+            <View {...fieldProps("surveyDate")}><DateValueField {...visitDates.bounds()} error={visitDates.error} onValidationError={error => recordDateError("Survey Completion Date & Time", "surveyDate", error)}
  disabled={saving} active={!popup.visible}
-              label="Survey Completion Date & Time"
+              embedded
+              label="Date & time"
               value={surveyCompletedAt}
               onChange={setSurveyCompletedAt}
-              description="This is the Advisor-entered action timestamp. The system also records the actual submission time automatically."
-            />
+            /></View>
+            {fieldError?.field === "surveyDate" && <Text accessibilityRole="alert" style={screenStyles.fieldError}>{fieldError.message}</Text>}
 
-            <View style={screenStyles.securityNote}>
-              <Text style={screenStyles.securityNoteIcon}>🔒</Text>
-              <Text style={screenStyles.securityNoteText}>
-                The database verifies your active Advisor role, assignment and
-                current Pending Survey stage before completing this action.
-              </Text>
-            </View>
           </View>
 
           {/* APPROVAL AT SURVEY */}
           <View style={styles.card}>
             <SectionHeading
-              number="05"
+              number={sectionNumber("approval")}
               title="Approval"
               subtitle="Sometimes approval is received during the survey itself"
             />
@@ -1333,7 +1385,7 @@ export default function AdvisorSurveyFormScreen() {
 
             <View style={screenStyles.approvalOptions}>
               <Pressable
-                onPress={() => setApprovalStatus("PENDING")}
+                onPress={() => { setFieldError(null); setApprovalStatus("PENDING"); }}
                 disabled={saving}
                 style={[
                   screenStyles.approvalOption,
@@ -1352,16 +1404,16 @@ export default function AdvisorSurveyFormScreen() {
                   )}
                 </View>
                 <View style={screenStyles.approvalOptionCopy}>
-                  <Text style={screenStyles.approvalOptionTitle}>Pending</Text>
+                  <Text style={screenStyles.approvalOptionTitle}>Approval pending</Text>
                   <Text style={screenStyles.approvalOptionText}>
-                    Vehicle will move to Pending Approval after survey
-                    completion.
+                    After saving, this vehicle will wait for approval.
                   </Text>
                 </View>
               </Pressable>
 
               <Pressable
                 onPress={() => {
+                  setFieldError(null);
                   setApprovalStatus("RECEIVED");
                   setApprovalReceivedAt(new Date());
                 }}
@@ -1383,10 +1435,9 @@ export default function AdvisorSurveyFormScreen() {
                   )}
                 </View>
                 <View style={screenStyles.approvalOptionCopy}>
-                  <Text style={screenStyles.approvalOptionTitle}>Received</Text>
+                  <Text style={screenStyles.approvalOptionTitle}>Approval received</Text>
                   <Text style={screenStyles.approvalOptionText}>
-                    Vehicle will move to Advisor Work after the assessment sheet
-                    and Approved Floor Work scope are saved.
+                    Select the approved work and add the assessment sheet to continue to Advisor Work.
                   </Text>
                 </View>
               </Pressable>
@@ -1394,7 +1445,7 @@ export default function AdvisorSurveyFormScreen() {
 
             {approvalStatus === "RECEIVED" && (
               <View style={screenStyles.receivedSection}>
-                <Text style={styles.label}>
+                <View {...fieldProps("work")}><Text style={styles.label}>
                   Approved Floor Work <Text style={styles.required}>*</Text>
                 </Text>
                 <Text style={screenStyles.approvalOptionText}>
@@ -1447,13 +1498,14 @@ export default function AdvisorSurveyFormScreen() {
                           checked: selected,
                           disabled: saving || required,
                         }}
-                        onPress={() =>
+                        onPress={() => {
+                          clearFieldError("work");
                           setSelectedWorkTypeIds((previous) =>
                             previous.includes(item.id)
                               ? previous.filter((id) => id !== item.id)
                               : [...previous, item.id],
-                          )
-                        }
+                          );
+                        }}
                         style={[
                           screenStyles.approvalOption,
                           screenStyles.workTypeOption,
@@ -1486,15 +1538,18 @@ export default function AdvisorSurveyFormScreen() {
                     );
                   })
                 )}
-                <DateValueField onValidationError={dateValidation.field("Approval Received Date & Time")}
+                </View>
+                {fieldError?.field === "work" && <Text accessibilityRole="alert" style={screenStyles.fieldError}>{fieldError.message}</Text>}
+                <View {...fieldProps("approvalDate")}><DateValueField {...visitDates.bounds()} error={visitDates.error} onValidationError={error => recordDateError("Approval Received Date & Time", "approvalDate", error)}
  disabled={saving} active={!popup.visible}
                   label="Approval Received Date & Time"
                   value={approvalReceivedAt}
                   onChange={setApprovalReceivedAt}
                   description="Enter the actual date and time when approval was received."
-                />
+                /></View>
+                {fieldError?.field === "approvalDate" && <Text accessibilityRole="alert" style={screenStyles.fieldError}>{fieldError.message}</Text>}
 
-                <Text style={styles.label}>
+                <View {...fieldProps("photo")}><Text style={styles.label}>
                   Assessment Sheet Photo <Text style={styles.required}>*</Text>
                 </Text>
 
@@ -1557,7 +1612,8 @@ export default function AdvisorSurveyFormScreen() {
                     <Text style={screenStyles.photoButtonIcon}>🖼</Text>
                     <Text style={screenStyles.photoButtonText}>Gallery</Text>
                   </Pressable>
-                </View>
+                </View></View>
+                {fieldError?.field === "photo" && <Text accessibilityRole="alert" style={screenStyles.fieldError}>{fieldError.message}</Text>}
               </View>
             )}
           </View>
@@ -1621,6 +1677,7 @@ export default function AdvisorSurveyFormScreen() {
 
           <Text style={styles.footer}>PAGARIYA AUTO • ADVISOR WORKSPACE</Text>
         </ScrollView>
+        </View>
       </KeyboardAvoidingView>
 
       <CustomPopup popup={popup} onClose={closePopup} />
@@ -1643,9 +1700,9 @@ const screenStyles = StyleSheet.create({
     marginBottom: 16,
     padding: 16,
     borderRadius: 18,
-    backgroundColor: "#FFF8E8",
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: "#F3D79A",
+    borderColor: colors.border,
   },
 
   statusIcon: {
@@ -1654,12 +1711,12 @@ const screenStyles = StyleSheet.create({
     borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F4B740",
+    backgroundColor: colors.background,
     marginRight: 12,
   },
 
   statusIconText: {
-    color: "#FFFFFF",
+    color: colors.textSecondary,
     fontSize: 19,
     fontWeight: "800",
   },
@@ -1671,22 +1728,27 @@ const screenStyles = StyleSheet.create({
   statusTitle: {
     fontSize: 15,
     fontWeight: "800",
-    color: "#7A5200",
+    color: colors.text,
     marginBottom: 4,
   },
 
   statusText: {
     fontSize: 13,
     lineHeight: 19,
-    color: "#6B5A35",
+    color: colors.textSecondary,
   },
 
   statusMeta: {
     marginTop: 7,
     fontSize: 12,
     fontWeight: "700",
-    color: "#8A691E",
+    color: colors.textSecondary,
   },
+
+  invalidField: { borderWidth: 2, borderColor: colors.primary, borderRadius: 13, padding: 6 },
+  fieldError: { color: colors.primaryDark, fontSize: 13, lineHeight: 19, marginTop: 6 },
+  infoGridWide: { flexDirection: "row", flexWrap: "wrap" },
+  infoItemWide: { flexBasis: "45%", flexGrow: 1 },
 
   infoGrid: {
     gap: 12,
@@ -2085,7 +2147,7 @@ const screenStyles = StyleSheet.create({
   iosConfirmButton: {
     minHeight: 50,
     borderRadius: 14,
-    backgroundColor: "#1F5EFF",
+    backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 10,
@@ -2102,7 +2164,7 @@ const screenStyles = StyleSheet.create({
   },
 
   inspectionNotice: {
-    backgroundColor: "#EEF7F1",
+    backgroundColor: colors.background,
     borderRadius: 12,
     padding: 14,
     marginVertical: 12,
@@ -2118,7 +2180,7 @@ const screenStyles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  workCheckboxSelected: { backgroundColor: "#1F5EFF", borderColor: "#1F5EFF" },
+  workCheckboxSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
   workCheckmark: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
 
   approvalOption: {
@@ -2132,8 +2194,8 @@ const screenStyles = StyleSheet.create({
   },
 
   approvalOptionSelected: {
-    borderColor: "#1F5EFF",
-    backgroundColor: "#F3F7FF",
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryLight,
   },
 
   radio: {
@@ -2149,14 +2211,14 @@ const screenStyles = StyleSheet.create({
   },
 
   radioSelected: {
-    borderColor: "#1F5EFF",
+    borderColor: colors.primary,
   },
 
   radioDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: "#1F5EFF",
+    backgroundColor: colors.primary,
   },
 
   approvalOptionCopy: {
@@ -2359,8 +2421,11 @@ const popupStyles = StyleSheet.create({
     color: "#5D6878",
   },
 
+  vehicleNo: { color: colors.textSecondary, fontSize: 13, fontWeight: "700", marginBottom: 8 },
+
   actions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "flex-end",
     alignItems: "center",
     marginTop: 22,
@@ -2368,10 +2433,12 @@ const popupStyles = StyleSheet.create({
   },
 
   primaryButton: {
+    flexGrow: 1,
+    flexBasis: 120,
     minHeight: 46,
     paddingHorizontal: 18,
     borderRadius: 13,
-    backgroundColor: "#1F5EFF",
+    backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2383,16 +2450,20 @@ const popupStyles = StyleSheet.create({
   },
 
   secondaryButton: {
+    flexGrow: 1,
+    flexBasis: 120,
+    borderWidth: 1,
+    borderColor: colors.primary,
     minHeight: 46,
     paddingHorizontal: 16,
     borderRadius: 13,
-    backgroundColor: "#F1F4F8",
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
 
   secondaryButtonText: {
-    color: "#465365",
+    color: colors.primaryDark,
     fontSize: 14,
     fontWeight: "700",
   },

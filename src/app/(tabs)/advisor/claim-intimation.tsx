@@ -1,4 +1,4 @@
-import { TextInput } from "../../../components/inputs/KeyboardAware";
+import { ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
 import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
@@ -328,6 +328,7 @@ export default function ClaimIntimationScreen() {
           <BrandPill />
         </View>
         <FlatList
+          renderScrollComponent={props => <ScrollView {...props} />}
           data={visible}
           keyExtractor={(item) => item.visit.id}
           keyboardShouldPersistTaps="always"

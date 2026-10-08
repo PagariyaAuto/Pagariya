@@ -837,6 +837,8 @@ export default function FinalInspectionManagementScreen() {
       >
         <SafeAreaView style={styles.overlay}>
           <View style={styles.modal}>
+            <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="always" nestedScrollEnabled>
+
             <Text style={styles.modalTitle}>Assign Final Inspector</Text>
 
             <Text style={styles.modalVehicle}>
@@ -951,6 +953,7 @@ export default function FinalInspectionManagementScreen() {
             >
               <Text style={styles.secondaryButtonText}>Cancel</Text>
             </TouchableOpacity>
+          </ScrollView>
           </View>
         </SafeAreaView>
       </Modal>

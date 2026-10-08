@@ -1,3 +1,4 @@
+import useVisitDateTimeBounds from "../../../components/inputs/useVisitDateTimeBounds";
 import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import BackButton from "../../../components/navigation/BackButton";
@@ -175,6 +176,7 @@ export default function ApprovalFormScreen() {
   const [saving, setSaving] = useState(false);
 
   const submittingRef = useRef(false);
+  const visitDates = useVisitDateTimeBounds(visitId);
 
   const [readinessError, setReadinessError] = useState("");
 
@@ -247,6 +249,7 @@ export default function ApprovalFormScreen() {
   }, []);
 
   const loadData = useCallback(async () => {
+    visitDates.reload();
     if (!visitId || !vehicleId) {
       setLoading(false);
 
@@ -412,7 +415,7 @@ export default function ApprovalFormScreen() {
     } finally {
       setLoading(false);
     }
-  }, [visitId, vehicleId, showPopup]);
+  }, [visitId, vehicleId, showPopup, visitDates.reload]);
 
   useEffect(() => {
     loadData();
@@ -601,6 +604,8 @@ export default function ApprovalFormScreen() {
   const validateBeforeSubmit = () => {
     const dateError = dateValidation.getError();
     if (dateError) { showPopup("warning", "Check date & time", dateError); return false; }
+    const rangeError = visitDates.validate(decisionAt);
+    if (rangeError) { showPopup("warning", "Check date & time", rangeError); return false; }
     if (!visitId) {
       showPopup("error", "Missing Visit", "Visit information is missing.");
 
@@ -1240,7 +1245,7 @@ export default function ApprovalFormScreen() {
 
           {/* DATE / TIME */}
 
-          <DateValueField onValidationError={dateValidation.field("Approval Date & Time")} title="Decision Date & Time" label="Approval Date & Time"
+          <DateValueField {...visitDates.bounds()} error={visitDates.error} onValidationError={dateValidation.field("Approval Date & Time")} title="Decision Date & Time" label="Approval Date & Time"
  description="Enter the actual date and time when the approval decision was received."
  value={decisionAt} onChange={setDecisionAt} maximumDate="now"
  disabled={saving} active={!popup.visible && !showConfirmation} />

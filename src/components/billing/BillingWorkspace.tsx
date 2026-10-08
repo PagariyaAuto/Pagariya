@@ -1,8 +1,10 @@
+import useVisitDateTimeBounds from "../inputs/useVisitDateTimeBounds";
 import { Modal, ScrollView, TextInput } from "../inputs/KeyboardAware";
 import useDateTimeValidation from "../inputs/useDateTimeValidation";
 import DateTimeField from "../inputs/DateTimeField";
-import { parseIndiaLocal } from "../../lib/date-time";
+import { parseIndiaLocal, type DateTimeBounds } from "../../lib/date-time";
 import BackButton from "../navigation/BackButton";
+import BrandPill from "../navigation/BrandPill";
 import { returnToRoute, useHardwareBack, singleParam } from "../../lib/back-navigation";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Crypto from "expo-crypto";
@@ -43,7 +45,6 @@ type Vehicle = {
   amount_due: number | string | null;
   payments: Payment[];
   billing: {
-    bill_no: string | null;
     tax_invoice_no: string | null;
     invoice_amount: number | string | null;
     liability_amount: number | string | null;
@@ -135,7 +136,6 @@ export default function BillingWorkspace({
   const [confirmation, setConfirmation] = useState<
     "COMPLETE" | "PAYMENT" | null
   >(null);
-  const [bill, setBill] = useState("");
   const [invoice, setInvoice] = useState("");
   const [invoiceAmount, setInvoiceAmount] = useState("");
   const [liability, setLiability] = useState("");
@@ -155,10 +155,12 @@ export default function BillingWorkspace({
     payload: Record<string, unknown>;
   } | null>(null);
   const selected = items.find((item) => item.visit_id === visitId);
+  const visitDates = useVisitDateTimeBounds(selected?.visit_id);
   const disabled = saving || loading || refreshing;
   const detail = visitId !== undefined;
 
   const load = useCallback(async (refresh = false) => {
+    visitDates.reload();
     const id = ++request.current;
     refresh ? setRefreshing(true) : setLoading(true);
     setError("");
@@ -183,7 +185,7 @@ export default function BillingWorkspace({
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [visitDates.reload]);
   useFocusEffect(
     useCallback(() => {
       void load();
@@ -194,7 +196,6 @@ export default function BillingWorkspace({
   );
   useEffect(() => {
     if (!selected) return;
-    setBill(selected.billing.bill_no || "");
     setInvoice(selected.billing.tax_invoice_no || "");
     setInvoiceAmount(selected.billing.invoice_amount?.toString() || "");
     setLiability(selected.billing.liability_amount?.toString() || "");
@@ -253,17 +254,24 @@ export default function BillingWorkspace({
   const saveInvoice = () =>
     run(async () => {
       if (!selected) throw new Error("Select a vehicle.");
+      if (generated && !selected.generated_at) {
+        const error = visitDates.validate(parseTime(generatedTime));
+        if (error) throw new Error(error);
+      }
+      if (sent && !selected.sent_at) {
+        const error = visitDates.validate(parseTime(sentTime));
+        if (error) throw new Error(error);
+      }
       const total = amount(invoiceAmount);
       const insuranceLiability =
         selected.job_type === "INSURANCE" ? amount(liability) : null;
-      if (generated && (!bill.trim() || !invoice.trim()))
-        throw new Error("Enter the internal Bill No. and tax invoice number.");
+      if (generated && !invoice.trim())
+        throw new Error("Enter the tax invoice number.");
       const { data, error: rpcError } = await supabase.rpc(
         "new_workflow_save_billing_invoice",
         {
           p_visit_id: selected.visit_id,
           p_data: {
-            bill_no: bill.trim() || null,
             tax_invoice_no: invoice.trim() || null,
             invoice_amount: total,
             liability_amount: insuranceLiability,
@@ -307,6 +315,8 @@ export default function BillingWorkspace({
         if (paid <= 0 || paid > Number(selected.amount_due))
           throw new Error("Enter an amount within the remaining balance.");
         const occurred = parseTime(paymentTime);
+        const rangeError = visitDates.validate(occurred);
+        if (rangeError) throw new Error(rangeError);
         if (paymentMode === "ONLINE" && (!utr.trim() || !photo))
           throw new Error("Online payment requires a UTR and payment proof.");
         let proofPath: string | null = null;
@@ -423,10 +433,16 @@ export default function BillingWorkspace({
           />
         }
       >
+        <View style={styles.navigationRow}>
+          {!dashboard && <BackButton disabled={saving} onPress={handleNavigationBack} accessibilityLabel={detail ? "Back to Billing Queue" : "Back to Billing Dashboard"} />}
+          <View style={styles.grow} />
+          <BrandPill />
+        </View>
+        {!(detail && selected && !loading && !error) && (
         <View style={styles.header}>
           <View style={styles.grow}>
             <Text style={styles.eyebrow}>
-              PAGARIYA AUTO · BILLING DEPARTMENT
+              BILLING DEPARTMENT
             </Text>
             <Text style={styles.heading}>
               {detail
@@ -449,9 +465,8 @@ export default function BillingWorkspace({
             <Ionicons name="refresh-outline" color={colors.primary} size={22} />
           </Pressable>
         </View>
-        {!dashboard && (
-          <BackButton disabled={saving} onPress={handleNavigationBack} accessibilityLabel={detail ? "Back to Billing Queue" : "Back to Billing Dashboard"} />
         )}
+
         {loading && <ActivityIndicator color={colors.primary} size="large" />}
         {saving && <Text style={styles.body}>Saving…</Text>}
         {!!error && (
@@ -616,68 +631,76 @@ export default function BillingWorkspace({
         )}
         {!loading && !error && selected && (
           <>
-            <View style={styles.hero}>
-              <Text style={styles.heroEyebrow}>
-                {selected.job_type} JOB · {status(selected)}
-              </Text>
-              <Text style={styles.heroTitle}>{selected.vehicle_no}</Text>
-              <Text style={styles.heroText}>
-                {selected.model || "Model not recorded"} ·{" "}
-                {selected.customer_name || "Customer not recorded"}
-              </Text>
+            <View style={[styles.hero, styles.vehicleHero]}>
+              <View pointerEvents="none" style={styles.heroDecoration} />
+              <View style={styles.vehicleHeroTop}>
+                <View style={styles.handoffHeading}>
+                  <Text style={styles.workspacePill}>BILLING DEPARTMENT</Text>
+                  <Text style={styles.heroTitle}>Vehicle Billing</Text>
+                  <Text style={styles.heroText}>Invoice, customer payment and Advisor handoff</Text>
+                </View>
+                <Pressable accessibilityRole="button" accessibilityLabel="Refresh Billing" disabled={disabled} onPress={() => void load(true)} style={[styles.heroRefresh, disabled && styles.disabled]}>
+                  <Ionicons name="refresh-outline" color="white" size={22} />
+                </Pressable>
+              </View>
+              <View style={styles.vehicleHeroSummary}>
+                <View style={styles.vehicleHeroHeading}>
+                  <View style={styles.vehicleHeroIcon}><Ionicons name="car-sport-outline" size={24} color="white" /></View>
+                  <View style={styles.handoffHeading}>
+                    <Text selectable style={styles.heroTitle}>{selected.vehicle_no}</Text>
+                    <Text style={styles.heroText}>{selected.model || "Model not recorded"} · {selected.customer_name || "Customer not recorded"}</Text>
+                  </View>
+                </View>
+                <View style={styles.vehicleHeroBadges}>
+                  <Text style={styles.heroBadge}>{selected.job_type === "INSURANCE" ? "Insurance job" : "Paid job"}</Text>
+                  <Text style={styles.heroBadge}>{status(selected)}</Text>
+                </View>
+              </View>
             </View>
             <View style={styles.card}>
-              <Text style={styles.title}>Advisor handoff</Text>
-              <Text style={styles.body}>
-                Customer mobile: {selected.customer_mobile || "Not recorded"}
-              </Text>
-              <Text style={styles.body}>
-                Job card: {selected.job_card_no || "Not recorded"}
-              </Text>
-              <Text style={styles.body}>
-                Advisor: {selected.advisor_name || "Not recorded"} · Assigned{" "}
-                {time(selected.assigned_at)}
-              </Text>
-              {selected.job_type === "INSURANCE" ? (
-                <>
-                  <Text style={styles.body}>
-                    Pre-invoice sent: {time(selected.pre_invoice_sent_at)}
-                  </Text>
-                  <Text style={styles.body}>
-                    Liability received: {time(selected.liability_received_at)}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.status}>
-                    Survey advance: {money(selected.advance_amount)}
-                  </Text>
-                  <Text style={styles.body}>
-                    Receipt/reference:{" "}
-                    {selected.advance_reference || "Not recorded"}
-                  </Text>
-                </>
-              )}
+              <View style={styles.handoffHeader}>
+                <View style={styles.invoiceIcon}><Ionicons name="person-outline" size={22} color={colors.primary} /></View>
+                <View style={styles.handoffHeading}>
+                  <Text style={styles.title}>Advisor handoff</Text>
+                  <Text style={styles.body}>Customer, job and handover details</Text>
+                </View>
+              </View>
+              <View style={styles.handoffGrid}>
+                <HandoffDetail icon="call-outline" label="Customer mobile" value={selected.customer_mobile} />
+                <HandoffDetail icon="clipboard-outline" label="Job card" value={selected.job_card_no} />
+                <HandoffDetail icon="person-outline" label="Advisor" value={selected.advisor_name} />
+                <HandoffDetail icon="time-outline" label="Assigned to Billing" value={time(selected.assigned_at)} />
+              </View>
+              <View style={styles.handoffSection}>
+                <Text style={styles.eyebrow}>{selected.job_type === "INSURANCE" ? "INSURANCE DETAILS" : "ADVANCE RECEIVED"}</Text>
+                <View style={styles.handoffGrid}>
+                  {selected.job_type === "INSURANCE" ? (
+                    <>
+                      <HandoffDetail icon="document-text-outline" label="Pre-invoice sent" value={time(selected.pre_invoice_sent_at)} event />
+                      <HandoffDetail icon="shield-checkmark-outline" label="Liability received" value={time(selected.liability_received_at)} event />
+                    </>
+                  ) : (
+                    <>
+                      <HandoffDetail icon="wallet-outline" label="Survey advance" value={money(selected.advance_amount)} event />
+                      <HandoffDetail icon="receipt-outline" label="Receipt / reference" value={selected.advance_reference} event />
+                    </>
+                  )}
+                </View>
+              </View>
               {!!selected.handoff_remarks && (
-                <Text style={styles.body}>
-                  Remarks: {selected.handoff_remarks}
-                </Text>
+                <View style={styles.handoffRemark}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.primaryDark} />
+                  <View style={styles.handoffHeading}><Text style={styles.label}>Advisor remarks</Text><Text style={styles.body}>{selected.handoff_remarks}</Text></View>
+                </View>
               )}
             </View>
             <View style={styles.card}>
               <Text style={styles.eyebrow}>01 · INVOICE</Text>
-              <Text style={styles.title}>Internal bill & tax invoice</Text>
-              <Text style={styles.body}>
-                Bill No. is separate from the tax invoice number. Generated
-                invoice details and saved dates are locked.
-              </Text>
-              <Field
-                label="Internal Bill No."
-                value={bill}
-                onChange={setBill}
-                disabled={disabled || !!selected.generated_at}
-                maxLength={100}
-              />
+              <View style={styles.row}>
+                <View style={styles.invoiceIcon}><Ionicons name="receipt-outline" size={23} color={colors.primary} /></View>
+                <View style={{ flex: 1 }}><Text style={styles.title}>Tax invoice</Text><Text style={styles.body}>Enter the invoice number and amounts.</Text></View>
+                {!!selected.generated_at && <Text style={styles.badge}>Generated</Text>}
+              </View>
               <Field
                 label="Tax invoice number"
                 value={invoice}
@@ -701,14 +724,21 @@ export default function BillingWorkspace({
                     numeric
                     disabled={disabled || !!selected.generated_at}
                   />
-                  <Text style={styles.status}>
-                    Customer difference:{" "}
-                    {invoiceAmount && liability
-                      ? money(Number(invoiceAmount) - Number(liability))
-                      : "Enter both amounts"}
-                  </Text>
+
                 </>
               )}
+              <View style={styles.invoiceSummary}>
+                <Text style={styles.label}>{selected.job_type === "INSURANCE" ? "Customer difference" : "Balance after Survey advance"}</Text>
+                <Text style={styles.balance}>
+                  {invoiceAmount.trim() && (selected.job_type === "PAID" || liability.trim()) &&
+                    Number.isFinite(Number(invoiceAmount)) &&
+                    Number.isFinite(Number(selected.job_type === "PAID" ? selected.advance_amount : liability)) &&
+                    Number(invoiceAmount) >= Number(selected.job_type === "PAID" ? selected.advance_amount : liability)
+                    ? money(Number(invoiceAmount) - Number(selected.job_type === "PAID" ? selected.advance_amount : liability))
+                    : "Enter valid amounts"}
+                </Text>
+                <Text style={styles.body}>{selected.job_type === "INSURANCE" ? "Invoice amount less insurance liability." : "Invoice amount less the advance already received. Payments recorded below reduce the remaining balance."}</Text>
+              </View>
               <Check
                 title="Tax invoice generated"
                 checked={generated}
@@ -721,6 +751,8 @@ export default function BillingWorkspace({
               {generated && (
                 <DateField onValidationError={dateValidation.field("Generated date & time")}
                   label="Generated date & time"
+                  bounds={!!selected.generated_at ? {} : visitDates.bounds()}
+                  error={!!selected.generated_at ? null : visitDates.error}
                   value={generatedTime}
                   onChange={setGeneratedTime}
                   disabled={disabled || !!selected.generated_at}
@@ -737,6 +769,8 @@ export default function BillingWorkspace({
                   {sent && (
                     <DateField onValidationError={dateValidation.field("Sent date & time")}
                       label="Sent date & time"
+                  bounds={!!selected.sent_at ? {} : visitDates.bounds()}
+                  error={!!selected.sent_at ? null : visitDates.error}
                       value={sentTime}
                       onChange={setSentTime}
                       disabled={disabled || !!selected.sent_at}
@@ -745,7 +779,7 @@ export default function BillingWorkspace({
                 </>
               )}
               <Button
-                title="Save Invoice Progress"
+                title={selected.generated_at ? "Save Invoice Progress" : generated ? "Save Tax Invoice" : "Save Draft"}
                 disabled={disabled}
                 onPress={() => void saveInvoice()}
               />
@@ -828,6 +862,8 @@ export default function BillingWorkspace({
                   />
                   <DateField onValidationError={dateValidation.field("Payment received date & time")}
                     label="Payment received date & time"
+                  bounds={!!pendingPayment.current ? {} : visitDates.bounds()}
+                  error={!!pendingPayment.current ? null : visitDates.error}
                     value={paymentTime}
                     onChange={setPaymentTime}
                     disabled={disabled || !!pendingPayment.current}
@@ -1006,11 +1042,23 @@ function Field({
     </View>
   );
 }
-function DateField({ label, value, onChange, onValidationError, disabled }: {
- label: string; value: string; onChange: (value: string) => void; onValidationError: (error: string | null) => void; disabled: boolean;
+function HandoffDetail({ icon, label, value, event = false }: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string | null;
+  event?: boolean;
+}) {
+  return <View style={[styles.handoffDetail, event && styles.handoffEvent]}>
+    <View style={styles.handoffLabel}><Ionicons name={icon} size={16} color={colors.textSecondary} /><Text style={styles.label}>{label}</Text></View>
+    <Text selectable style={styles.handoffValue}>{value?.trim() || "Not recorded"}</Text>
+  </View>;
+}
+
+function DateField({ label, value, onChange, onValidationError, disabled, bounds, error }: {
+ label: string; value: string; onChange: (value: string) => void; onValidationError: (error: string | null) => void; disabled: boolean; bounds: DateTimeBounds; error?: string | null;
 }) {
 
- return <DateTimeField required onValidationError={onValidationError} title={label} label={label} disabled={disabled} maximumDate="now"
+ return <DateTimeField {...bounds} error={error} required onValidationError={onValidationError} title={label} label={label} disabled={disabled} maximumDate="now"
  value={parseIndiaLocal(value.replace(" ", "T"))?.toISOString() || null}
  onChange={next => onChange(next ? inputTime(next) : "")} />;
 }
@@ -1052,6 +1100,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     gap: 16,
   },
+  navigationRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, minHeight: 44 },
   header: { flexDirection: "row", alignItems: "center", gap: 12 },
   grow: { flex: 1 },
   eyebrow: {
@@ -1093,6 +1142,16 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     backgroundColor: colors.primary,
   },
+  vehicleHero: { overflow: "hidden", gap: 17 },
+  vehicleHeroTop: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  workspacePill: { alignSelf: "flex-start", color: "white", backgroundColor: "rgba(255,255,255,0.16)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, fontSize: 9, fontWeight: "800", letterSpacing: 0.7, marginBottom: 6 },
+  heroRefresh: { width: 44, height: 44, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.15)" },
+  heroDecoration: { position: "absolute", width: 180, height: 180, borderRadius: 90, right: -65, top: -85, backgroundColor: "rgba(255,255,255,0.07)" },
+  vehicleHeroSummary: { borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.22)", paddingTop: 16, gap: 12 },
+  vehicleHeroHeading: { flexDirection: "row", alignItems: "center", gap: 12 },
+  vehicleHeroIcon: { width: 44, height: 44, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.13)", alignItems: "center", justifyContent: "center" },
+  vehicleHeroBadges: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  heroBadge: { color: "white", fontSize: 11, fontWeight: "700", backgroundColor: "rgba(255,255,255,0.15)", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   heroEyebrow: { color: "white", fontSize: 10, fontWeight: "800" },
   heroTitle: { color: "white", fontSize: 25, fontWeight: "800" },
   heroText: { color: "#FFF0F1", fontSize: 13, lineHeight: 21 },
@@ -1129,6 +1188,17 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 20,
   },
+  handoffHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  handoffHeading: { flex: 1, minWidth: 0, gap: 4 },
+  handoffGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  handoffDetail: { flexBasis: 160, flexGrow: 1, minWidth: 0, padding: 13, borderRadius: 12, backgroundColor: colors.background, gap: 9 },
+  handoffEvent: { flexBasis: 230 },
+  handoffLabel: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
+  handoffValue: { color: colors.text, fontSize: 14, fontWeight: "700", lineHeight: 22 },
+  handoffSection: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 14, gap: 11 },
+  handoffRemark: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 13, borderRadius: 12, backgroundColor: colors.primaryLight },
+  invoiceIcon: { width: 44, height: 44, borderRadius: 13, backgroundColor: colors.primaryLight, alignItems: "center", justifyContent: "center" },
+  invoiceSummary: { padding: 15, borderRadius: 13, backgroundColor: colors.background, gap: 7 },
   balance: { fontSize: 22, fontWeight: "800", color: colors.text },
   button: {
     minHeight: 48,

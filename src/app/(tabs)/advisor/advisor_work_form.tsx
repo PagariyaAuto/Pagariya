@@ -1,3 +1,5 @@
+import useVisitDateTimeBounds from "../../../components/inputs/useVisitDateTimeBounds";
+import StoreInchargePicker from "../../../components/store/StoreInchargePicker";
 import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import BackButton from "../../../components/navigation/BackButton";
@@ -108,6 +110,8 @@ export default function AdvisorWorkFormScreen() {
 
   const [approvedWork, setApprovedWork] = useState<ApprovedWork[]>([]);
 
+  const [selectedStoreInchargeId, setSelectedStoreInchargeId] = useState<string | null>(null);
+
   const [partsChoice, setPartsChoice] = useState<PartsChoice | null>(null);
 
   const [floorIncharges, setFloorIncharges] = useState<FloorIncharge[]>([]);
@@ -137,6 +141,7 @@ export default function AdvisorWorkFormScreen() {
   const [popupMessage, setPopupMessage] = useState("");
 
   const needsParts = partsChoice === "PARTS_REQUIRED";
+  const visitDates = useVisitDateTimeBounds(visitId);
 
   const nextStage =
     partsChoice === "PARTS_REQUIRED"
@@ -173,6 +178,7 @@ export default function AdvisorWorkFormScreen() {
   );
 
   const loadVehicle = useCallback(async () => {
+    visitDates.reload();
     if (!visitId || !vehicleId) {
       setLoadError(
         "Vehicle or visit information is missing. Return to Advisor Work and open the vehicle again.",
@@ -626,7 +632,7 @@ export default function AdvisorWorkFormScreen() {
     } finally {
       setLoading(false);
     }
-  }, [showPopup, vehicleId, visitId]);
+  }, [showPopup, vehicleId, visitId, visitDates.reload]);
 
   useEffect(() => {
     void loadVehicle();
@@ -658,6 +664,10 @@ export default function AdvisorWorkFormScreen() {
     const dateError = dateValidation.getError();
     if (dateError) { showPopup("warning", "Check date & time", dateError); return false; }
     if (loading || saving || loadError || !vehicle) return false;
+    if (needsParts) {
+      const rangeError = visitDates.validate(requisitionAt);
+      if (rangeError) { showPopup("warning", "Check date & time", rangeError); return false; }
+    }
     if (!partsChoice) {
       showPopup(
         "warning",
@@ -699,6 +709,11 @@ export default function AdvisorWorkFormScreen() {
         "Select the Floor Incharge who will receive and execute this vehicle on Floor.",
       );
 
+      return false;
+    }
+
+    if (needsParts && !selectedStoreInchargeId) {
+      showPopup("warning", "Store Incharge Required", "Select the Store Incharge who will handle the parts for this vehicle.");
       return false;
     }
 
@@ -754,7 +769,7 @@ export default function AdvisorWorkFormScreen() {
       const cleanRemarks = remarks.trim();
 
       const { data, error } = await supabase.rpc(
-        "new_workflow_process_advisor_work_v2",
+        "new_workflow_process_advisor_work_v3",
 
         {
           p_visit_id: visitId,
@@ -776,6 +791,7 @@ export default function AdvisorWorkFormScreen() {
           p_remarks: cleanRemarks || null,
 
           p_floor_incharge_id: needsParts ? null : selectedFloorInchargeId,
+          p_store_incharge_id: needsParts ? selectedStoreInchargeId : null,
         },
       );
 
@@ -783,7 +799,7 @@ export default function AdvisorWorkFormScreen() {
         throw error;
       }
 
-      console.log("Advisor Work result:", data);
+      if (data?.success !== true) throw new Error("The handover could not be confirmed. Refresh before trying again.");
 
       setConfirmationVisible(false);
 
@@ -1090,6 +1106,8 @@ export default function AdvisorWorkFormScreen() {
                 </View>
               </View>
 
+              <StoreInchargePicker value={selectedStoreInchargeId} onChange={setSelectedStoreInchargeId} disabled={saving} />
+
               <Text style={styles.fieldLabel}>
                 Requisition Number
                 <Text style={styles.required}> *</Text>
@@ -1105,7 +1123,7 @@ export default function AdvisorWorkFormScreen() {
                 autoCapitalize="characters"
               />
 
-              <DateValueField onValidationError={dateValidation.field("Requisition Date & Time")} label="Requisition Date & Time" value={requisitionAt} onChange={setRequisitionAt}
+              <DateValueField {...visitDates.bounds()} error={visitDates.error} onValidationError={dateValidation.field("Requisition Date & Time")} label="Requisition Date & Time" value={requisitionAt} onChange={setRequisitionAt}
  maximumDate="now" disabled={saving} active={!popupVisible && !confirmationVisible} />
             </View>
           )}

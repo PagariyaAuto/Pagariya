@@ -1,5 +1,5 @@
 
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { colors, spacing, typography } from "../../../../theme";
 
 export type VehicleDetails = {
@@ -25,12 +25,14 @@ function displayValue(value?: string | null) {
 function DetailItem({
   label,
   value,
+  wide,
 }: {
   label: string;
   value: string;
+  wide: boolean;
 }) {
   return (
-    <View style={styles.detailItem}>
+    <View style={[styles.detailItem, wide && styles.detailItemWide]}>
       <Text style={styles.detailLabel}>{label}</Text>
       <Text style={styles.detailValue}>{value}</Text>
     </View>
@@ -40,6 +42,9 @@ function DetailItem({
 export default function VehicleDetailsCard({
   vehicle,
 }: VehicleDetailsCardProps) {
+  const { width } = useWindowDimensions();
+  const wide = width >= 600;
+  const stage = vehicle?.current_stage?.trim().toLowerCase().replace(/_/g, " ").replace(/\b[a-z]/g, letter => letter.toUpperCase()) || "—";
   const vehicleNumber = displayValue(vehicle?.vehicle_no);
   const vehicleMake = displayValue(vehicle?.arena_nexa);
   const vehicleModel = displayValue(vehicle?.model);
@@ -74,12 +79,12 @@ export default function VehicleDetailsCard({
       </View>
 
       <View style={styles.detailsGrid}>
-        <DetailItem label="Vehicle type" value={displayValue(vehicle?.vehicle_type)} />
-        <DetailItem label="Make / brand" value={vehicleMake} />
-        <DetailItem label="Model" value={vehicleModel} />
-        <DetailItem
+        <DetailItem wide={wide} label="Vehicle type" value={displayValue(vehicle?.vehicle_type)} />
+        <DetailItem wide={wide} label="Make / brand" value={vehicleMake} />
+        <DetailItem wide={wide} label="Model" value={vehicleModel} />
+        <DetailItem wide={wide}
           label="Current stage"
-          value={displayValue(vehicle?.current_stage)}
+          value={stage}
         />
       </View>
     </View>
@@ -139,7 +144,7 @@ const styles = StyleSheet.create({
   },
 
   registrationBox: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.background,
     borderRadius: 18,
     paddingVertical: spacing.lg,
     paddingHorizontal: spacing.lg,
@@ -147,7 +152,7 @@ const styles = StyleSheet.create({
   },
 
   registrationLabel: {
-    color: "#FFE5E7",
+    color: colors.textSecondary,
     fontSize: 10,
     fontWeight: "800",
     letterSpacing: 1.4,
@@ -155,14 +160,14 @@ const styles = StyleSheet.create({
   },
 
   registrationNumber: {
-    color: "#FFFFFF",
+    color: colors.text,
     fontSize: 25,
     fontWeight: "900",
     letterSpacing: 1.1,
   },
 
   registrationHint: {
-    color: "#FFFFFF",
+    color: colors.text,
     opacity: 0.88,
     fontSize: 13,
     fontWeight: "500",
@@ -176,10 +181,12 @@ const styles = StyleSheet.create({
   },
 
   detailItem: {
-    width: "50%",
+    width: "100%",
     paddingHorizontal: 6,
     paddingVertical: spacing.sm,
   },
+
+  detailItemWide: { width: "50%" },
 
   detailLabel: {
     ...typography.caption,

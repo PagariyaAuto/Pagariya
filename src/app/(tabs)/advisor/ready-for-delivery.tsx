@@ -20,7 +20,6 @@ type Item = {
   job_type: "PAID" | "INSURANCE";
   job_card_no: string | null;
   advisor_name: string | null;
-  bill_no: string | null;
   tax_invoice_no: string | null;
   invoice_amount: number | string | null;
   liability_amount: number | string | null;
@@ -63,7 +62,7 @@ function time(value: string | null) {
 function blockers(item: Item) {
   const result: string[] = [];
   if (!item.billing_completed_at) result.push("Billing completion is missing.");
-  if (!item.bill_no || !item.tax_invoice_no || !item.generated_at)
+  if (!item.tax_invoice_no || !item.generated_at)
     result.push("Generated invoice details are incomplete.");
   if (item.job_type === "INSURANCE" && !item.sent_at)
     result.push("Insurance tax invoice sent is missing.");
@@ -587,7 +586,6 @@ export default function ReadyForDeliveryScreen() {
               <Text style={styles.eyebrow}>03 · BILLING & PAYMENT</Text>
               <Text style={styles.title}>Verify settled Billing</Text>
               <View style={styles.grid}>
-                <Detail label="Internal Bill No." value={selected.bill_no} />
                 <Detail
                   label="Tax invoice number"
                   value={selected.tax_invoice_no}

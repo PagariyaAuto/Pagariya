@@ -1,4 +1,4 @@
-import { Modal, TextInput } from "../../../components/inputs/KeyboardAware";
+import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
@@ -722,6 +722,7 @@ export default function VehicleManagementScreen() {
     >
       <View style={styles.container}>
         <FlatList
+          renderScrollComponent={props => <ScrollView {...props} />}
           data={paginatedVehicles}
           keyExtractor={(item) => item.id}
           renderItem={renderVehicle}

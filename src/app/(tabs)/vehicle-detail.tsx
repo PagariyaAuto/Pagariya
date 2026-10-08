@@ -5,7 +5,7 @@ import { returnToRoute, useHardwareBack } from "../../lib/back-navigation";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import PhotoViewer from "../../../components/PhotoViewer";
@@ -114,6 +114,7 @@ export default function VehicleDetailScreen() {
   >(null);
   const [floorDropdownVisible, setFloorDropdownVisible] = useState(false);
   const [assigningFloorIncharge, setAssigningFloorIncharge] = useState(false);
+  const floorAssignmentBusy = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [takingVehicle, setTakingVehicle] = useState(false);
@@ -337,19 +338,6 @@ export default function VehicleDetailScreen() {
 
       setVehicle(vehicleData);
 
-      if (vehicleData.current_assigned_to) {
-        const { data: advisorData, error: advisorError } = await supabase
-          .from("profiles")
-          .select("id, name, role")
-          .eq("id", vehicleData.current_assigned_to)
-          .single();
-
-        if (advisorError) throw advisorError;
-        setAdvisor(advisorData);
-      } else {
-        setAdvisor(null);
-      }
-
       const { data: insuranceData, error: insuranceError } = await supabase
         .from("insurance_companies")
         .select("id, name")
@@ -403,10 +391,21 @@ export default function VehicleDetailScreen() {
         `
         )
         .eq("vehicle_id", vehicleId)
+        .neq("current_job_stage", "CLOSED")
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (jobError) throw jobError;
 
+      const advisorId = jobData?.advisor_id ||
+        (vehicleData.current_stage === "ADVISOR_ASSIGNED" ? vehicleData.current_assigned_to : null);
+      if (advisorId) {
+        const { data: advisorData, error: advisorError } = await supabase.from("profiles")
+          .select("id, name, role").eq("id", advisorId).eq("role", "advisor").maybeSingle();
+        if (advisorError) throw advisorError;
+        setAdvisor(advisorData);
+      } else setAdvisor(null);
       setSurveyJob(jobData ?? null);
       setSelectedFloorInchargeId(jobData?.floor_incharge_id ?? null);
 
@@ -451,9 +450,10 @@ export default function VehicleDetailScreen() {
     !!surveyJob &&
     vehicle.current_stage === "FLOOR" &&
     surveyJob.current_job_stage === "FLOOR" &&
+    ["PENDING", "IN_PROGRESS"].includes(vehicle.current_status) &&
     (currentUserRole === "ceo_admin" ||
       (currentUserRole === "advisor" &&
-        vehicle.current_assigned_to === currentUserId));
+        surveyJob.advisor_id === currentUserId));
 
   const selectedFloorIncharge = floorIncharges.find(
     (person) => person.id === selectedFloorInchargeId
@@ -464,6 +464,7 @@ export default function VehicleDetailScreen() {
   );
 
   const handleAssignFloorIncharge = async () => {
+    if (floorAssignmentBusy.current) return;
     if (!vehicleId || !surveyJob || !selectedFloorInchargeId) {
       showModal(
         "Floor Incharge Required",
@@ -481,15 +482,17 @@ export default function VehicleDetailScreen() {
     }
 
     try {
+      floorAssignmentBusy.current = true;
       setAssigningFloorIncharge(true);
 
-      const { error } = await supabase.rpc("assign_floor_incharge", {
+      const { data, error } = await supabase.rpc("assign_floor_incharge", {
         p_vehicle_id: vehicleId,
         p_floor_incharge_id: selectedFloorInchargeId,
         p_remarks: null,
       });
 
       if (error) throw error;
+      if (data?.success !== true) throw new Error("The assignment could not be confirmed. Refresh before trying again.");
 
       showModal(
         "Floor Incharge Assigned",
@@ -505,6 +508,7 @@ export default function VehicleDetailScreen() {
           "Something went wrong while assigning the Floor Incharge."
       );
     } finally {
+      floorAssignmentBusy.current = false;
       setAssigningFloorIncharge(false);
     }
   };

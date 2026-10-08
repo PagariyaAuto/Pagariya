@@ -1,21 +1,19 @@
 import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import BrandPill from "../../../components/navigation/BrandPill";
+import { normalizeVehicleNumber, getVehicleNumberError } from "../../../lib/vehicle-registration";
 import BackButton from "../../../components/navigation/BackButton";
 import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ActivityIndicator, Image, Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { supabase } from "../../../../lib/supabase";
 
-import {
-  colors,
-  radius,
-  spacing,
-  typography,
-} from "../../../theme";
+import { colors } from "../../../theme";
 
 type PhotoItem = {
   id: string;
@@ -35,11 +33,14 @@ type PendingGateIn = {
 
 export default function GateInScreen() {
   const handleNavigationBack = () => {
-    if (submitting) return;
+    if (submittingRef.current) return;
     returnToRoute("/(tabs)/watchman");
   };
   useHardwareBack(handleNavigationBack);
 
+  const submittingRef = useRef(false);
+  const vehicleInputRef = useRef<TextInput>(null);
+  const [vehicleError, setVehicleError] = useState("");
   const [vehicleNo, setVehicleNo] = useState("");
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -55,9 +56,6 @@ export default function GateInScreen() {
   const [showPhotoViewer, setShowPhotoViewer] = useState(false);
 
   const photo = photos[0] ?? null;
-
-  const formReady =
-    vehicleNo.trim().length > 0 && !!photo;
 
   const photoUploaded =
     photo?.status === "uploaded";
@@ -78,7 +76,7 @@ export default function GateInScreen() {
   // =========================================================
 
   async function takePhoto() {
-    if (submitting) return;
+    if (submittingRef.current || pendingGateIn) return;
 
     try {
       const permission =
@@ -309,15 +307,13 @@ export default function GateInScreen() {
   // =========================================================
 
   function validateForm() {
-    if (!vehicleNo.trim()) {
-      showModal(
-        "Vehicle Number Required",
-        "Please enter the vehicle registration number.",
-        false
-      );
-
+    const registrationError = getVehicleNumberError(vehicleNo);
+    if (registrationError) {
+      setVehicleError(registrationError);
+      showModal("Check vehicle number", registrationError, false);
       return false;
     }
+    setVehicleError("");
 
     if (!photo) {
       showModal(
@@ -338,7 +334,7 @@ export default function GateInScreen() {
 
   async function handleGateIn() {
     if (
-      submitting ||
+      submittingRef.current ||
       !validateForm()
     ) {
       return;
@@ -346,7 +342,9 @@ export default function GateInScreen() {
 
     Keyboard.dismiss();
 
+    submittingRef.current = true;
     setSubmitting(true);
+    let recordedGateIn = pendingGateIn;
 
     try {
       /*
@@ -363,7 +361,7 @@ export default function GateInScreen() {
 
         showModal(
           "Gate In Complete",
-          "The vehicle entry and photo have been recorded successfully. The vehicle is now pending Advisor assignment.",
+          "Vehicle entry and photo saved. An Advisor can now accept this vehicle for intake.",
           true
         );
 
@@ -386,7 +384,7 @@ export default function GateInScreen() {
         "new_workflow_gate_in",
         {
           p_vehicle_no:
-            vehicleNo.trim(),
+            normalizeVehicleNumber(vehicleNo),
 
           p_gate_in_photo_path:
             storagePath,
@@ -411,13 +409,14 @@ export default function GateInScreen() {
         );
       }
 
-      setPendingGateIn({
+      recordedGateIn = {
         vehicleId: data.vehicle_id,
         visitId: data.visit_id,
         gateEntryId: data.gate_entry_id,
         photoId: data.gate_in_photo_id,
         storagePath,
-      });
+      };
+      setPendingGateIn(recordedGateIn);
 
       await uploadPhoto(
         photo!.uri,
@@ -426,18 +425,22 @@ export default function GateInScreen() {
 
       showModal(
         "Gate In Complete",
-        "The vehicle entry and photo have been recorded successfully. The vehicle is now pending Advisor assignment.",
+        "Vehicle entry and photo saved. An Advisor can now accept this vehicle for intake.",
         true
       );
     } catch (error: any) {
-      const message =
-        error?.message ||
-        "Something went wrong while completing Gate In.";
+      console.error("Gate In failed:", error);
+      const detail = String(error?.message || "");
+      const message = /already|active visit|open visit/i.test(detail)
+        ? "This vehicle may already have an open entry. Check the Dashboard before trying again."
+        : /permission|not authorized|active.*profile|authentication/i.test(detail)
+          ? "Your account could not complete Gate In. Please sign in again or contact CEO Admin."
+          : "We couldn’t confirm that Gate In was completed. Check the Dashboard before trying again.";
 
-      if (pendingGateIn) {
+      if (recordedGateIn) {
         showModal(
           "Photo Upload Failed",
-          `${message}\n\nThe vehicle entry has already been recorded. Please retry the photo upload. Do not start another Gate In for this vehicle.`,
+          "Gate In is recorded, but the photo could not be saved. Tap Retry Photo Upload to finish this entry.",
           false
         );
       } else {
@@ -448,6 +451,7 @@ export default function GateInScreen() {
         );
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -461,635 +465,111 @@ export default function GateInScreen() {
 
     if (modalSuccess) {
       setVehicleNo("");
+      setVehicleError("");
       setPhotos([]);
       setPendingGateIn(null);
+    } else if (vehicleError) {
+      requestAnimationFrame(() => vehicleInputRef.current?.focus());
     }
   }
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "right", "bottom", "left"]}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="always"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
-
-        <BackButton accessibilityLabel="Back" onPress={handleNavigationBack} />
-        <View style={styles.header}>
-          <View style={styles.headerIcon}>
-            <Text style={styles.headerIconText}>
-              ↗
-            </Text>
-          </View>
-
-          <View
-            style={styles.headerTextContainer}
-          >
-            <Text style={styles.eyebrow}>
-              VEHICLE OPERATIONS
-            </Text>
-
-            <Text style={styles.title}>
-              Vehicle Gate In
-            </Text>
-
-            <Text style={styles.subtitle}>
-              Register a vehicle entering the premises
-            </Text>
-          </View>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="always" showsVerticalScrollIndicator={false}>
+        <View style={styles.topBar}>
+          <BackButton onPress={handleNavigationBack} disabled={submitting} />
+          <BrandPill />
         </View>
 
-        {/* Steps */}
-
-        <View style={styles.stepsCard}>
-          <View style={styles.stepItem}>
-            <View
-              style={styles.stepNumberActive}
-            >
-              <Text
-                style={
-                  styles.stepNumberTextActive
-                }
-              >
-                1
-              </Text>
-            </View>
-
-            <Text
-              style={styles.stepTextActive}
-            >
-              Registration
-            </Text>
-          </View>
-
-          <View style={styles.stepLine} />
-
-          <View style={styles.stepItem}>
-            <View
-              style={[
-                styles.stepNumber,
-                !!photo &&
-                  styles.stepNumberActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.stepNumberText,
-                  !!photo &&
-                    styles.stepNumberTextActive,
-                ]}
-              >
-                2
-              </Text>
-            </View>
-
-            <Text
-              style={
-                photo
-                  ? styles.stepTextActive
-                  : styles.stepText
-              }
-            >
-              Photo
-            </Text>
-          </View>
-
-          <View style={styles.stepLine} />
-
-          <View style={styles.stepItem}>
-            <View
-              style={[
-                styles.stepNumber,
-                formReady &&
-                  styles.stepNumberActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.stepNumberText,
-                  formReady &&
-                    styles.stepNumberTextActive,
-                ]}
-              >
-                3
-              </Text>
-            </View>
-
-            <Text
-              style={
-                formReady
-                  ? styles.stepTextActive
-                  : styles.stepText
-              }
-            >
-              Submit
-            </Text>
-          </View>
+        <View style={styles.hero}>
+          <Text style={styles.eyebrow}>SECURITY · VEHICLE ENTRY</Text>
+          <Text style={styles.title}>Vehicle Gate In</Text>
+          <Text style={styles.subtitle}>Enter the registration number and take a clear photo of the vehicle.</Text>
         </View>
-
-        {/* Registration */}
 
         <View style={styles.card}>
-          <View style={styles.cardHeadingRow}>
-            <View style={styles.sectionIcon}>
-              <Text
-                style={styles.sectionIconText}
-              >
-                01
-              </Text>
-            </View>
-
-            <View
-              style={styles.cardHeadingText}
-            >
-              <Text
-                style={styles.sectionTitle}
-              >
-                Vehicle registration
-              </Text>
-
-              <Text
-                style={styles.sectionSubtitle}
-              >
-                Enter the number displayed on the vehicle
-              </Text>
-            </View>
-
-            <View
-              style={styles.requiredBadge}
-            >
-              <Text
-                style={
-                  styles.requiredBadgeText
-                }
-              >
-                Required
-              </Text>
-            </View>
+          <View style={styles.sectionHeading}>
+            <View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>01</Text></View>
+            <View style={styles.grow}><Text style={styles.sectionTitle}>Vehicle registration</Text><Text style={styles.sectionSubtitle}>Use the number shown on the number plate.</Text></View>
           </View>
-
-          <Text style={styles.label}>
-            Vehicle registration number
-          </Text>
-
+          <Text style={styles.label}>Registration number <Text style={styles.required}>*</Text></Text>
           <TextInput
+            ref={vehicleInputRef}
+            accessibilityLabel="Vehicle registration number"
+            aria-invalid={!!vehicleError}
             value={vehicleNo}
-            onChangeText={setVehicleNo}
-            placeholder="e.g. MH 12 AB 1234"
-            placeholderTextColor={
-              colors.textLight
-            }
+            onChangeText={value => { setVehicleNo(normalizeVehicleNumber(value)); setVehicleError(""); }}
+            onBlur={() => { if (vehicleNo) setVehicleError(getVehicleNumberError(vehicleNo) || ""); }}
+            placeholder="MH12AB1234"
+            placeholderTextColor={colors.textLight}
             autoCapitalize="characters"
             autoCorrect={false}
+            autoComplete="off"
+            spellCheck={false}
             returnKeyType="done"
-            onSubmitEditing={
-              Keyboard.dismiss
-            }
-            style={[
-              styles.input,
-              vehicleNo.trim().length > 0 &&
-                styles.inputFilled,
-            ]}
-            editable={
-              !submitting &&
-              !pendingGateIn
-            }
+            onSubmitEditing={Keyboard.dismiss}
+            style={[styles.input, !!vehicleError && styles.inputError]}
+            editable={!submitting && !pendingGateIn}
           />
-
-          <Text style={styles.helperText}>
-            Check the registration number carefully before continuing.
-          </Text>
+          {vehicleError ? <Text accessibilityRole="alert" style={styles.errorText}>{vehicleError}</Text> : <Text style={styles.helperText}>State registration or BH series · e.g. MH12AB1234 or 26BH1234AA</Text>}
         </View>
-
-        {/* Photo */}
 
         <View style={styles.card}>
-          <View style={styles.cardHeadingRow}>
-            <View style={styles.sectionIcon}>
-              <Text
-                style={styles.sectionIconText}
-              >
-                02
-              </Text>
-            </View>
-
-            <View
-              style={styles.cardHeadingText}
-            >
-              <Text
-                style={styles.sectionTitle}
-              >
-                Vehicle photo
-              </Text>
-
-              <Text
-                style={styles.sectionSubtitle}
-              >
-                Capture one clear photo of the vehicle
-              </Text>
-            </View>
-
-            <View
-              style={styles.requiredBadge}
-            >
-              <Text
-                style={
-                  styles.requiredBadgeText
-                }
-              >
-                Required
-              </Text>
-            </View>
+          <View style={styles.sectionHeading}>
+            <View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>02</Text></View>
+            <View style={styles.grow}><Text style={styles.sectionTitle}>Vehicle photo</Text><Text style={styles.sectionSubtitle}>Include the registration plate in the photo.</Text></View>
+            <Text style={styles.required}>*</Text>
           </View>
-
           {photo ? (
-            <View
-              style={
-                styles.photoPreviewContainer
-              }
-            >
-              <Pressable
-                onPress={() =>
-                  setShowPhotoViewer(true)
-                }
-                disabled={submitting}
-                accessibilityRole="button"
-                accessibilityLabel="View captured vehicle photo"
-              >
-                <Image
-                  source={{
-                    uri: photo.uri,
-                  }}
-                  style={
-                    styles.photoPreview
-                  }
-                  resizeMode="cover"
-                />
+            <View style={styles.photoPreviewContainer}>
+              <Pressable onPress={() => setShowPhotoViewer(true)} disabled={submitting} accessibilityRole="button" accessibilityLabel="View vehicle photo">
+                <Image source={{ uri: photo.uri }} style={styles.photoPreview} resizeMode="cover" />
+                <View style={styles.previewBadge}><Ionicons name="expand-outline" size={15} color={colors.text} /><Text style={styles.previewBadgeText}>View photo</Text></View>
               </Pressable>
-
-              <View
-                style={
-                  styles.photoStatusRow
-                }
-              >
-                <View
-                  style={[
-                    styles.statusDot,
-                    photoUploaded
-                      ? styles.statusDotSuccess
-                      : photo.status ===
-                        "failed"
-                      ? styles.statusDotError
-                      : styles.statusDotPending,
-                  ]}
-                />
-
-                <Text
-                  style={
-                    styles.photoStatusText
-                  }
-                >
-                  {photo.status ===
-                  "uploaded"
-                    ? "Photo saved successfully"
-                    : photo.status ===
-                      "uploading"
-                    ? `Uploading photo${
-                        photo.progress
-                          ? ` · ${photo.progress}%`
-                          : "..."
-                      }`
-                    : photo.status ===
-                      "failed"
-                    ? "Upload failed · Retry available"
-                    : "Photo captured · Ready to upload"}
-                </Text>
+              <View style={styles.photoStatusRow}>
+                {submitting ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name={photo.status === "failed" ? "alert-circle-outline" : "camera-outline"} size={19} color={photo.status === "failed" ? colors.primary : colors.textSecondary} />}
+                <Text style={styles.photoStatusText}>{photoUploaded ? "Photo saved" : photo.status === "uploading" ? "Saving photo…" : photo.status === "failed" ? "Photo not saved. Please retry." : "Photo captured"}</Text>
               </View>
-
-              {photo.status ===
-                "uploading" && (
-                <View
-                  style={
-                    styles.progressTrack
-                  }
-                >
-                  <View
-                    style={[
-                      styles.progressFill,
-                      {
-                        width: `${
-                          photo.progress ??
-                          0
-                        }%`,
-                      },
-                    ]}
-                  />
-                </View>
-              )}
-
-              {!submitting &&
-                !pendingGateIn && (
-                  <View
-                    style={
-                      styles.photoActions
-                    }
-                  >
-                    <Pressable
-                      style={
-                        styles.secondaryButton
-                      }
-                      onPress={takePhoto}
-                    >
-                      <Text
-                        style={
-                          styles.secondaryButtonText
-                        }
-                      >
-                        Retake photo
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={
-                        styles.removeButton
-                      }
-                      onPress={
-                        removePhoto
-                      }
-                    >
-                      <Text
-                        style={
-                          styles.removeButtonText
-                        }
-                      >
-                        Remove
-                      </Text>
-                    </Pressable>
-                  </View>
-                )}
+              {!submitting && !pendingGateIn && <View style={styles.photoActions}>
+                <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={takePhoto}><Ionicons name="camera-outline" size={18} color={colors.primary} /><Text style={styles.secondaryButtonText}>Retake photo</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="Remove vehicle photo" style={styles.removeButton} onPress={removePhoto}><Ionicons name="trash-outline" size={18} color={colors.textSecondary} /><Text style={styles.removeButtonText}>Remove</Text></Pressable>
+              </View>}
             </View>
           ) : (
-            <Pressable
-              style={({ pressed }) => [
-                styles.cameraCapture,
-                pressed &&
-                  styles.cameraCapturePressed,
-              ]}
-              onPress={takePhoto}
-              disabled={submitting}
-              accessibilityRole="button"
-              accessibilityLabel="Open camera to capture vehicle photo"
-            >
-              <View
-                style={
-                  styles.cameraIconCircle
-                }
-              >
-                <Text
-                  style={styles.cameraIcon}
-                >
-                  📷
-                </Text>
-              </View>
-
-              <Text
-                style={styles.cameraTitle}
-              >
-                Capture vehicle photo
-              </Text>
-
-              <Text
-                style={styles.cameraSubtitle}
-              >
-                Tap to open the camera
-              </Text>
-
-              <View
-                style={styles.cameraAction}
-              >
-                <Text
-                  style={
-                    styles.cameraActionText
-                  }
-                >
-                  Open Camera
-                </Text>
-              </View>
+            <Pressable style={({ pressed }) => [styles.cameraCapture, pressed && styles.pressed]} onPress={takePhoto} disabled={submitting} accessibilityRole="button" accessibilityLabel="Take vehicle photo">
+              <View style={styles.cameraIconCircle}><Ionicons name="camera-outline" size={30} color={colors.primary} /></View>
+              <Text style={styles.cameraTitle}>Take vehicle photo</Text>
+              <Text style={styles.cameraSubtitle}>One clear photo is required.</Text>
+              <View style={styles.cameraAction}><Text style={styles.cameraActionText}>Open Camera</Text></View>
             </Pressable>
           )}
-
-          <View style={styles.photoNote}>
-            <Text
-              style={styles.photoNoteText}
-            >
-              One photo is required. Gallery selection is not available on this screen.
-            </Text>
-          </View>
         </View>
 
-        {/* Primary action */}
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionButton,
-            !formReady &&
-              styles.actionButtonDisabled,
-            pressed &&
-              formReady &&
-              styles.buttonPressed,
-            submitting &&
-              styles.actionButtonDisabled,
-          ]}
-          onPress={handleGateIn}
-          disabled={
-            !formReady || submitting
-          }
-        >
-          {submitting ? (
-            <View
-              style={styles.loadingRow}
-            >
-              <ActivityIndicator
-                size="small"
-                color="#FFFFFF"
-              />
-
-              <Text
-                style={styles.submitText}
-              >
-                {pendingGateIn
-                  ? "Retrying photo upload..."
-                  : "Processing Gate In..."}
-              </Text>
-            </View>
-          ) : (
-            <Text
-              style={styles.submitText}
-            >
-              {pendingGateIn
-                ? "Retry Photo Upload"
-                : "Complete Gate In"}
-            </Text>
-          )}
+        {!!pendingGateIn && <View style={styles.retryNotice}><Ionicons name="information-circle-outline" size={22} color={colors.primary} /><Text style={styles.retryText}>Gate In is recorded. Retry the photo upload to finish this entry.</Text></View>}
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: submitting, busy: submitting }} style={({ pressed }) => [styles.actionButton, submitting && styles.disabled, pressed && !submitting && styles.pressed]} onPress={handleGateIn} disabled={submitting}>
+          {submitting ? <ActivityIndicator size="small" color={colors.white} /> : <Ionicons name={pendingGateIn ? "cloud-upload-outline" : "enter-outline"} size={21} color={colors.white} />}
+          <Text style={styles.submitText}>{submitting ? pendingGateIn ? "Saving photo…" : "Recording Gate In…" : pendingGateIn ? "Retry Photo Upload" : "Complete Gate In"}</Text>
         </Pressable>
-
-        {!formReady && (
-          <Text
-            style={styles.buttonHint}
-          >
-            Enter the vehicle number and capture a photo to continue.
-          </Text>
-        )}
-
-        <View style={styles.infoBox}>
-          <Text style={styles.infoIcon}>
-            ⓘ
-          </Text>
-
-          <Text style={styles.infoText}>
-            The vehicle will enter Pending Advisor after Gate In. The Advisor will then collect the customer name, mobile number, vehicle type, model, Arena/Nexa, insurance and other intake details.
-          </Text>
-        </View>
-
-        <View
-          style={styles.bottomSpace}
-        />
+        <Text style={styles.footer}>After Gate In, an Advisor can accept the vehicle for intake.</Text>
       </ScrollView>
 
-      {/* Photo viewer */}
-
-      <Modal
-        visible={showPhotoViewer}
-        transparent
-        animationType="fade"
-        onRequestClose={() =>
-          setShowPhotoViewer(false)
-        }
-      >
-        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
-        <Pressable
-          style={
-            styles.photoViewerOverlay
-          }
-          onPress={() =>
-            setShowPhotoViewer(false)
-          }
-        >
-          <View
-            style={
-              styles.photoViewerContent
-            }
-          >
-            {photo && (
-              <Image
-                source={{
-                  uri: photo.uri,
-                }}
-                style={
-                  styles.photoViewerImage
-                }
-                resizeMode="contain"
-              />
-            )}
-
-            <Text
-              style={
-                styles.photoViewerClose
-              }
-            >
-              Tap anywhere to close
-            </Text>
-          </View>
-        </Pressable>
+      <Modal visible={showPhotoViewer} transparent animationType="fade" onRequestClose={() => setShowPhotoViewer(false)}>
+        <SafeAreaView style={styles.photoViewerOverlay} edges={["top", "right", "bottom", "left"]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close photo viewer" style={styles.viewerClose} onPress={() => setShowPhotoViewer(false)}><Ionicons name="close" size={25} color={colors.white} /><Text style={styles.viewerCloseText}>Close</Text></Pressable>
+          {photo && <Image source={{ uri: photo.uri }} style={styles.photoViewerImage} resizeMode="contain" />}
         </SafeAreaView>
       </Modal>
 
-      {/* Message modal */}
-
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeModal}
-      >
-        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
-        <View
-          style={styles.modalOverlay}
-        >
-          <View
-            style={styles.messageModal}
-          >
-            <View
-              style={[
-                styles.modalIcon,
-                modalSuccess
-                  ? styles.successIcon
-                  : styles.errorIcon,
-              ]}
-            >
-              <Text
-                style={
-                  styles.modalIconText
-                }
-              >
-                {modalSuccess
-                  ? "✓"
-                  : "!"}
-              </Text>
-            </View>
-
-            <Text
-              style={styles.messageTitle}
-            >
-              {modalTitle}
-            </Text>
-
-            <Text
-              style={styles.messageText}
-            >
-              {modalMessage}
-            </Text>
-
-            <Pressable
-              style={styles.modalButton}
-              onPress={closeModal}
-            >
-              <Text
-                style={
-                  styles.modalButtonText
-                }
-              >
-                {modalSuccess
-                  ? "Register Next Vehicle"
-                  : "OK"}
-              </Text>
-            </Pressable>
-
-            {modalSuccess && (
-              <Pressable
-                style={
-                  styles.viewVehiclesButton
-                }
-                onPress={() => {
-                  setModalVisible(false);
-
-                  router.replace(
-                    "/(tabs)/watchman"
-                  );
-                }}
-              >
-                <Text
-                  style={
-                    styles.viewVehiclesButtonText
-                  }
-                >
-                  Go to Dashboard
-                </Text>
-              </Pressable>
-            )}
+      <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={closeModal}>
+        <SafeAreaView style={styles.modalOverlay} edges={["top", "right", "bottom", "left"]}>
+          <View style={styles.messageModal}>
+            <View style={[styles.modalIcon, modalSuccess ? styles.successIcon : styles.errorIcon]}><Ionicons name={modalSuccess ? "checkmark" : "alert-circle-outline"} size={27} color={modalSuccess ? "#217A50" : colors.primary} /></View>
+            {modalSuccess && <Text style={styles.modalVehicle}>{vehicleNo}</Text>}
+            <Text style={styles.messageTitle}>{modalTitle}</Text>
+            <Text style={styles.messageText}>{modalMessage}</Text>
+            <Pressable accessibilityRole="button" style={styles.modalButton} onPress={closeModal}><Text style={styles.modalButtonText}>{modalSuccess ? "Next Vehicle" : "OK"}</Text></Pressable>
+            {modalSuccess && <Pressable accessibilityRole="button" style={styles.viewVehiclesButton} onPress={() => { setModalVisible(false); router.replace("/(tabs)/watchman"); }}><Text style={styles.viewVehiclesButtonText}>Dashboard</Text></Pressable>}
           </View>
-        </View>
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
@@ -1097,587 +577,62 @@ export default function GateInScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
-  content: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.lg,
-  },
-
-  headerIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 17,
-    backgroundColor: colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: spacing.md,
-  },
-
-  headerIconText: {
-    fontSize: 27,
-    fontWeight: "800",
-    color: colors.primary,
-  },
-
-  headerTextContainer: {
-    flex: 1,
-  },
-
-  eyebrow: {
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.2,
-    color: colors.primary,
-    marginBottom: 3,
-  },
-
-  title: {
-    fontSize: typography.title.fontSize,
-    fontWeight: "800",
-    color: colors.text,
-  },
-
-  subtitle: {
-    marginTop: spacing.xs,
-    fontSize: typography.body.fontSize,
-    lineHeight: 20,
-    color: colors.textSecondary,
-  },
-
-  stepsCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.lg,
-  },
-
-  stepItem: {
-    alignItems: "center",
-    gap: 6,
-  },
-
-  stepNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  stepNumberActive: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  stepNumberText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.textSecondary,
-  },
-
-  stepNumberTextActive: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-
-  stepText: {
-    fontSize: 11,
-    color: colors.textSecondary,
-  },
-
-  stepTextActive: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.text,
-  },
-
-  stepLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-    marginHorizontal: spacing.sm,
-    marginBottom: 20,
-  },
-
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-
-  cardHeadingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.lg,
-  },
-
-  sectionIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: spacing.md,
-  },
-
-  sectionIconText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: colors.primary,
-  },
-
-  cardHeadingText: {
-    flex: 1,
-  },
-
-  sectionTitle: {
-    fontSize: typography.subheading.fontSize,
-    fontWeight: "700",
-    color: colors.text,
-  },
-
-  sectionSubtitle: {
-    marginTop: 3,
-    fontSize: typography.caption.fontSize,
-    lineHeight: 17,
-    color: colors.textSecondary,
-  },
-
-  requiredBadge: {
-    backgroundColor: colors.primaryLight,
-    borderRadius: 20,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    marginLeft: spacing.xs,
-  },
-
-  requiredBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: colors.primary,
-  },
-
-  label: {
-    fontSize: typography.bodyMedium.fontSize,
-    fontWeight: "600",
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-
-  input: {
-    height: 56,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    fontSize: 18,
-    fontWeight: "700",
-    letterSpacing: 1,
-    color: colors.text,
-    backgroundColor: colors.background,
-  },
-
-  inputFilled: {
-    borderColor: colors.primary,
-    backgroundColor: colors.surface,
-  },
-
-  helperText: {
-    marginTop: spacing.sm,
-    fontSize: typography.caption.fontSize,
-    lineHeight: 18,
-    color: colors.textSecondary,
-  },
-
-  cameraCapture: {
-    minHeight: 220,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    borderColor: colors.primary,
-    borderRadius: radius.lg,
-    backgroundColor: colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.lg,
-  },
-
-  cameraCapturePressed: {
-    opacity: 0.8,
-  },
-
-  cameraIconCircle: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.md,
-  },
-
-  cameraIcon: {
-    fontSize: 27,
-  },
-
-  cameraTitle: {
-    fontSize: typography.subheading.fontSize,
-    fontWeight: "700",
-    color: colors.text,
-  },
-
-  cameraSubtitle: {
-    marginTop: spacing.xs,
-    fontSize: typography.body.fontSize,
-    color: colors.textSecondary,
-  },
-
-  cameraAction: {
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.primary,
-  },
-
-  cameraActionText: {
-    fontSize: typography.bodyMedium.fontSize,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-
-  photoPreviewContainer: {
-    overflow: "hidden",
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-  },
-
-  photoPreview: {
-    width: "100%",
-    height: 220,
-    backgroundColor: colors.background,
-  },
-
-  photoStatusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    gap: spacing.sm,
-  },
-
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-
-  statusDotSuccess: {
-    backgroundColor:
-      colors.success ?? "#2E7D32",
-  },
-
-  statusDotError: {
-    backgroundColor:
-      colors.danger ?? "#C62828",
-  },
-
-  statusDotPending: {
-    backgroundColor: colors.primary,
-  },
-
-  photoStatusText: {
-    flex: 1,
-    fontSize: typography.caption.fontSize,
-    color: colors.textSecondary,
-  },
-
-  progressTrack: {
-    height: 5,
-    backgroundColor: colors.border,
-    borderRadius: 5,
-    overflow: "hidden",
-    marginHorizontal: spacing.md,
-    marginTop: spacing.sm,
-  },
-
-  progressFill: {
-    height: "100%",
-    backgroundColor: colors.primary,
-    borderRadius: 5,
-  },
-
-  photoActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    padding: spacing.md,
-  },
-
-  secondaryButton: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.sm,
-  },
-
-  secondaryButtonText: {
-    fontSize: typography.bodyMedium.fontSize,
-    fontWeight: "700",
-    color: colors.primary,
-  },
-
-  removeButton: {
-    minHeight: 44,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.lg,
-  },
-
-  removeButtonText: {
-    fontSize: typography.bodyMedium.fontSize,
-    fontWeight: "600",
-    color: colors.textSecondary,
-  },
-
-  photoNote: {
-    marginTop: spacing.md,
-    padding: spacing.md,
-    backgroundColor: colors.background,
-    borderRadius: radius.md,
-  },
-
-  photoNoteText: {
-    fontSize: typography.caption.fontSize,
-    lineHeight: 18,
-    color: colors.textSecondary,
-  },
-
-  actionButton: {
-    minHeight: 60,
-    borderRadius: radius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.primary,
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 3,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 5,
-  },
-
-  actionButtonDisabled: {
-    opacity: 0.45,
-  },
-
-  buttonPressed: {
-    opacity: 0.86,
-    transform: [
-      {
-        scale: 0.99,
-      },
-    ],
-  },
-
-  submitText: {
-    fontSize: typography.button.fontSize,
-    fontWeight: "800",
-    color: "#FFFFFF",
-    textAlign: "center",
-  },
-
-  loadingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-  },
-
-  buttonHint: {
-    marginTop: spacing.sm,
-    fontSize: typography.caption.fontSize,
-    lineHeight: 18,
-    color: colors.textSecondary,
-    textAlign: "center",
-  },
-
-  infoBox: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.sm,
-    marginTop: spacing.lg,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryLight,
-  },
-
-  infoIcon: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: colors.primary,
-  },
-
-  infoText: {
-    flex: 1,
-    fontSize: typography.caption.fontSize,
-    lineHeight: 19,
-    color: colors.text,
-  },
-
-  bottomSpace: {
-    height: spacing.xxl,
-  },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.52)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: spacing.lg,
-  },
-
-  messageModal: {
-    width: "100%",
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    alignItems: "center",
-  },
-
-  modalIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.md,
-  },
-
-  successIcon: {
-    backgroundColor: colors.successLight,
-  },
-
-  errorIcon: {
-    backgroundColor: colors.dangerLight,
-  },
-
-  modalIconText: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: colors.text,
-  },
-
-  messageTitle: {
-    fontSize: typography.heading.fontSize,
-    fontWeight: "800",
-    color: colors.text,
-    textAlign: "center",
-  },
-
-  messageText: {
-    fontSize: typography.body.fontSize,
-    color: colors.textSecondary,
-    marginTop: spacing.sm,
-    lineHeight: 22,
-    textAlign: "center",
-  },
-
-  modalButton: {
-    width: "100%",
-    minHeight: 50,
-    borderRadius: radius.md,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.lg,
-  },
-
-  modalButtonText: {
-    fontSize: typography.button.fontSize,
-    fontWeight: "700",
-    color: "#FFFFFF",
-    textAlign: "center",
-  },
-
-  viewVehiclesButton: {
-    width: "100%",
-    minHeight: 46,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: spacing.sm,
-  },
-
-  viewVehiclesButtonText: {
-    fontSize: typography.bodyMedium.fontSize,
-    fontWeight: "700",
-    color: colors.text,
-  },
-
-  photoViewerOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.94)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: spacing.md,
-  },
-
-  photoViewerContent: {
-    width: "100%",
-    alignItems: "center",
-  },
-
-  photoViewerImage: {
-    width: "100%",
-    height: "80%",
-  },
-
-  photoViewerClose: {
-    marginTop: spacing.lg,
-    color: "#FFFFFF",
-    fontSize: typography.body.fontSize,
-  },
+  container: { flex: 1, backgroundColor: colors.background },
+  content: { padding: 16, paddingBottom: 36, width: "100%", maxWidth: 820, alignSelf: "center" },
+  topBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", minHeight: 44, marginBottom: 12 },
+  hero: { backgroundColor: colors.primary, borderRadius: 20, padding: 22, marginBottom: 20, gap: 9 },
+  eyebrow: { color: colors.white, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  title: { color: colors.white, fontSize: 27, fontWeight: "800" },
+  subtitle: { color: colors.white, fontSize: 14, lineHeight: 21 },
+  card: { backgroundColor: colors.surface, borderRadius: 18, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: colors.border },
+  sectionHeading: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 20 },
+  sectionNumber: { width: 36, height: 36, borderRadius: 11, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  sectionNumberText: { color: colors.primary, fontSize: 12, fontWeight: "800" },
+  grow: { flex: 1 },
+  sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
+  sectionSubtitle: { color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 4 },
+  label: { color: colors.text, fontSize: 13, fontWeight: "700", marginBottom: 9 },
+  required: { color: colors.primary, fontWeight: "700" },
+  input: { minHeight: 58, borderWidth: 1, borderColor: colors.border, borderRadius: 13, backgroundColor: colors.background, paddingHorizontal: 15, paddingVertical: 12, color: colors.text, fontSize: 22, fontWeight: "800", letterSpacing: 1.2 },
+  inputError: { borderColor: colors.primary, borderWidth: 2 },
+  helperText: { color: colors.textSecondary, fontSize: 12, lineHeight: 19, marginTop: 10 },
+  errorText: { color: colors.primaryDark, fontSize: 13, lineHeight: 19, marginTop: 10 },
+  cameraCapture: { minHeight: 205, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, borderRadius: 14, backgroundColor: colors.background, alignItems: "center", justifyContent: "center", padding: 20 },
+  cameraIconCircle: { width: 54, height: 54, borderRadius: 17, backgroundColor: colors.primaryLight, alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  cameraTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
+  cameraSubtitle: { color: colors.textSecondary, fontSize: 13, marginTop: 6 },
+  cameraAction: { backgroundColor: colors.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 12, marginTop: 18 },
+  cameraActionText: { color: colors.white, fontSize: 13, fontWeight: "800" },
+  photoPreviewContainer: { borderRadius: 14, borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
+  photoPreview: { width: "100%", aspectRatio: 16 / 9, maxHeight: 320, backgroundColor: colors.background },
+  previewBadge: { position: "absolute", right: 10, bottom: 10, backgroundColor: colors.surface, borderRadius: 999, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 7 },
+  previewBadgeText: { color: colors.text, fontSize: 11, fontWeight: "700" },
+  photoStatusRow: { flexDirection: "row", alignItems: "center", gap: 8, padding: 13 },
+  photoStatusText: { color: colors.textSecondary, fontSize: 13, flex: 1, lineHeight: 19 },
+  photoActions: { flexDirection: "row", flexWrap: "wrap", padding: 12, paddingTop: 0, gap: 10 },
+  secondaryButton: { flexGrow: 1, minHeight: 44, flexDirection: "row", gap: 7, alignItems: "center", justifyContent: "center", borderRadius: 11, borderWidth: 1, borderColor: colors.primary, paddingHorizontal: 12 },
+  secondaryButtonText: { color: colors.primary, fontSize: 13, fontWeight: "700" },
+  removeButton: { flexDirection: "row", gap: 6, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: colors.border },
+  removeButtonText: { color: colors.textSecondary, fontSize: 13, fontWeight: "700" },
+  retryNotice: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 14, backgroundColor: colors.primaryLight, borderRadius: 13, marginBottom: 16 },
+  retryText: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 20 },
+  actionButton: { minHeight: 54, flexDirection: "row", gap: 10, alignItems: "center", justifyContent: "center", borderRadius: 14, padding: 15, backgroundColor: colors.primary },
+  submitText: { color: colors.white, fontSize: 15, fontWeight: "800", flexShrink: 1 },
+  footer: { color: colors.textSecondary, fontSize: 12, lineHeight: 19, textAlign: "center", marginTop: 12 },
+  pressed: { opacity: 0.8 }, disabled: { opacity: 0.5 },
+  photoViewerOverlay: { flex: 1, backgroundColor: "#111111" },
+  viewerClose: { flexDirection: "row", gap: 8, minHeight: 48, alignItems: "center", alignSelf: "flex-end", paddingHorizontal: 18 },
+  viewerCloseText: { color: colors.white, fontSize: 14, fontWeight: "700" },
+  photoViewerImage: { flex: 1, width: "100%" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center", padding: 20 },
+  messageModal: { width: "100%", maxWidth: 440, borderRadius: 20, backgroundColor: colors.surface, padding: 24, alignItems: "center" },
+  modalIcon: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", marginBottom: 14 },
+  successIcon: { backgroundColor: "#E8F5EE" }, errorIcon: { backgroundColor: colors.primaryLight },
+  modalVehicle: { color: colors.textSecondary, fontSize: 13, fontWeight: "700", marginBottom: 8 },
+  messageTitle: { color: colors.text, fontSize: 21, fontWeight: "800", textAlign: "center" },
+  messageText: { color: colors.textSecondary, fontSize: 14, lineHeight: 22, marginTop: 10, textAlign: "center" },
+  modalButton: { width: "100%", minHeight: 48, borderRadius: 12, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center", padding: 12, marginTop: 22 },
+  modalButtonText: { color: colors.white, fontSize: 14, fontWeight: "800" },
+  viewVehiclesButton: { width: "100%", minHeight: 46, borderRadius: 12, borderWidth: 1, borderColor: colors.primary, alignItems: "center", justifyContent: "center", padding: 12, marginTop: 10 },
+  viewVehiclesButtonText: { color: colors.primary, fontSize: 14, fontWeight: "700" },
 });

@@ -1,0 +1,42 @@
+process.chdir(require("node:path").resolve(__dirname, "../.."));
+const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
+const ts = require('typescript');
+const source = fs.readFileSync('src/lib/advisor-dashboard-counts.ts', 'utf8'), exportsOut = {};
+vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: 7, module: 1 } }).outputText, { exports: exportsOut });
+const { countDashboardVisits, readAllPages, queueItems, uniqueVisitCount } = exportsOut;
+const visit = (id, stage, owner = 'me', status = 'PENDING', closed_at = null) => ({ id, current_stage: stage, current_assigned_to: owner, current_status: status, closed_at });
+const rows = [visit('mine', 'PENDING_SURVEY'), visit('other', 'PENDING_SURVEY', 'other'), visit('claim', 'CLAIM_INTIMATION', 'other'), visit('intake', 'ADVISOR_ASSIGNED', 'other'), visit('shared', 'PENDING_ADVISOR', null), visit('own-intake', 'ADVISOR_ASSIGNED'), visit('floor', 'FLOOR', 'floor-user'), visit('other-floor', 'FLOOR', 'other-floor-user'), visit('store', 'STORE', 'store-user'), visit('old', 'PENDING_SURVEY', 'me', 'PENDING', '2026-10-01T00:00:00Z'), visit('done', 'PENDING_SURVEY', 'me', 'COMPLETED'), visit('reassigned', 'PENDING_APPROVAL', 'other')];
+const owned = new Set(['mine', 'own-intake', 'floor', 'store', 'reassigned']);
+(async () => {
+    const advisor = countDashboardVisits([...rows, rows[0]], 'advisor', 'me', owned);
+    assert.equal(advisor.SURVEY, 1);
+    assert.equal(advisor.CLAIM_INTIMATION, 0);
+    assert.equal(advisor.INTAKE, 1);
+    assert.equal(advisor.FLOOR, 1);
+    assert.equal(advisor.STORE, 1);
+    assert.equal(advisor.APPROVAL, 0);
+    const admin = countDashboardVisits(rows, 'ceo_admin', 'admin', new Set());
+    assert.equal(admin.SURVEY, 2);
+    assert.equal(admin.INTAKE, 3);
+    assert.equal(admin.CLAIM_INTIMATION, 1);
+    assert.equal(admin.FLOOR, 2);
+    assert.equal(admin.STORE, 1);
+    assert.equal(admin.APPROVAL, 1);
+    const noAssignments = countDashboardVisits(rows, 'advisor', 'nobody', new Set());
+    assert.equal(Object.values(noAssignments).reduce((a, b) => a + b, 0), 0);
+    for (const stage of ['CLAIM_INTIMATION', 'PENDING_SURVEY', 'PENDING_APPROVAL', 'APPROVAL_HOLD', 'ADVISOR_WORK']) {
+        const counts = countDashboardVisits([visit(stage, stage, 'other')], 'advisor', 'me', new Set([stage]));
+        assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 0);
+    }
+    assert.equal(uniqueVisitCount([{ visit_id: 'one' }, { visit_id: 'one' }, { visit_id: 'two' }]), 2);
+    assert.throws(() => uniqueVisitCount([{ visit_id: null }]));
+    assert.throws(() => queueItems({ role: 'ceo_admin', items: [] }, 'advisor'));
+    assert.throws(() => queueItems({ role: 'advisor', items: null }, 'advisor'));
+    assert.equal(queueItems({ role: 'advisor', items: [{ visit_id: 'one' }] }, 'advisor').length, 1);
+    const pages = [];
+    const data = await readAllPages(async (from, to) => { pages.push([from, to]); return { data: Array.from({ length: from === 0 ? 500 : 1 }, (_, i) => from + i), error: null }; });
+    assert.equal(data.length, 501);
+    assert.deepEqual(pages, [[0, 499], [500, 999]]);
+    await assert.rejects(() => readAllPages(async () => ({ data: null, error: new Error('No access') })), /No access/);
+    console.log('Dashboard tests passed: Advisor/Admin scoping, shared Intake, reassignment, later-stage ownership, closed visits, duplicates, queue roles, pagination and read errors.');
+})().catch(error => { console.error(error); process.exitCode = 1; });

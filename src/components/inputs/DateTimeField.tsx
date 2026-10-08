@@ -31,6 +31,7 @@ const NativePicker =
 export type DateTimeFieldProps = DateTimeBounds & {
   mode?: "date" | "time" | "datetime";
   title: string;
+  embedded?: boolean;
   description?: string;
   label?: string;
   value: string | null;
@@ -45,6 +46,7 @@ export type DateTimeFieldProps = DateTimeBounds & {
 /** Pagariya date/time card. No database calls, workflow rules or popup ownership. */
 export default function DateTimeField({
   title,
+  embedded = false,
   mode = "datetime",
   description,
   label = mode === "date" ? "Date" : mode === "time" ? "Time" : "Date & time",
@@ -219,11 +221,11 @@ export default function DateTimeField({
   );
 
   return (
-    <View style={styles.card}>
-      <View style={styles.heading}>
+    <View style={embedded ? styles.embedded : styles.card}>
+      {!embedded && <View style={styles.heading}>
         <Text style={styles.title}>{title}</Text>
         {!!description && <Text style={styles.description}>{description}</Text>}
-      </View>
+      </View>}
       {Platform.OS === "web" ? (
         <View
           style={[
@@ -364,6 +366,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     gap: 14,
   },
+  embedded: { gap: 14 },
   heading: { gap: 4 },
   title: { color: colors.text, fontSize: 19, fontWeight: "800" },
   description: { color: colors.textSecondary, fontSize: 13, lineHeight: 21 },

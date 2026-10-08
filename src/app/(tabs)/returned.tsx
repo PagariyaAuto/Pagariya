@@ -370,6 +370,7 @@ export default function ReturnedScreen() {
       style={styles.container}
       edges={["top", "bottom"]}
     >
+      <ScrollView keyboardShouldPersistTaps="always" showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}>
       <View style={styles.header}>
         <BackButton accessibilityLabel="Go back" onPress={handleNavigationBack} />
 
@@ -511,17 +512,7 @@ export default function ReturnedScreen() {
         </View>
       ) : (
         <>
-          <ScrollView
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={colors.primary}
-              />
-            }
-          >
+          <View style={styles.listContent}>
             {pageEvents.length === 0 ? (
               <View style={styles.emptyState}>
                 <View style={styles.emptyIcon}>
@@ -708,7 +699,7 @@ export default function ReturnedScreen() {
                 );
               })
             )}
-          </ScrollView>
+          </View>
 
           {filteredEvents.length > 0 && (
             <View style={styles.pagination}>
@@ -783,6 +774,7 @@ export default function ReturnedScreen() {
           )}
         </>
       )}
+    </ScrollView>
     </SafeAreaView>
   );
 }

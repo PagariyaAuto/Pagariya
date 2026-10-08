@@ -1043,27 +1043,11 @@ export default function AdvisorIntakeFormScreen() {
           error
         );
 
-        let message =
-          error?.message ??
-          "The vehicle intake could not be saved.";
-
-        /*
-         * Supabase/PostgREST sometimes returns
-         * the function error inside details/hint.
-         */
-        if (
-          error?.details &&
-          typeof error.details ===
-            "string"
-        ) {
-          message = error.details;
-        }
-
         setPopup(
           showPopup(
             "error",
             "Unable to save Vehicle Intake",
-            `${message}\n\nNo workflow stage change was completed.`
+            "We couldn’t confirm that the intake was saved. Please refresh the vehicle before trying again. If the problem continues, contact CEO Admin."
           )
         );
       } finally {

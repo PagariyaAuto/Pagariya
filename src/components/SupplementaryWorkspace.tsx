@@ -1,3 +1,5 @@
+import useVisitDateTimeBounds from "./inputs/useVisitDateTimeBounds";
+import StoreInchargePicker from "./store/StoreInchargePicker";
 import { Modal, ScrollView, TextInput } from "./inputs/KeyboardAware";
 import useDateTimeValidation from "./inputs/useDateTimeValidation";
 import BackButton from "./navigation/BackButton";
@@ -15,6 +17,7 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -1220,6 +1223,10 @@ export default function SupplementaryWorkspace({
 
   const [workPath, setWorkPath] = useState("DENTING_PAINTING_PARTS");
 
+  const [selectedStoreInchargeId, setSelectedStoreInchargeId] = useState<string | null>(null);
+
+  useEffect(() => { setSelectedStoreInchargeId(null); }, [params.visitId]);
+
   const [requisition, setRequisition] = useState("");
 
   const [date, setDate] = useState(new Date());
@@ -1362,7 +1369,9 @@ export default function SupplementaryWorkspace({
     return result;
   }, [detail, isFloor, params.visitId]);
 
+  const visitDates = useVisitDateTimeBounds(detail ? params.visitId : undefined);
   const load = useCallback(async () => {
+    visitDates.reload();
     setLoading(true);
     setError("");
 
@@ -1388,7 +1397,7 @@ export default function SupplementaryWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [detail, fetchQueue, isFloor, params.visitId]);
+  }, [detail, fetchQueue, isFloor, params.visitId, visitDates.reload]);
 
   useFocusEffect(
     useCallback(() => {
@@ -1529,6 +1538,15 @@ export default function SupplementaryWorkspace({
     return path;
   };
 
+  const actionDateError = (args: Record<string, unknown>) => {
+    for (const key of ["p_survey_at", "p_decision_at", "p_requisition_at"]) {
+      if (key in args) {
+        const error = visitDates.validate(typeof args[key] === "string" ? args[key] as string : null);
+        if (error) return error;
+      }
+    }
+    return null;
+  };
   const perform = async (
     operation: string,
     args: Record<string, unknown>,
@@ -1540,6 +1558,8 @@ export default function SupplementaryWorkspace({
     setBusy(true);
 
     try {
+      const rangeError = actionDateError(args);
+      if (rangeError) throw new Error(rangeError);
       const current = (await fetchQueue()).items.find(
         (x) => x.visit_id === item.visit_id,
       );
@@ -1598,7 +1618,7 @@ export default function SupplementaryWorkspace({
     args: Record<string, unknown>,
     folder?: string,
   ) => {
-    const dateError = dateValidation.getError();
+    const dateError = dateValidation.getError() || actionDateError(args);
     if (dateError) { setMessage({ title: "Check date & time", body: dateError }); return; }
     setMessage({
       title,
@@ -1698,7 +1718,7 @@ export default function SupplementaryWorkspace({
 
 
 
-  const dateInput = <DateValueField onValidationError={dateValidation.field(surveyStage ? "Survey completed at" : partsStage ? "Requisition date and time" : "Decision date and time")} label={surveyStage ? "Survey completed at" : partsStage ? "Requisition date and time" : "Decision date and time"}
+  const dateInput = <DateValueField {...visitDates.bounds()} error={visitDates.error} onValidationError={dateValidation.field(surveyStage ? "Survey completed at" : partsStage ? "Requisition date and time" : "Decision date and time")} label={surveyStage ? "Survey completed at" : partsStage ? "Requisition date and time" : "Decision date and time"}
  value={date} onChange={setDate} maximumDate="now" disabled={busy} active={!message && !viewer} />;
   const remarkInput = (
     <View style={styles.card}>
@@ -2504,6 +2524,7 @@ export default function SupplementaryWorkspace({
                               );
                             })}
                           </View>
+                          <StoreInchargePicker value={selectedStoreInchargeId} onChange={setSelectedStoreInchargeId} disabled={busy} />
                           <Text style={styles.fieldLabel}>
                             Requisition number *
                           </Text>
@@ -2519,15 +2540,16 @@ export default function SupplementaryWorkspace({
                         {remarkInput}
                         <Button
                           title="Save Requirement → Store"
-                          disabled={busy || !requisition.trim()}
+                          disabled={busy || !requisition.trim() || !selectedStoreInchargeId}
                           onPress={() =>
                             confirm(
                               "Send supplementary requirement to Store?",
                               "Create a separate requisition for this supplementary cycle.",
-                              "new_workflow_supplementary_parts",
+                              "new_workflow_supplementary_parts_assigned",
                               {
                                 p_cycle_id: cycle!.id,
                                 p_work_path: workPath,
+                                p_store_incharge_id: selectedStoreInchargeId,
                                 p_requisition_no: requisition.trim(),
                                 p_requisition_at: date.toISOString(),
                                 p_remarks: remarks.trim() || null,

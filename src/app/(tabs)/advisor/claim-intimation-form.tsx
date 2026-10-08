@@ -290,12 +290,11 @@ export default function ClaimIntimationFormScreen() {
 
   const returnToQueue = () => {
     setNotice(null);
-    if (typeof router.dismissTo === "function") router.dismissTo(QUEUE);
-    else router.replace(QUEUE);
+    router.replace(QUEUE);
   };
   const leave = () => {
     if (busy.current) return;
-    if (dirty && !completed)
+    if (dirty && !completed && context && !loadError)
       setNotice({
         kind: "discard",
         title: "Leave this form?",
@@ -310,20 +309,18 @@ export default function ClaimIntimationFormScreen() {
         "hardwareBackPress",
         () => {
           if (busy.current) return true;
-          if (dirty && !completed)
+          if (dirty && !completed && context && !loadError)
             setNotice({
               kind: "discard",
               title: "Leave this form?",
               message: "Your unsaved claim details will be discarded.",
             });
-          else if (typeof router.dismissTo === "function")
-            router.dismissTo(QUEUE);
           else router.replace(QUEUE);
           return true;
         },
       );
       return () => subscription.remove();
-    }, [dirty, completed, router]),
+    }, [dirty, completed, context, loadError, router]),
   );
   const closeNotice = () => {
     if (busy.current) return;
@@ -460,7 +457,18 @@ export default function ClaimIntimationFormScreen() {
                   Your claim details and actual claim time have been recorded.
                 </Text>
                 <Text style={styles.badge}>Next: Pending Survey</Text>
-                <Button title="Return to Claim queue" onPress={leave} />
+                <View style={styles.row}>
+                  <View style={styles.grow}>
+                    <Button title="Claim Queue" onPress={leave} secondary disabled={saving} />
+                  </View>
+                  <View style={styles.grow}>
+                    <Button title="Survey" disabled={saving} onPress={() => {
+                      if (busy.current || !completed) return;
+                      setNotice(null);
+                      router.replace("/(tabs)/advisor/survey");
+                    }} />
+                  </View>
+                </View>
               </View>
             ) : loading ? (
               <View style={styles.empty}>
@@ -476,7 +484,7 @@ export default function ClaimIntimationFormScreen() {
                   onPress={() => void load()}
                   secondary
                 />
-                <Button title="Return to Claim queue" onPress={leave} />
+                <Button title="Return to Claim queue" onPress={returnToQueue} />
               </View>
             ) : (
               context && (

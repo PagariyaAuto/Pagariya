@@ -24,7 +24,7 @@ for (const [file, name, expected] of [
     ['src/app/(tabs)/advisor/billing.tsx', 'values', 'throws']
 ]) {
     const popups = [];
-    const scope = { dateValidation: { getError: () => 'Bad selection' }, showPopup: (...args) => popups.push(args), setMessage: msg => popups.push(msg) };
+    const scope = { dateErrors: { current: { surveyDate: 'Bad selection' } }, markInvalid: (_field, message) => message, dateValidation: { getError: () => 'Bad selection' }, showPopup: (...args) => popups.push(args), setMessage: msg => popups.push(msg) };
     const fn = vm.runInNewContext(compile('(' + snippet(file, name) + ')'), scope);
     if (expected === 'throws')
         assert.throws(() => fn(), /Bad selection/);
@@ -35,3 +35,52 @@ for (const [file, name, expected] of [
     checks++;
 }
 console.log(`${checks} rejected-date guard scenarios passed: independent fields, correction, Survey, Approval, Advisor Work, all Store actions, Supplementary and Advisor Billing.`);
+
+// Survey errors identify the control to reveal after the popup closes.
+const surveyFile = 'src/app/(tabs)/advisor/survey_form.tsx';
+const surveyScope = {
+  visitDates: { validate: () => null }, surveyCompletedAt: new Date(), approvalReceivedAt: new Date(),
+  dateValidation: { getError: () => undefined }, dateErrors: { current: {} },
+  approvalStatus: 'PENDING', workTypesLoading: false, workTypesError: '',
+  workTypes: [{ id: 'strip', code: 'STRIPPING', is_active: true }],
+  selectedWorkTypeIds: ['strip'], isInsurance: false, isPaid: true,
+  vehicle: {}, visitId: 'visit', vehicleId: 'vehicle', insuranceType: 'PAID',
+  paidAmount: '2500', receiptReferenceNo: 'REF-01',
+};
+for (const [changes, expected] of [
+  [{ paidAmount: '' }, 'amount'],
+  [{ paidAmount: 'invalid' }, 'amount'],
+  [{ paidAmount: '-1' }, 'amount'],
+  [{ receiptReferenceNo: '' }, 'receipt'],
+  [{ approvalStatus: 'RECEIVED', selectedWorkTypeIds: [] }, 'work'],
+  [{ approvalStatus: 'RECEIVED', isInsurance: true, isPaid: false, selectedWorkTypeIds: [] }, 'work'],
+  [{ dateValidation: { getError: () => 'Invalid survey' }, dateErrors: { current: { surveyDate: 'Invalid survey' } } }, 'surveyDate'],
+  [{ dateValidation: { getError: () => 'Invalid approval' }, dateErrors: { current: { approvalDate: 'Invalid approval' } } }, 'approvalDate'],
+]) {
+  let field;
+  const scope = { ...surveyScope, ...changes, markInvalid: (key, message) => { field = key; return message; } };
+  const fn = vm.runInNewContext(compile('(' + snippet(surveyFile, 'validateForm') + ')'), scope);
+  assert.equal(typeof fn(), 'string');
+  assert.equal(field, expected);
+  assert.equal(scope.vehicleId, 'vehicle');
+  checks++;
+}
+let marked;
+const pendingErrorField = { current: null };
+const mark = vm.runInNewContext(compile('(' + snippet(surveyFile, 'markInvalid') + ')'), { pendingErrorField, setFieldError: value => { marked = value; } });
+assert.equal(mark('photo', 'Add a photo'), 'Add a photo');
+assert.equal(pendingErrorField.current, 'photo');
+assert.equal(marked.field, 'photo');
+let cleared = false, dismissed = false, scrolled;
+const close = vm.runInNewContext(compile('(' + snippet(surveyFile, 'closePopup') + ')'), {
+  INITIAL_POPUP: {}, setPopup: () => { cleared = true; }, pendingErrorField,
+  Keyboard: { dismiss: () => { dismissed = true; } }, requestAnimationFrame: fn => fn(),
+  fieldViews: { current: { photo: { measureInWindow: fn => fn(0, 500) } } },
+  viewportRef: { current: { measureInWindow: fn => fn(0, 20) } },
+  scrollRef: { current: { scrollTo: value => { scrolled = value; } } }, scrollOffset: { current: 100 },
+});
+close();
+assert(cleared && dismissed);
+assert.equal(scrolled.y, 560);
+assert.equal(pendingErrorField.current, null);
+console.log('10 Survey field-target and popup-scroll checks passed.');
