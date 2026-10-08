@@ -1,22 +1,11 @@
+import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useIsFocused } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Platform, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../../lib/supabase";
 import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
@@ -334,7 +323,7 @@ export default function MITypes() {
       </View>
       <ScrollView
         contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -590,7 +579,7 @@ export default function MITypes() {
           >
             <ScrollView
               contentContainerStyle={styles.modalScroll}
-              keyboardShouldPersistTaps="handled"
+              keyboardShouldPersistTaps="always"
             >
               <View style={styles.dialog}>
                 {dialog?.kind === "editor" && (

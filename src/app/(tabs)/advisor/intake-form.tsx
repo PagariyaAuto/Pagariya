@@ -1,3 +1,4 @@
+import { KeyboardAvoidingView, ScrollView } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
 import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
@@ -9,17 +10,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  View
-} from "react-native";
+import { ActivityIndicator, Platform, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import IntakeCustomerSection from "./components/intake/IntakeCustomerSection";
@@ -1280,7 +1271,7 @@ export default function AdvisorIntakeFormScreen() {
           contentContainerStyle={
             styles.content
           }
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={
             false
           }

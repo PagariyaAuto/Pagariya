@@ -1,3 +1,4 @@
+import { ScrollView } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -10,16 +11,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import {
-  ActivityIndicator,
-  BackHandler,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, BackHandler, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,

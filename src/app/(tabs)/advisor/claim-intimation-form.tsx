@@ -1,3 +1,4 @@
+import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
   useFocusEffect,
@@ -6,20 +7,7 @@ import {
   useRouter,
 } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  BackHandler,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../../lib/supabase";
 import DateTimeField from "../../../components/inputs/DateTimeField";
@@ -445,7 +433,7 @@ export default function ClaimIntimationFormScreen() {
           </View>
           <ScrollView
             ref={scrollRef}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
             keyboardDismissMode={
               Platform.OS === "ios" ? "interactive" : "on-drag"

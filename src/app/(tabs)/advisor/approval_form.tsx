@@ -1,23 +1,12 @@
+import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
+import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import BackButton from "../../../components/navigation/BackButton";
 import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import DateValueField from "../../../components/inputs/DateValueField";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Image, Platform, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
@@ -153,6 +142,7 @@ function getDecisionDescription(decision: Decision) {
 }
 
 export default function ApprovalFormScreen() {
+  const dateValidation = useDateTimeValidation();
   const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
   const handleNavigationBack = () => {
     if (saving) return;
@@ -207,7 +197,7 @@ export default function ApprovalFormScreen() {
 
   const [decisionAt, setDecisionAt] = useState<Date>(() => new Date());
 
-  const [showDatePicker, setShowDatePicker] = useState(false);
+
 
   const [remarks, setRemarks] = useState("");
 
@@ -428,31 +418,9 @@ export default function ApprovalFormScreen() {
     loadData();
   }, [loadData]);
 
-  const openDatePicker = () => {
-    if (Platform.OS === "web") {
-      setDecisionAt(new Date());
 
-      showPopup(
-        "info",
-        "Date & Time",
-        "On web, the current date and time will be used.",
-      );
 
-      return;
-    }
 
-    setShowDatePicker(true);
-  };
-
-  const handleDateChange = (event: any, selectedDate?: Date) => {
-    if (Platform.OS !== "ios") {
-      setShowDatePicker(false);
-    }
-
-    if (selectedDate) {
-      setDecisionAt(selectedDate);
-    }
-  };
 
   /*
    * CAMERA
@@ -631,6 +599,8 @@ export default function ApprovalFormScreen() {
    */
 
   const validateBeforeSubmit = () => {
+    const dateError = dateValidation.getError();
+    if (dateError) { showPopup("warning", "Check date & time", dateError); return false; }
     if (!visitId) {
       showPopup("error", "Missing Visit", "Visit information is missing.");
 
@@ -957,7 +927,7 @@ export default function ApprovalFormScreen() {
         <ScrollView
           style={styles.container}
           contentContainerStyle={styles.contentContainer}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >
           {/* HEADER */}
@@ -1270,37 +1240,10 @@ export default function ApprovalFormScreen() {
 
           {/* DATE / TIME */}
 
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Decision Date & Time</Text>
-
-            <Text style={styles.sectionDescription}>
-              Enter the actual date and time when the approval decision was
-              received.
-            </Text>
-
-            <Pressable style={styles.dateTimeButton} onPress={openDatePicker}>
-              <View style={styles.dateTimeContent}>
-                <Text style={styles.dateTimeLabel}>Approval Date & Time</Text>
-
-                <Text style={styles.dateTimeValue}>
-                  {formatDateTime(decisionAt)}
-                </Text>
-              </View>
-
-              <View style={styles.calendarIconContainer}>
-                <Text style={styles.calendarIcon}>📅</Text>
-              </View>
-            </Pressable>
-
-            {showDatePicker && Platform.OS !== "web" && (
-              <DateTimePicker
-                value={decisionAt}
-                mode="datetime"
-                display={Platform.OS === "ios" ? "spinner" : "default"}
-                onChange={handleDateChange}
-              />
-            )}
-          </View>
+          <DateValueField onValidationError={dateValidation.field("Approval Date & Time")} title="Decision Date & Time" label="Approval Date & Time"
+ description="Enter the actual date and time when the approval decision was received."
+ value={decisionAt} onChange={setDecisionAt} maximumDate="now"
+ disabled={saving} active={!popup.visible && !showConfirmation} />
 
           {/* PHOTO */}
 

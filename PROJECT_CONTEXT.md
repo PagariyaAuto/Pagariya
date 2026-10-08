@@ -1863,3 +1863,16 @@ TypeScript, Expo web export and rollback-only live workflow/RLS tests passed. Su
 Before implementation, inspect actual Git remote/branch/worktree, package and lockfile versions, route tree, Supabase client, app configuration and EAS profiles. For database work inspect `information_schema.tables/columns`, `pg_constraint`, `pg_indexes`, `pg_trigger`, `pg_proc` with `pg_get_functiondef()`, `pg_policies`, table RLS flags, Storage buckets/policies and Auth configuration. Trace legacy and new function callers; check signatures, overloads, grants, security settings, ownership and current schema rather than executing the historical inventory as SQL.
 
 Verify single-open-stage behavior, active job selection, billing role identifiers, complete role permissions, document workflow status, frontend completion and all source conflicts above. Record findings as confirmed facts or **NEEDS VERIFICATION**, and keep this context synchronized with implementation changes.
+
+
+## Shared date/time and keyboard UI — 8 October 2026
+
+- Synced refactor/vehicle-workflow before migration (baseline merge 6d7eb0e).
+- DateTimeField supports date, time and datetime modes. Values stay UTC ISO; presentation and browser input use IST. Date-only edits retain the clock; time-only edits retain the date.
+- Editable Survey, Approval, Advisor Work, Store, Supplementary and Billing controls use the shared field; Claim Intimation retains its Gate In-to-current-time range and custom submit popup. Saved approval/handoff/invoice history remains locked.
+- DateValueField adapts existing Date state; billing adapters retain existing minute-based IST strings and RPC payload conversion. Rejected selections are retained by useDateTimeValidation until corrected or the field unmounts.
+- Shared keyboard wrappers observe outside touches without claiming the responder, preserve refs/callbacks, allow first-tap buttons, reveal focused inputs and cover modal windows. Existing KeyboardAvoidingView layouts are retained; iOS scroll insets are enabled only where an ancestor is not already avoiding the keyboard.
+- Removed the unreachable legacy date picker from vehicle-detail after verifying no remaining opener/caller; legacy SurveyForm fields also use the shared picker.
+- Database calls, RPC arguments, routing destinations, dependencies and native build configuration unchanged by this refactor.
+- Checks: TypeScript; node scripts/check-ui-inputs.cjs; Android/iOS/web Expo bundle export; comparison of database calls and route arguments against the synced baseline.
+- NEEDS VERIFICATION: hands-on Android/iOS keyboard scrolling, first-tap buttons, modal forms and picker dismissal on physical devices. Bundling and simulated callback tests do not establish device UX verification.

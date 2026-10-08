@@ -1,13 +1,7 @@
+import { Modal, ScrollView } from "../../../../../components/inputs/KeyboardAware";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import {
-  Image,
-  Modal,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
+import { Image, Pressable, Text, View } from "react-native";
 import type { ReactNode } from "react";
 import { colors } from "../../../../../theme";
 

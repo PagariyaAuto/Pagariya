@@ -1,9 +1,11 @@
+import { Modal, ScrollView, TextInput } from "./inputs/KeyboardAware";
+import useDateTimeValidation from "./inputs/useDateTimeValidation";
 import BackButton from "./navigation/BackButton";
 import BrandPill from "./navigation/BrandPill";
 import { returnToRoute, singleParam } from "../lib/back-navigation";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
-import DateTimePicker from "@react-native-community/datetimepicker";
+import DateValueField from "./inputs/DateValueField";
 
 import * as ImagePicker from "expo-image-picker";
 
@@ -17,22 +19,7 @@ import React, {
   useState,
 } from "react";
 
-import {
-  ActivityIndicator,
-  BackHandler,
-  Image,
-  Modal,
-  Platform,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ActivityIndicator, BackHandler, Image, Platform, RefreshControl, StatusBar, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -1195,6 +1182,7 @@ export default function SupplementaryWorkspace({
   floor?: boolean;
   detail?: boolean;
 }) {
+  const dateValidation = useDateTimeValidation();
   const params = useLocalSearchParams<{
     visitId?: string;
     floor?: string;
@@ -1236,7 +1224,7 @@ export default function SupplementaryWorkspace({
 
   const [date, setDate] = useState(new Date());
 
-  const [dateStep, setDateStep] = useState<"date" | "time" | null>(null);
+
 
   const [photoUri, setPhotoUri] = useState<string | null>(null);
 
@@ -1609,7 +1597,9 @@ export default function SupplementaryWorkspace({
     operation: string,
     args: Record<string, unknown>,
     folder?: string,
-  ) =>
+  ) => {
+    const dateError = dateValidation.getError();
+    if (dateError) { setMessage({ title: "Check date & time", body: dateError }); return; }
     setMessage({
       title,
       body,
@@ -1618,6 +1608,7 @@ export default function SupplementaryWorkspace({
         void perform(operation, args, folder);
       },
     });
+  };
 
   const showEvidence = async (evidence: Evidence) => {
     try {
@@ -1705,21 +1696,10 @@ export default function SupplementaryWorkspace({
     );
   };
 
-  const dateInput = (
-    <View style={styles.card}>
-      <Text style={styles.fieldLabel}>
-        {surveyStage
-          ? "Survey completed at"
-          : partsStage
-            ? "Requisition date and time"
-            : "Decision date and time"}
-      </Text>
-      <TouchableOpacity onPress={() => setDateStep("date")} disabled={busy}>
-        <Text style={styles.dateText}>{time(date.toISOString())}</Text>
-      </TouchableOpacity>
-    </View>
-  );
 
+
+  const dateInput = <DateValueField onValidationError={dateValidation.field(surveyStage ? "Survey completed at" : partsStage ? "Requisition date and time" : "Decision date and time")} label={surveyStage ? "Survey completed at" : partsStage ? "Requisition date and time" : "Decision date and time"}
+ value={date} onChange={setDate} maximumDate="now" disabled={busy} active={!message && !viewer} />;
   const remarkInput = (
     <View style={styles.card}>
       <Text style={styles.fieldLabel}>
@@ -1884,7 +1864,7 @@ export default function SupplementaryWorkspace({
 
         <ScrollView
           contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           refreshControl={
             <RefreshControl
               refreshing={loading}
@@ -3239,55 +3219,9 @@ export default function SupplementaryWorkspace({
           </SafeAreaView>
         </Modal>
 
-        {Platform.OS !== "web" && dateStep && (
-          <DateTimePicker
-            value={date}
-            mode={dateStep}
-            maximumDate={new Date()}
-            onChange={(event, selected) => {
-              if (event.type === "dismissed") {
-                setDateStep(null);
-                return;
-              }
-              if (selected) setDate(selected);
-              setDateStep(dateStep === "date" ? "time" : null);
-            }}
-          />
-        )}
 
-        {Platform.OS === "web" && (
-          <Modal
-            visible={!!dateStep}
-            transparent
-            onRequestClose={() => setDateStep(null)}
-          >
-            <SafeAreaView
-              style={styles.overlay}
-              edges={["top", "right", "bottom", "left"]}
-            >
-              <View style={styles.dialog}>
-                <Text style={styles.subtitle}>Date and time (IST)</Text>
-                {React.createElement("input", {
-                  type: "datetime-local",
-                  value: new Date(date.getTime() + 330 * 60000)
-                    .toISOString()
-                    .slice(0, 16),
-                  onChange: (event: { target: { value: string } }) => {
-                    const selected = new Date(event.target.value + ":00+05:30");
-                    if (!Number.isNaN(selected.getTime())) setDate(selected);
-                  },
-                  style: {
-                    padding: 14,
-                    fontSize: 16,
-                    border: "1px solid #cbd5e1",
-                    borderRadius: 8,
-                  },
-                })}
-                <Button title="Done" onPress={() => setDateStep(null)} />
-              </View>
-            </SafeAreaView>
-          </Modal>
-        )}
+
+
       </SafeAreaView>
     </FloorDesign.Provider>
   );

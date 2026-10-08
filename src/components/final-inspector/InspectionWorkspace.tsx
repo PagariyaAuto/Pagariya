@@ -1,10 +1,11 @@
+import { ScrollView, TextInput } from "../inputs/KeyboardAware";
 import BackButton from "../navigation/BackButton";
 import BrandPill from "../navigation/BrandPill";
 import { returnToRoute, useHardwareBack } from "../../lib/back-navigation";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { formatInspectionTime, InspectionFilter, InspectionVehicle, useFinalInspectorQueue } from "../../lib/final-inspector";
 import { colors } from "../../theme";
@@ -50,7 +51,7 @@ export default function InspectionWorkspace({ dashboard = false }: { dashboard?:
       {dashboard ? <Text style={styles.workspace}>FINAL INSPECTOR</Text> : <BackButton onPress={handleNavigationBack} />}
       <BrandPill />
     </View>
-    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} colors={[colors.primary]} tintColor={colors.primary} />}>
+    <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} colors={[colors.primary]} tintColor={colors.primary} />}>
       <View style={styles.hero}>
         <View pointerEvents="none" style={styles.heroCircle} />
         <Text style={styles.heroPill}>QUALITY BEFORE HANDOVER</Text>

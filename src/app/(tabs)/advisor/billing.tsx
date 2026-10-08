@@ -1,20 +1,14 @@
+import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
+import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
+import DateTimeField from "../../../components/inputs/DateTimeField";
+import { parseIndiaLocal } from "../../../lib/date-time";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
 import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../../lib/supabase";
 import { colors } from "../../../theme";
@@ -121,6 +115,7 @@ function parseIndiaInput(input: string) {
 }
 
 export default function AdvisorBillingScreen() {
+  const dateValidation = useDateTimeValidation();
   const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
   const handleNavigationBack = () => {
     if (saving) return;
@@ -272,6 +267,8 @@ export default function AdvisorBillingScreen() {
       ? preSent && liabilityReceived
       : verified);
   const values = () => {
+    const dateError = dateValidation.getError();
+    if (dateError) throw new Error(dateError);
     if (!selected) throw new Error("Select a vehicle.");
     if (selected.job_type === "PAID") {
       if (!verified)
@@ -388,7 +385,7 @@ export default function AdvisorBillingScreen() {
         <BrandPill />
       </View>
       <ScrollView
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
@@ -845,7 +842,7 @@ export default function AdvisorBillingScreen() {
                   }}
                 />
                 {preSent && (
-                  <DateField
+                  <DateField onValidationError={dateValidation.field("Pre-invoice sent date & time")}
                     label="Pre-invoice sent date & time"
                     value={preTime}
                     onChange={setPreTime}
@@ -864,7 +861,7 @@ export default function AdvisorBillingScreen() {
                   onPress={() => setLiabilityReceived(!liabilityReceived)}
                 />
                 {liabilityReceived && (
-                  <DateField
+                  <DateField onValidationError={dateValidation.field("Liability received date & time")}
                     label="Liability received date & time"
                     value={liabilityTime}
                     onChange={setLiabilityTime}
@@ -1083,52 +1080,13 @@ function Check({
     </Pressable>
   );
 }
-function DateField({
-  label,
-  value,
-  onChange,
-  locked,
-  disabled,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  locked: boolean;
-  disabled: boolean;
+function DateField({ label, value, onChange, onValidationError, disabled, locked }: {
+ label: string; value: string; onChange: (value: string) => void; onValidationError: (error: string | null) => void; disabled: boolean; locked: boolean;
 }) {
-  return (
-    <View style={styles.dateField}>
-      <Text style={styles.label}>{label} · IST</Text>
-      {locked ? (
-        <Text style={styles.detailValue}>{value} · saved</Text>
-      ) : (
-        <>
-          <TextInput
-            accessibilityLabel={label + " in IST"}
-            value={value}
-            onChangeText={onChange}
-            editable={!disabled}
-            placeholder="YYYY-MM-DD HH:mm"
-            maxLength={16}
-            autoCorrect={false}
-            style={styles.input}
-          />
-          <View style={styles.row}>
-            <Text style={[styles.hint, styles.grow]}>
-              Format: YYYY-MM-DD HH:mm · 24-hour IST
-            </Text>
-            <Pressable
-              disabled={disabled}
-              accessibilityRole="button"
-              onPress={() => onChange(indiaInput())}
-            >
-              <Text style={styles.secondaryText}>Use current time</Text>
-            </Pressable>
-          </View>
-        </>
-      )}
-    </View>
-  );
+ if (locked) return <View style={styles.dateField}><Text style={styles.label}>{label} · IST</Text><Text style={styles.detailValue}>{value} · saved</Text></View>;
+ return <DateTimeField required onValidationError={onValidationError} title={label} label={label} disabled={disabled} maximumDate="now"
+ value={parseIndiaLocal(value.replace(" ", "T"))?.toISOString() || null}
+ onChange={next => onChange(next ? indiaInput(next) : "")} />;
 }
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },

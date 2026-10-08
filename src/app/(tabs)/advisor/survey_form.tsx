@@ -1,25 +1,13 @@
+import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
+import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
 import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
-import DateTimePicker, {
-  DateTimePickerEvent,
-} from "@react-native-community/datetimepicker";
+import DateValueField from "../../../components/inputs/DateValueField";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Platform, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
@@ -156,180 +144,7 @@ function formatDateTimeForApi(date: Date) {
   return date.toISOString();
 }
 
-function DateTimeField({
-  label,
-  value,
-  onChange,
-  helperText,
-}: {
-  label: string;
-  value: Date;
-  onChange: (value: Date) => void;
-  helperText?: string;
-}) {
-  const [showPicker, setShowPicker] = useState(false);
-  const [pickerMode, setPickerMode] = useState<"date" | "time">("date");
-  const [draftDate, setDraftDate] = useState(value);
 
-  useEffect(() => {
-    setDraftDate(value);
-  }, [value]);
-
-  const openPicker = () => {
-    setDraftDate(value);
-    setPickerMode("date");
-    setShowPicker(true);
-  };
-
-  const handleChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
-    if (Platform.OS === "android") {
-      if (event.type === "dismissed") {
-        setShowPicker(false);
-        return;
-      }
-
-      if (!selectedDate) return;
-
-      if (pickerMode === "date") {
-        const updated = new Date(draftDate);
-        updated.setFullYear(
-          selectedDate.getFullYear(),
-          selectedDate.getMonth(),
-          selectedDate.getDate(),
-        );
-        setDraftDate(updated);
-        setPickerMode("time");
-        return;
-      }
-
-      const updated = new Date(draftDate);
-      updated.setHours(
-        selectedDate.getHours(),
-        selectedDate.getMinutes(),
-        0,
-        0,
-      );
-      setDraftDate(updated);
-      onChange(updated);
-      setShowPicker(false);
-      return;
-    }
-
-    if (selectedDate) {
-      setDraftDate(selectedDate);
-    }
-  };
-
-  if (Platform.OS === "web") {
-    return (
-      <View style={screenStyles.dateDisplay}>
-        <Text style={screenStyles.dateDisplayIcon}>🕒</Text>
-        <View style={screenStyles.dateDisplayCopy}>
-          <Text style={screenStyles.dateDisplayLabel}>{label}</Text>
-          <Text style={screenStyles.dateDisplayValue}>
-            {formatIndiaDateTime(value)}
-          </Text>
-          <Text style={screenStyles.dateDisplayHelper}>
-            Current date & time recorded automatically on Web · IST
-          </Text>
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <View style={screenStyles.dateFieldWrap}>
-      <Text style={styles.label}>
-        {label} <Text style={styles.required}>*</Text>
-      </Text>
-
-      <Pressable
-        onPress={openPicker}
-        style={({ pressed }) => [
-          screenStyles.dateButton,
-          pressed && screenStyles.datePressed,
-        ]}
-      >
-        <Text style={screenStyles.dateButtonIcon}>📅</Text>
-        <View style={screenStyles.dateButtonCopy}>
-          <Text style={screenStyles.dateButtonValue}>
-            {formatIndiaDateTime(value)}
-          </Text>
-          <Text style={screenStyles.dateButtonHelper}>
-            Tap to change date & time
-          </Text>
-        </View>
-        <Text style={screenStyles.dateChevron}>›</Text>
-      </Pressable>
-
-      {Platform.OS === "android" && showPicker && (
-        <DateTimePicker
-          value={draftDate}
-          mode={pickerMode}
-          display="default"
-          onChange={handleChange}
-        />
-      )}
-
-      {Platform.OS === "ios" && (
-        <Modal
-          visible={showPicker}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setShowPicker(false)}
-        >
-          <SafeAreaView
-            style={{ flex: 1 }}
-            edges={["top", "right", "bottom", "left"]}
-          >
-            <View style={screenStyles.iosPickerOverlay}>
-              <View style={screenStyles.iosPickerCard}>
-                <View style={screenStyles.iosPickerHeader}>
-                  <View>
-                    <Text style={screenStyles.iosPickerTitle}>{label}</Text>
-                    <Text style={screenStyles.iosPickerSubtitle}>
-                      Select the actual date and time
-                    </Text>
-                  </View>
-                  <Pressable
-                    onPress={() => setShowPicker(false)}
-                    style={screenStyles.iosCancelButton}
-                  >
-                    <Text style={screenStyles.iosCancelText}>Cancel</Text>
-                  </Pressable>
-                </View>
-
-                <DateTimePicker
-                  value={draftDate}
-                  mode="datetime"
-                  display="spinner"
-                  onChange={handleChange}
-                  style={screenStyles.iosPicker}
-                />
-
-                <Pressable
-                  onPress={() => {
-                    onChange(draftDate);
-                    setShowPicker(false);
-                  }}
-                  style={screenStyles.iosConfirmButton}
-                >
-                  <Text style={screenStyles.iosConfirmText}>
-                    Confirm Date & Time
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          </SafeAreaView>
-        </Modal>
-      )}
-
-      {!!helperText && (
-        <Text style={screenStyles.dateHelper}>{helperText}</Text>
-      )}
-    </View>
-  );
-}
 
 function CustomPopup({
   popup,
@@ -424,6 +239,7 @@ function CustomPopup({
 }
 
 export default function AdvisorSurveyFormScreen() {
+  const dateValidation = useDateTimeValidation();
   const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
   const handleNavigationBack = () => {
     if (saving) return;
@@ -804,6 +620,8 @@ export default function AdvisorSurveyFormScreen() {
   }, [vehicle?.stage_started_at]);
 
   const validateForm = () => {
+    const dateError = dateValidation.getError();
+    if (dateError) return dateError;
     if (approvalStatus === "RECEIVED") {
       if (workTypesLoading)
         return "Please wait for Approved Floor Work to load.";
@@ -1192,7 +1010,7 @@ export default function AdvisorSurveyFormScreen() {
       >
         <ScrollView
           contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >
           {/* TOP BAR */}
@@ -1484,11 +1302,12 @@ export default function AdvisorSurveyFormScreen() {
               subtitle="Enter the actual date and time when the survey was completed"
             />
 
-            <DateTimeField
+            <DateValueField onValidationError={dateValidation.field("Survey Completion Date & Time")}
+ disabled={saving} active={!popup.visible}
               label="Survey Completion Date & Time"
               value={surveyCompletedAt}
               onChange={setSurveyCompletedAt}
-              helperText="This is the Advisor-entered action timestamp. The system also records the actual submission time automatically."
+              description="This is the Advisor-entered action timestamp. The system also records the actual submission time automatically."
             />
 
             <View style={screenStyles.securityNote}>
@@ -1667,11 +1486,12 @@ export default function AdvisorSurveyFormScreen() {
                     );
                   })
                 )}
-                <DateTimeField
+                <DateValueField onValidationError={dateValidation.field("Approval Received Date & Time")}
+ disabled={saving} active={!popup.visible}
                   label="Approval Received Date & Time"
                   value={approvalReceivedAt}
                   onChange={setApprovalReceivedAt}
-                  helperText="Enter the actual date and time when approval was received."
+                  description="Enter the actual date and time when approval was received."
                 />
 
                 <Text style={styles.label}>

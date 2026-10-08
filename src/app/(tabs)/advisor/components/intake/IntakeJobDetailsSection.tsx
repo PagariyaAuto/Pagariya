@@ -1,4 +1,5 @@
-import { Text, TextInput } from "react-native";
+import { TextInput } from "../../../../../components/inputs/KeyboardAware";
+import { Text } from "react-native";
 import { colors } from "../../../../../theme";
 import { FieldLabel, SectionCard } from "./IntakeUI";
 

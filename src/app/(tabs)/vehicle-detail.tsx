@@ -1,21 +1,12 @@
+import { Modal, ScrollView } from "../../components/inputs/KeyboardAware";
 import BackButton from "../../components/navigation/BackButton";
 import { returnToRoute, useHardwareBack } from "../../lib/back-navigation";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
-import DateTimePicker, {
-  DateTimePickerEvent,
-} from "@react-native-community/datetimepicker";
+
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import PhotoViewer from "../../../components/PhotoViewer";
 import AssignedAdvisor from "../../../components/workflow/AssignedAdvisor";
@@ -134,12 +125,10 @@ export default function VehicleDetailScreen() {
   const [claimIntimationAt, setClaimIntimationAt] = useState("");
   const [surveyAt, setSurveyAt] = useState("");
 
-  const [datePickerVisible, setDatePickerVisible] = useState(false);
-  const [datePickerTarget, setDatePickerTarget] = useState<
-    "claim" | "survey" | null
-  >(null);
-  const [datePickerStep, setDatePickerStep] = useState<"date" | "time">("date");
-  const [datePickerValue, setDatePickerValue] = useState(new Date());
+
+
+
+
 
   const [customerApprovalAt, setCustomerApprovalAt] = useState("");
   const [paidJobRemarks, setPaidJobRemarks] = useState("");
@@ -552,48 +541,9 @@ export default function VehicleDetailScreen() {
     return formatDateTime(parsed);
   };
 
-  const openDateTimePicker = (target: "claim" | "survey") => {
-    const existingValue = target === "claim" ? claimIntimationAt : surveyAt;
-    const parsed = existingValue ? new Date(existingValue) : new Date();
 
-    setDatePickerValue(Number.isNaN(parsed.getTime()) ? new Date() : parsed);
-    setDatePickerTarget(target);
-    setDatePickerStep("date");
-    setDatePickerVisible(true);
-  };
 
-  const handleDatePickerChange = (
-    event: DateTimePickerEvent,
-    selectedDate?: Date
-  ) => {
-    if (event.type === "dismissed") {
-      setDatePickerVisible(false);
-      setDatePickerTarget(null);
-      setDatePickerStep("date");
-      return;
-    }
 
-    if (!selectedDate) return;
-
-    setDatePickerValue(selectedDate);
-
-    if (datePickerStep === "date") {
-      setDatePickerStep("time");
-      return;
-    }
-
-    if (datePickerTarget === "claim") {
-      setClaimIntimationAt(selectedDate.toISOString());
-    }
-
-    if (datePickerTarget === "survey") {
-      setSurveyAt(selectedDate.toISOString());
-    }
-
-    setDatePickerVisible(false);
-    setDatePickerTarget(null);
-    setDatePickerStep("date");
-  };
 
   const getPickerLabel = (value: string, placeholder: string) => {
     if (!value) return placeholder;
@@ -914,59 +864,7 @@ export default function VehicleDetailScreen() {
       />
 
       {/* DATE & TIME PICKER */}
-      <Modal
-        visible={datePickerVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          setDatePickerVisible(false);
-          setDatePickerTarget(null);
-          setDatePickerStep("date");
-        }}
-      >
-        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
-        <View style={styles.datePickerOverlay}>
-          <View style={styles.datePickerCard}>
-            <View style={styles.datePickerHeader}>
-              <View>
-                <Text style={styles.datePickerTitle}>
-                  {datePickerStep === "date" ? "Select Date" : "Select Time"}
-                </Text>
-                <Text style={styles.datePickerSubtitle}>
-                  {datePickerTarget === "claim"
-                    ? "Claim Intimation"
-                    : "Survey Date & Time"}
-                </Text>
-              </View>
 
-              <TouchableOpacity
-                style={styles.datePickerClose}
-                onPress={() => {
-                  setDatePickerVisible(false);
-                  setDatePickerTarget(null);
-                  setDatePickerStep("date");
-                }}
-              >
-                <Ionicons name="close" size={22} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-
-            <DateTimePicker
-              value={datePickerValue}
-              mode={datePickerStep}
-              display="default"
-              onChange={handleDatePickerChange}
-            />
-
-            <Text style={styles.datePickerHint}>
-              {datePickerStep === "date"
-                ? "Choose the date to continue to time."
-                : "Choose the time to save the date and time."}
-            </Text>
-          </View>
-        </View>
-        </SafeAreaView>
-      </Modal>
 
       {/* INSURANCE DROPDOWN */}
       <Modal

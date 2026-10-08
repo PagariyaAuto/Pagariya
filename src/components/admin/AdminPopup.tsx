@@ -1,14 +1,7 @@
+import { Modal } from "../inputs/KeyboardAware";
 
 import { useEffect } from "react";
-import {
-    BackHandler,
-    Modal,
-    Pressable,
-    StyleSheet,
-    Text,
-    View,
-    ViewStyle,
-} from "react-native";
+import { BackHandler, Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { colors, radius, spacing, typography } from "../../theme";
 

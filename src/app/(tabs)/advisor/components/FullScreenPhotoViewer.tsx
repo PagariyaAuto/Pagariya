@@ -1,15 +1,7 @@
+import { Modal } from "../../../../components/inputs/KeyboardAware";
 
 import { useEffect, useState } from "react";
-import {
-    Image,
-    Modal,
-    Pressable,
-    SafeAreaView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    View,
-} from "react-native";
+import { Image, Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from "react-native";
 import { spacing, typography } from "../../../../theme";
 
 export type ViewerPhoto = {

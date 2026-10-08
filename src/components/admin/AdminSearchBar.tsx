@@ -1,11 +1,5 @@
-import {
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-    ViewStyle,
-} from "react-native";
+import { TextInput } from "../inputs/KeyboardAware";
+import { Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
 import { colors, radius, spacing, typography } from "../../theme";
 
 type AdminSearchBarProps = {

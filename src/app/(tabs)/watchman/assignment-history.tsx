@@ -1,19 +1,10 @@
+import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import {
-  ActivityIndicator,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -807,7 +798,7 @@ export default function WatchmanAssignmentHistoryScreen() {
         showsVerticalScrollIndicator={
           false
         }
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

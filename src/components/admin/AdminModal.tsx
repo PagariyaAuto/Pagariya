@@ -1,17 +1,7 @@
+import { KeyboardAvoidingView, Modal, ScrollView } from "../inputs/KeyboardAware";
 
 import React, { useEffect } from "react";
-import {
-    BackHandler,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
-    ViewStyle,
-} from "react-native";
+import { BackHandler, Platform, Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { colors, radius, spacing, typography } from "../../theme";
 
@@ -76,7 +66,7 @@ export default function AdminModal({
     <ScrollView
       style={styles.scrollView}
       contentContainerStyle={styles.scrollContent}
-      keyboardShouldPersistTaps="handled"
+      keyboardShouldPersistTaps="always"
       showsVerticalScrollIndicator={false}
     >
       {children}

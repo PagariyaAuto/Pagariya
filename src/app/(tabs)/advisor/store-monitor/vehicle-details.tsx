@@ -1,21 +1,11 @@
+import { Modal, ScrollView } from "../../../../components/inputs/KeyboardAware";
 import BackButton from "../../../../components/navigation/BackButton";
 import BrandPill from "../../../../components/navigation/BrandPill";
 import { returnToRoute, singleParam } from "../../../../lib/back-navigation";
 import { supplementaryRequirements, requirementView } from "../../../../lib/supplementary-store";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  BackHandler,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, BackHandler, Pressable, RefreshControl, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../../lib/supabase";
@@ -907,7 +897,7 @@ export default function StoreMonitorVehicleDetailsScreen() {
 
       <ScrollView
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

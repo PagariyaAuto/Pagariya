@@ -1,3 +1,4 @@
+import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -5,18 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Image,
-  Keyboard,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Image, Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { supabase } from "../../../../lib/supabase";
 
@@ -480,7 +470,7 @@ export default function GateInScreen() {
     <SafeAreaView style={styles.container} edges={["top", "right", "bottom", "left"]}>
       <ScrollView
         contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}

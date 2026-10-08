@@ -1,18 +1,9 @@
+import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import BackButton from "../../../components/navigation/BackButton";
 import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import {
-  ActivityIndicator,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect } from "expo-router";
@@ -820,7 +811,7 @@ export default function WatchmanVehiclesScreen() {
           styles.container
         }
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1472,7 +1463,7 @@ export default function WatchmanVehiclesScreen() {
               showsVerticalScrollIndicator={
                 false
               }
-              keyboardShouldPersistTaps="handled"
+              keyboardShouldPersistTaps="always"
             >
               {advisors.length === 0 ? (
                 <View

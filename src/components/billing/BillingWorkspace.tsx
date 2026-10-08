@@ -1,3 +1,7 @@
+import { Modal, ScrollView, TextInput } from "../inputs/KeyboardAware";
+import useDateTimeValidation from "../inputs/useDateTimeValidation";
+import DateTimeField from "../inputs/DateTimeField";
+import { parseIndiaLocal } from "../../lib/date-time";
 import BackButton from "../navigation/BackButton";
 import { returnToRoute, useHardwareBack, singleParam } from "../../lib/back-navigation";
 import Ionicons from "@expo/vector-icons/Ionicons";
@@ -5,19 +9,7 @@ import * as Crypto from "expo-crypto";
 import * as ImagePicker from "expo-image-picker";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Image,
-  Linking,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Image, Linking, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../lib/supabase";
 import { colors } from "../../theme";
@@ -119,6 +111,7 @@ export default function BillingWorkspace({
   dashboard?: boolean;
   visitId?: string;
 }) {
+  const dateValidation = useDateTimeValidation();
   const navigationParams = useLocalSearchParams<{ filter?: string | string[] }>();
   const handleNavigationBack = () => {
     if (saving || busy.current) return;
@@ -244,6 +237,8 @@ export default function BillingWorkspace({
     setSaving(true);
     setConfirmation(null);
     try {
+      const dateError = dateValidation.getError();
+      if (dateError) throw new Error(dateError);
       await action();
     } catch (e: any) {
       setNotice({
@@ -415,7 +410,7 @@ export default function BillingWorkspace({
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <ScrollView
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
@@ -724,7 +719,7 @@ export default function BillingWorkspace({
                 }}
               />
               {generated && (
-                <DateField
+                <DateField onValidationError={dateValidation.field("Generated date & time")}
                   label="Generated date & time"
                   value={generatedTime}
                   onChange={setGeneratedTime}
@@ -740,7 +735,7 @@ export default function BillingWorkspace({
                     onPress={() => setSent(!sent)}
                   />
                   {sent && (
-                    <DateField
+                    <DateField onValidationError={dateValidation.field("Sent date & time")}
                       label="Sent date & time"
                       value={sentTime}
                       onChange={setSentTime}
@@ -831,7 +826,7 @@ export default function BillingWorkspace({
                     numeric
                     disabled={disabled || !!pendingPayment.current}
                   />
-                  <DateField
+                  <DateField onValidationError={dateValidation.field("Payment received date & time")}
                     label="Payment received date & time"
                     value={paymentTime}
                     onChange={setPaymentTime}
@@ -1011,38 +1006,13 @@ function Field({
     </View>
   );
 }
-function DateField({
-  label,
-  value,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  disabled: boolean;
+function DateField({ label, value, onChange, onValidationError, disabled }: {
+ label: string; value: string; onChange: (value: string) => void; onValidationError: (error: string | null) => void; disabled: boolean;
 }) {
-  return (
-    <View style={styles.field}>
-      <Field
-        label={label + " · IST"}
-        value={value}
-        onChange={onChange}
-        disabled={disabled}
-        maxLength={16}
-      />
-      <Text style={styles.hint}>
-        YYYY-MM-DD HH:mm · 24-hour IST{disabled ? " · saved" : ""}
-      </Text>
-      {!disabled && (
-        <Button
-          secondary
-          title="Use Current Time"
-          onPress={() => onChange(inputTime())}
-        />
-      )}
-    </View>
-  );
+
+ return <DateTimeField required onValidationError={onValidationError} title={label} label={label} disabled={disabled} maximumDate="now"
+ value={parseIndiaLocal(value.replace(" ", "T"))?.toISOString() || null}
+ onChange={next => onChange(next ? inputTime(next) : "")} />;
 }
 function Check({
   title,

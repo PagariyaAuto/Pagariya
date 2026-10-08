@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import type { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useIsFocused } from "expo-router";
-import { createElement, useEffect, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 import {
   Keyboard,
   Platform,
@@ -29,6 +29,7 @@ const NativePicker =
     : null;
 
 export type DateTimeFieldProps = DateTimeBounds & {
+  mode?: "date" | "time" | "datetime";
   title: string;
   description?: string;
   label?: string;
@@ -44,8 +45,9 @@ export type DateTimeFieldProps = DateTimeBounds & {
 /** Pagariya date/time card. No database calls, workflow rules or popup ownership. */
 export default function DateTimeField({
   title,
+  mode = "datetime",
   description,
-  label = "Date & time",
+  label = mode === "date" ? "Date" : mode === "time" ? "Time" : "Date & time",
   value,
   onChange,
   onValidationError,
@@ -58,6 +60,9 @@ export default function DateTimeField({
   disabled = false,
   active = true,
 }: DateTimeFieldProps) {
+  const validationCallback = useRef(onValidationError);
+  validationCallback.current = onValidationError;
+  useEffect(() => () => validationCallback.current?.(null), []);
   const focused = useIsFocused();
   const enabled = focused && active && !disabled;
   const bounds: DateTimeBounds = {
@@ -103,8 +108,10 @@ export default function DateTimeField({
         minimumMessage,
         maximumMessage,
       })
-    )
+    ) {
       setSelectionError(null);
+      validationCallback.current?.(null);
+    }
   }, [
     value,
     minimumDate,
@@ -138,7 +145,7 @@ export default function DateTimeField({
     setPickerDate(
       clampDateTime(parseDateTime(value) || new Date(now), bounds, now),
     );
-    setPicker(Platform.OS === "ios" ? "datetime" : "date");
+    setPicker(mode === "datetime" ? (Platform.OS === "ios" ? "datetime" : "date") : mode);
   };
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
     if (!enabled || event.type !== "set" || !selected || !picker) {
@@ -148,7 +155,7 @@ export default function DateTimeField({
     if (Platform.OS === "android") setPicker(null);
     const merged = mergeIndiaSelection(pickerDate, selected, picker);
     const candidate =
-      picker === "date" ? clampDateTime(merged, bounds) : merged;
+      picker === "date" && mode === "datetime" ? clampDateTime(merged, bounds) : merged;
     const issue = validateDateTime(candidate.toISOString(), bounds);
     if (issue) {
       reportError(issue);
@@ -157,7 +164,7 @@ export default function DateTimeField({
     setPickerDate(candidate);
     onChange(candidate.toISOString());
     reportError(null);
-    if (Platform.OS === "android" && picker === "date") setPicker("time");
+    if (Platform.OS === "android" && picker === "date" && mode === "datetime") setPicker("time");
   };
   const showWebPicker = (event: {
     currentTarget: { showPicker?: () => void };
@@ -173,6 +180,21 @@ export default function DateTimeField({
       setWebFallback(true);
     }
   };
+  const localValue = (date: Date) => {
+    const local = indiaLocalValue(date);
+    return mode === "date" ? local.slice(0, 10) : mode === "time" ? local.slice(11) : local;
+  };
+  const limitValue = (date: Date | null) => {
+    if (!date) return undefined;
+    const anchor = parseDateTime(value) || new Date();
+    if (mode === "time" && indiaLocalValue(anchor).slice(0, 10) !== indiaLocalValue(date).slice(0, 10)) return undefined;
+    return localValue(date);
+  };
+  const displayedValue = () => {
+    const formatted = formatDateTimeIST(value);
+    if (!parseDateTime(value)) return mode === "date" ? "Select date" : mode === "time" ? "Select time" : formatted;
+    return mode === "date" ? formatted.slice(0, 10) : mode === "time" ? formatted.slice(11) : formatted;
+  };
   const summary = (
     <>
       <View
@@ -184,14 +206,14 @@ export default function DateTimeField({
           {label}
           {required ? " *" : ""} · IST
         </Text>
-        <Text style={styles.selected}>{formatDateTimeIST(value)}</Text>
+        <Text style={styles.selected}>{displayedValue()}</Text>
       </View>
       <View
         style={styles.calendar}
         pointerEvents="none"
         accessibilityElementsHidden
       >
-        <Ionicons name="calendar" size={21} color={colors.primary} />
+        <Ionicons name={mode === "time" ? "time-outline" : "calendar"} size={21} color={colors.primary} />
       </View>
     </>
   );
@@ -213,19 +235,19 @@ export default function DateTimeField({
         >
           {summary}
           {createElement("input", {
-            type: "datetime-local",
+            type: mode === "datetime" ? "datetime-local" : mode,
             "aria-label": `${label}${required ? ", required" : ""}, in IST`,
             "aria-invalid": !!shownError,
             value: parseDateTime(value)
-              ? indiaLocalValue(parseDateTime(value)!)
+              ? localValue(parseDateTime(value)!)
               : "",
             min: minimum
-              ? indiaLocalValue(
+              ? limitValue(
                   new Date(Math.ceil(minimum.getTime() / 1000) * 1000),
                 )
               : undefined,
-            max: maximum ? indiaLocalValue(maximum) : undefined,
-            step: 1,
+            max: limitValue(maximum),
+            step: mode === "date" ? undefined : 1,
             required,
             disabled: !enabled || !!configurationError,
             onFocus: () => {
@@ -243,7 +265,10 @@ export default function DateTimeField({
             },
             onChange: (event: { currentTarget: { value: string } }) => {
               if (!enabled) return;
-              const selected = parseIndiaLocal(event.currentTarget.value);
+              const raw = event.currentTarget.value;
+              const anchor = parseDateTime(value) || new Date();
+              const local = indiaLocalValue(anchor);
+              const selected = raw ? parseIndiaLocal(mode === "date" ? raw + local.slice(10) : mode === "time" ? local.slice(0, 11) + raw : raw) : null;
               const next = selected?.toISOString() || null;
               onChange(next);
               reportError(
@@ -281,7 +306,7 @@ export default function DateTimeField({
       ) : (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Choose ${label}${required ? ", required" : ""}. Selected: ${formatDateTimeIST(value)} IST`}
+          accessibilityLabel={`Choose ${label}${required ? ", required" : ""}. Selected: ${displayedValue()} IST`}
           accessibilityState={{ disabled: !enabled || !!configurationError }}
           disabled={!enabled || !!configurationError}
           onPress={openPicker}

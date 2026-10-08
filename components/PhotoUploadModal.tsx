@@ -1,13 +1,7 @@
+import { Modal } from "../src/components/inputs/KeyboardAware";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import {
-    Modal,
-    Pressable,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
+import { Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 type PhotoUploadModalProps = {
   visible: boolean;

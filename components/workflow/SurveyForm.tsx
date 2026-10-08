@@ -1,13 +1,8 @@
+import DateTimeField from "../../src/components/inputs/DateTimeField";
+import { TextInput } from "../../src/components/inputs/KeyboardAware";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
-import {
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import {
   colors,
@@ -139,50 +134,9 @@ export default function SurveyForm({
     }
   };
 
-  const renderDateTime = (
-    value: string,
-    placeholder: string,
-    target: "claim" | "survey"
-  ) => {
-    if (isWeb) {
-      return (
-        <View style={styles.dateTimeButton}>
-          <Text style={styles.dateTimeText}>
-            {value ? formatIndianDateTime(value) : placeholder}
-          </Text>
-
-          <Ionicons
-            name="time-outline"
-            size={20}
-            color={colors.textSecondary}
-          />
-        </View>
-      );
-    }
-
-    return (
-      <TouchableOpacity
-        style={styles.dateTimeButton}
-        onPress={() => onOpenDateTimePicker(target)}
-        activeOpacity={0.8}
-      >
-        <Text
-          style={[
-            styles.dateTimeText,
-            !value && styles.placeholderText,
-          ]}
-        >
-          {getPickerLabel(value, placeholder)}
-        </Text>
-
-        <Ionicons
-          name="calendar-outline"
-          size={20}
-          color={colors.textSecondary}
-        />
-      </TouchableOpacity>
-    );
-  };
+  const renderDateTime = (value: string, placeholder: string, target: "claim" | "survey") =>
+    <DateTimeField title={target === "claim" ? "Claim Intimation" : "Survey Date & Time"} value={value || null}
+      onChange={next => (target === "claim" ? setClaimIntimationAt : setSurveyAt)(next || "")} />;
 
   return (
     <View style={styles.card}>
@@ -333,29 +287,7 @@ export default function SurveyForm({
         <>
           <Text style={styles.fieldLabel}>Customer Approval</Text>
 
-          {isWeb ? (
-            <View style={styles.dateTimeButton}>
-              <Text style={styles.dateTimeText}>
-                {customerApprovalAt
-                  ? formatIndianDateTime(customerApprovalAt)
-                  : "Current Indian date & time"}
-              </Text>
-
-              <Ionicons
-                name="time-outline"
-                size={20}
-                color={colors.textSecondary}
-              />
-            </View>
-          ) : (
-            <TextInput
-              style={styles.input}
-              value={customerApprovalAt}
-              onChangeText={setCustomerApprovalAt}
-              placeholder="2026-09-18T11:00"
-              placeholderTextColor={colors.textLight}
-            />
-          )}
+          <DateTimeField title="Customer Approval" value={customerApprovalAt || null} onChange={next => setCustomerApprovalAt(next || "")} />
 
           <Text style={styles.fieldLabel}>Paid Job Remarks</Text>
 
@@ -371,12 +303,7 @@ export default function SurveyForm({
         </>
       )}
 
-      {isWeb && (
-        <Text style={styles.timestampNote}>
-          Date and time are automatically recorded using the current
-          timestamp and displayed in Indian Standard Time.
-        </Text>
-      )}
+
 
       <Text style={styles.fieldLabel}>Advisor Remarks</Text>
 

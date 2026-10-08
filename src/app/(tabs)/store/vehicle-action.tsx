@@ -1,24 +1,11 @@
+import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
+import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import BackButton from "../../../components/navigation/BackButton";
 import { returnToRoute } from "../../../lib/back-navigation";
-import DateTimePicker, {
-  DateTimePickerEvent,
-} from "@react-native-community/datetimepicker";
+import DateValueField from "../../../components/inputs/DateValueField";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  BackHandler,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, BackHandler, Platform, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
@@ -377,6 +364,7 @@ function InfoRow({
 ============================================================ */
 
 export default function StoreVehicleActionScreen() {
+  const dateValidation = useDateTimeValidation();
   const params = useLocalSearchParams<{
     vehicleId?: string;
     visitId?: string;
@@ -414,11 +402,9 @@ export default function StoreVehicleActionScreen() {
 
   const [floorSelectorVisible, setFloorSelectorVisible] = useState(false);
 
-  const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null);
 
-  const [androidPickerMode, setAndroidPickerMode] = useState<"date" | "time">(
-    "date",
-  );
+
+
 
   /* ==========================================================
      CREATE ORDER FORM
@@ -710,83 +696,13 @@ export default function StoreVehicleActionScreen() {
      DATE PICKER
   ========================================================== */
 
-  const openDatePicker = (target: PickerTarget) => {
-    setPickerTarget(target);
-    setAndroidPickerMode("date");
-  };
 
-  const getPickerDate = () => {
-    switch (pickerTarget) {
-      case "ORDERED_AT":
-        return orderedAt;
 
-      case "RECEIVED_AT":
-        return receivedAt;
 
-      case "HANDOVER_AT":
-        return handoverAt;
 
-      default:
-        return new Date();
-    }
-  };
 
-  const setPickerDate = (date: Date) => {
-    switch (pickerTarget) {
-      case "ORDERED_AT":
-        setOrderedAt(date);
-        break;
 
-      case "RECEIVED_AT":
-        setReceivedAt(date);
-        break;
 
-      case "HANDOVER_AT":
-        setHandoverAt(date);
-        break;
-    }
-  };
-
-  const handleDatePickerChange = (
-    event: DateTimePickerEvent,
-    selectedDate?: Date,
-  ) => {
-    if (event.type === "dismissed" || !selectedDate) {
-      setPickerTarget(null);
-      return;
-    }
-
-    if (Platform.OS === "android") {
-      if (androidPickerMode === "date") {
-        const existing = getPickerDate();
-
-        const merged = new Date(existing);
-
-        merged.setFullYear(
-          selectedDate.getFullYear(),
-          selectedDate.getMonth(),
-          selectedDate.getDate(),
-        );
-
-        setPickerDate(merged);
-        setAndroidPickerMode("time");
-        return;
-      }
-
-      const existing = getPickerDate();
-
-      const merged = new Date(existing);
-
-      merged.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
-
-      setPickerDate(merged);
-      setPickerTarget(null);
-      setAndroidPickerMode("date");
-      return;
-    }
-
-    setPickerDate(selectedDate);
-  };
 
   /* ==========================================================
      CREATE PART ORDER
@@ -881,6 +797,8 @@ export default function StoreVehicleActionScreen() {
   ]);
 
   const confirmCreateOrder = () => {
+    const dateError = dateValidation.getError();
+    if (dateError) { showPopup({type: "warning", title: "Check date & time", message: dateError}); return; }
     const trimmedOrderNo = partOrderNo.trim();
 
     if (!trimmedOrderNo) {
@@ -974,6 +892,8 @@ export default function StoreVehicleActionScreen() {
   ]);
 
   const confirmReceiveParts = () => {
+    const dateError = dateValidation.getError();
+    if (dateError) { showPopup({type: "warning", title: "Check date & time", message: dateError}); return; }
     if (!currentOrder) {
       showPopup({
         type: "error",
@@ -1059,6 +979,8 @@ export default function StoreVehicleActionScreen() {
   };
 
   const confirmHandover = () => {
+    const dateError = dateValidation.getError();
+    if (dateError) { showPopup({type: "warning", title: "Check date & time", message: dateError}); return; }
     if (!currentOrder) {
       showPopup({
         type: "error",
@@ -1197,26 +1119,7 @@ export default function StoreVehicleActionScreen() {
 
             <Text style={styles.fieldLabel}>Ordered At</Text>
 
-            <Pressable
-              onPress={() => openDatePicker("ORDERED_AT")}
-              disabled={saving}
-              style={({ pressed }) => [
-                styles.dateButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.dateIcon}>◷</Text>
-
-              <View style={styles.dateCopy}>
-                <Text style={styles.dateValue}>
-                  {formatDateForInput(orderedAt)}
-                </Text>
-
-                <Text style={styles.dateHint}>Tap to change date/time</Text>
-              </View>
-
-              <Text style={styles.dateArrow}>›</Text>
-            </Pressable>
+            <DateValueField onValidationError={dateValidation.field("Ordered At")} label="Ordered At" value={orderedAt} onChange={setOrderedAt} disabled={saving} active={!popup.visible} />
 
             <Text style={styles.fieldLabel}>Remarks</Text>
 
@@ -1310,26 +1213,7 @@ export default function StoreVehicleActionScreen() {
 
             <Text style={styles.fieldLabel}>Parts Received At</Text>
 
-            <Pressable
-              onPress={() => openDatePicker("RECEIVED_AT")}
-              disabled={saving}
-              style={({ pressed }) => [
-                styles.dateButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.dateIcon}>◷</Text>
-
-              <View style={styles.dateCopy}>
-                <Text style={styles.dateValue}>
-                  {formatDateForInput(receivedAt)}
-                </Text>
-
-                <Text style={styles.dateHint}>Tap to change date/time</Text>
-              </View>
-
-              <Text style={styles.dateArrow}>›</Text>
-            </Pressable>
+            <DateValueField onValidationError={dateValidation.field("Parts Received At")} label="Parts Received At" value={receivedAt} onChange={setReceivedAt} disabled={saving} active={!popup.visible} />
 
             <Text style={styles.fieldLabel}>Remarks</Text>
 
@@ -1471,26 +1355,7 @@ export default function StoreVehicleActionScreen() {
 
             <Text style={styles.fieldLabel}>Handover At</Text>
 
-            <Pressable
-              onPress={() => openDatePicker("HANDOVER_AT")}
-              disabled={saving}
-              style={({ pressed }) => [
-                styles.dateButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.dateIcon}>◷</Text>
-
-              <View style={styles.dateCopy}>
-                <Text style={styles.dateValue}>
-                  {formatDateForInput(handoverAt)}
-                </Text>
-
-                <Text style={styles.dateHint}>Tap to change date/time</Text>
-              </View>
-
-              <Text style={styles.dateArrow}>›</Text>
-            </Pressable>
+            <DateValueField onValidationError={dateValidation.field("Handover At")} label="Handover At" value={handoverAt} onChange={setHandoverAt} disabled={saving} active={!popup.visible} />
 
             <Text style={styles.fieldLabel}>Remarks</Text>
 
@@ -1658,7 +1523,7 @@ export default function StoreVehicleActionScreen() {
 
         <ScrollView
           contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.vehicleCard}>
@@ -1962,14 +1827,7 @@ export default function StoreVehicleActionScreen() {
         </SafeAreaView>
       </Modal>
 
-      {pickerTarget ? (
-        <DateTimePicker
-          value={getPickerDate()}
-          mode={Platform.OS === "ios" ? "datetime" : androidPickerMode}
-          display="default"
-          onChange={handleDatePickerChange}
-        />
-      ) : null}
+
 
       <CustomPopup popup={popup} onClose={closePopup} />
     </SafeAreaView>

@@ -1,3 +1,4 @@
+import { Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
@@ -7,18 +8,7 @@ import { router, useFocusEffect } from "expo-router";
 
 import { useCallback, useMemo, useRef, useState } from "react";
 
-import {
-  ActivityIndicator,
-  Modal,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ActivityIndicator, RefreshControl, StatusBar, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -531,7 +521,7 @@ export default function FinalInspectionManagementScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

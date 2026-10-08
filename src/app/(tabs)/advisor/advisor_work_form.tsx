@@ -1,25 +1,15 @@
+import { KeyboardAvoidingView, Modal, ScrollView, TextInput } from "../../../components/inputs/KeyboardAware";
+import useDateTimeValidation from "../../../components/inputs/useDateTimeValidation";
 import BackButton from "../../../components/navigation/BackButton";
 import BrandPill from "../../../components/navigation/BrandPill";
 import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import DateValueField from "../../../components/inputs/DateValueField";
 
 import { router, useLocalSearchParams } from "expo-router";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Platform, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -76,6 +66,7 @@ type FloorIncharge = {
 };
 
 export default function AdvisorWorkFormScreen() {
+  const dateValidation = useDateTimeValidation();
   const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
   const handleNavigationBack = () => {
     if (saving) return;
@@ -131,9 +122,9 @@ export default function AdvisorWorkFormScreen() {
 
   const [remarks, setRemarks] = useState("");
 
-  const [showDatePicker, setShowDatePicker] = useState(false);
 
-  const [showTimePicker, setShowTimePicker] = useState(false);
+
+
 
   const [confirmationVisible, setConfirmationVisible] = useState(false);
 
@@ -664,6 +655,8 @@ export default function AdvisorWorkFormScreen() {
   };
 
   const validateForm = () => {
+    const dateError = dateValidation.getError();
+    if (dateError) { showPopup("warning", "Check date & time", dateError); return false; }
     if (loading || saving || loadError || !vehicle) return false;
     if (!partsChoice) {
       showPopup(
@@ -830,67 +823,9 @@ export default function AdvisorWorkFormScreen() {
     }
   };
 
-  const handleDateChange = (_event: any, selectedDate?: Date) => {
-    if (Platform.OS === "android") {
-      setShowDatePicker(false);
-    }
 
-    if (!selectedDate) {
-      return;
-    }
 
-    const updated = new Date(requisitionAt);
 
-    updated.setFullYear(
-      selectedDate.getFullYear(),
-
-      selectedDate.getMonth(),
-
-      selectedDate.getDate(),
-    );
-
-    if (isFutureDateTime(updated)) {
-      showPopup(
-        "warning",
-
-        "Future Date Not Allowed",
-
-        "Requisition date and time cannot be in the future.",
-      );
-
-      return;
-    }
-
-    setRequisitionAt(updated);
-  };
-
-  const handleTimeChange = (_event: any, selectedTime?: Date) => {
-    if (Platform.OS === "android") {
-      setShowTimePicker(false);
-    }
-
-    if (!selectedTime) {
-      return;
-    }
-
-    const updated = new Date(requisitionAt);
-
-    updated.setHours(selectedTime.getHours(), selectedTime.getMinutes(), 0, 0);
-
-    if (isFutureDateTime(updated)) {
-      showPopup(
-        "warning",
-
-        "Future Time Not Allowed",
-
-        "Requisition date and time cannot be in the future.",
-      );
-
-      return;
-    }
-
-    setRequisitionAt(updated);
-  };
 
   if (loading) {
     return (
@@ -928,7 +863,7 @@ export default function AdvisorWorkFormScreen() {
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >
           {/* HERO */}
@@ -1170,39 +1105,8 @@ export default function AdvisorWorkFormScreen() {
                 autoCapitalize="characters"
               />
 
-              <View style={styles.dateTimeRow}>
-                <View style={styles.dateTimeColumn}>
-                  <Text style={styles.fieldLabel}>Requisition Date</Text>
-
-                  <Pressable
-                    disabled={saving}
-                    onPress={() => setShowDatePicker(true)}
-                    style={styles.dateTimeButton}
-                  >
-                    <Text style={styles.dateTimeValue}>
-                      {formatDate(requisitionAt)}
-                    </Text>
-
-                    <Text style={styles.dateTimeIcon}>▣</Text>
-                  </Pressable>
-                </View>
-
-                <View style={styles.dateTimeColumn}>
-                  <Text style={styles.fieldLabel}>Requisition Time</Text>
-
-                  <Pressable
-                    disabled={saving}
-                    onPress={() => setShowTimePicker(true)}
-                    style={styles.dateTimeButton}
-                  >
-                    <Text style={styles.dateTimeValue}>
-                      {formatTime(requisitionAt)}
-                    </Text>
-
-                    <Text style={styles.dateTimeIcon}>◷</Text>
-                  </Pressable>
-                </View>
-              </View>
+              <DateValueField onValidationError={dateValidation.field("Requisition Date & Time")} label="Requisition Date & Time" value={requisitionAt} onChange={setRequisitionAt}
+ maximumDate="now" disabled={saving} active={!popupVisible && !confirmationVisible} />
             </View>
           )}
 
@@ -1322,24 +1226,9 @@ export default function AdvisorWorkFormScreen() {
         </View>
       </KeyboardAvoidingView>
 
-      {showDatePicker && (
-        <DateTimePicker
-          value={requisitionAt}
-          mode="date"
-          display={Platform.OS === "ios" ? "spinner" : "default"}
-          maximumDate={new Date()}
-          onChange={handleDateChange}
-        />
-      )}
 
-      {showTimePicker && (
-        <DateTimePicker
-          value={requisitionAt}
-          mode="time"
-          display={Platform.OS === "ios" ? "spinner" : "default"}
-          onChange={handleTimeChange}
-        />
-      )}
+
+
 
       {/* CONFIRMATION */}
 

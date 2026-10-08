@@ -1,21 +1,11 @@
+import { Modal, ScrollView, TextInput } from "../../../../components/inputs/KeyboardAware";
 import BackButton from "../../../../components/navigation/BackButton";
 import BrandPill from "../../../../components/navigation/BrandPill";
 import { returnToRoute, useHardwareBack, singleParam } from "../../../../lib/back-navigation";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Modal,
-  RefreshControl,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ActivityIndicator, RefreshControl, StatusBar, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../../lib/supabase";
@@ -523,7 +513,7 @@ export default function FinalInspectionVehicleScreen() {
 
       <ScrollView
         contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
