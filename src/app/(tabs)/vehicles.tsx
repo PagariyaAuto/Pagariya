@@ -20,6 +20,7 @@ import {
 } from "expo-router";
 
 import { supabase } from "../../../lib/supabase";
+import { getCurrentWorkflowRoute } from "../../lib/workflow-route";
 
 import {
   colors,
@@ -294,7 +295,7 @@ export default function VehiclesScreen() {
     loadData();
   };
 
-  const handleTakeVehicle = async (
+  const handleOpenIntake = async (
     vehicleId: string
   ) => {
     if (
@@ -307,34 +308,18 @@ export default function VehiclesScreen() {
     try {
       setTakingVehicle(vehicleId);
 
-      const { error } =
-        await supabase.rpc(
-          "take_vehicle_as_advisor",
-          {
-            p_vehicle_id: vehicleId,
-          }
-        );
-
-      if (error) {
-        throw error;
-      }
-
-      showModal(
-        "Vehicle Assigned",
-        "The vehicle has been assigned to you successfully."
-      );
-
-      await loadData();
+      const target = await getCurrentWorkflowRoute(vehicleId, true);
+      router.push({ ...target, params: { ...target.params, returnTo: "vehicles" } });
     } catch (error: any) {
       console.error(
-        "Take vehicle error:",
+        "Open intake error:",
         error
       );
 
       showModal(
-        "Unable to Take Vehicle",
+        "Unable to Open Intake",
         error?.message ||
-          "The vehicle could not be assigned to you."
+          "The Intake form could not be opened."
       );
     } finally {
       setTakingVehicle(null);
@@ -591,7 +576,7 @@ export default function VehiclesScreen() {
           </View>
         )}
 
-        {/* Take Vehicle */}
+        {/* Open Intake */}
         {profile?.role ===
           "advisor" &&
           isPending && (
@@ -604,7 +589,7 @@ export default function VehiclesScreen() {
               onPress={(event) => {
                 event.stopPropagation();
 
-                handleTakeVehicle(
+                handleOpenIntake(
                   vehicle.id
                 );
               }}
@@ -623,7 +608,7 @@ export default function VehiclesScreen() {
                       styles.takeButtonText
                     }
                   >
-                    Assigning...
+                    Opening...
                   </Text>
                 </>
               ) : (
@@ -639,7 +624,7 @@ export default function VehiclesScreen() {
                       styles.takeButtonText
                     }
                   >
-                    Take Vehicle
+                    Open Intake
                   </Text>
                 </>
               )}
@@ -815,6 +800,7 @@ export default function VehiclesScreen() {
           setModalVisible(false)
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.modalOverlay
@@ -866,6 +852,7 @@ export default function VehiclesScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

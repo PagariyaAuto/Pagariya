@@ -1,3 +1,5 @@
+import BackButton from "../../../components/navigation/BackButton";
+import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -14,7 +16,7 @@ import {
 } from "react-native";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
@@ -67,6 +69,12 @@ type PopupType =
   | "info";
 
 export default function WatchmanAssignmentHistoryScreen() {
+  const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
+  const handleNavigationBack = () => {
+    returnToRoute(singleParam(navigationParams.returnTo) === "watchman-vehicles" ? "/(tabs)/watchman/vehicles" : "/(tabs)/watchman");
+  };
+  useHardwareBack(handleNavigationBack);
+
   const [profile, setProfile] =
     useState<Profile | null>(null);
 
@@ -816,6 +824,7 @@ export default function WatchmanAssignmentHistoryScreen() {
             HEADER
         ====================================================== */}
 
+        <BackButton accessibilityLabel="Back" onPress={handleNavigationBack} />
         <View
           style={styles.header}
         >
@@ -1454,6 +1463,7 @@ export default function WatchmanAssignmentHistoryScreen() {
           closePopup
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.popupOverlay
@@ -1522,6 +1532,7 @@ export default function WatchmanAssignmentHistoryScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

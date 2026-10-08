@@ -1,3 +1,5 @@
+import BackButton from "../../components/navigation/BackButton";
+import { returnToRoute, useHardwareBack } from "../../lib/back-navigation";
 
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -150,6 +152,11 @@ function getVehicleNumber(
   }
 
 export default function ReturnedScreen() {
+  const handleNavigationBack = () => {
+    returnToRoute("/(tabs)/advisor");
+  };
+  useHardwareBack(handleNavigationBack);
+
   const [events, setEvents] = useState<VehicleEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -372,18 +379,7 @@ export default function ReturnedScreen() {
       edges={["top", "bottom"]}
     >
       <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <Ionicons
-            name="arrow-back-outline"
-            size={22}
-            color={colors.text}
-          />
-        </Pressable>
+        <BackButton accessibilityLabel="Go back" onPress={handleNavigationBack} />
 
         <View style={styles.headerText}>
           <Text style={styles.title}>Returned Vehicles</Text>

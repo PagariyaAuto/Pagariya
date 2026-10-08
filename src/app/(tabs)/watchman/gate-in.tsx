@@ -1,3 +1,6 @@
+import BackButton from "../../../components/navigation/BackButton";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
@@ -41,6 +44,12 @@ type PendingGateIn = {
 };
 
 export default function GateInScreen() {
+  const handleNavigationBack = () => {
+    if (submitting) return;
+    returnToRoute("/(tabs)/watchman");
+  };
+  useHardwareBack(handleNavigationBack);
+
   const [vehicleNo, setVehicleNo] = useState("");
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -468,7 +477,7 @@ export default function GateInScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "right", "bottom", "left"]}>
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -476,6 +485,7 @@ export default function GateInScreen() {
       >
         {/* Header */}
 
+        <BackButton accessibilityLabel="Back" onPress={handleNavigationBack} />
         <View style={styles.header}>
           <View style={styles.headerIcon}>
             <Text style={styles.headerIconText}>
@@ -967,6 +977,7 @@ export default function GateInScreen() {
           setShowPhotoViewer(false)
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <Pressable
           style={
             styles.photoViewerOverlay
@@ -1001,6 +1012,7 @@ export default function GateInScreen() {
             </Text>
           </View>
         </Pressable>
+        </SafeAreaView>
       </Modal>
 
       {/* Message modal */}
@@ -1011,6 +1023,7 @@ export default function GateInScreen() {
         animationType="fade"
         onRequestClose={closeModal}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={styles.modalOverlay}
         >
@@ -1087,8 +1100,9 @@ export default function GateInScreen() {
             )}
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 

@@ -1,3 +1,5 @@
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -526,20 +528,11 @@ export default function AdvisorSurveyQueueScreen() {
         }
       >
         <View style={styles.topBar}>
-          <Pressable
-            onPress={() =>
+          <BackButton onPress={() =>
               router.replace("/(tabs)/advisor")
-            }
-            hitSlop={10}
-          >
-            <Text style={styles.back}>
-              ‹ Back
-            </Text>
-          </Pressable>
+            } hitSlop={10} />
 
-          <Text style={styles.brand}>
-            PAGARIYA
-          </Text>
+          <BrandPill />
         </View>
 
         <View style={styles.hero}>

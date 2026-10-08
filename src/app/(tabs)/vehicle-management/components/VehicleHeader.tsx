@@ -1,3 +1,4 @@
+import BackButton from "../../../../components/navigation/BackButton";
 import { Ionicons } from "@expo/vector-icons";
 import {
     Pressable,
@@ -68,19 +69,7 @@ export default function VehicleHeader({
 
   return (
     <View style={styles.header}>
-      <Pressable
-        onPress={onBack}
-        style={({ pressed }) => [
-          styles.backButton,
-          pressed && styles.buttonPressed,
-        ]}
-      >
-        <Ionicons
-          name="arrow-back"
-          size={21}
-          color={COLORS.charcoal}
-        />
-      </Pressable>
+      <BackButton onPress={onBack} />
 
       <View style={styles.headerTextArea}>
         <Text style={styles.headerEyebrow}>

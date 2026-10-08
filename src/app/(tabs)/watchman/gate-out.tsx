@@ -1,3 +1,5 @@
+import BackButton from "../../../components/navigation/BackButton";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 import {
   useCallback,
   useEffect,
@@ -87,6 +89,8 @@ type PopupState = {
 };
 
 export default function WatchmanGateOutScreen() {
+  useHardwareBack(handleBack);
+
   const insets = useSafeAreaInsets();
 
   const [profile, setProfile] =
@@ -550,21 +554,15 @@ export default function WatchmanGateOutScreen() {
    * =========================================================
    */
 
-  const handleBack = () => {
+  function handleBack() {
+    if (processing) return;
     if (selectedVehicle) {
       setSelectedVehicle(null);
       setRemarks("");
       return;
     }
 
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-
-    router.replace(
-      "/(tabs)/watchman"
-    );
+    returnToRoute("/(tabs)/watchman");
   };
 
   /*
@@ -972,20 +970,7 @@ export default function WatchmanGateOutScreen() {
           <View
             style={styles.header}
           >
-            <Pressable
-              onPress={handleBack}
-              style={
-                styles.backButton
-              }
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-            >
-              <Ionicons
-                name="arrow-back"
-                size={23}
-                color={colors.text}
-              />
-            </Pressable>
+            <BackButton onPress={handleBack} accessibilityLabel="Go back" />
 
             <View
               style={

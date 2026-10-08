@@ -1,3 +1,6 @@
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 import { router } from "expo-router";
 import {
   useCallback,
@@ -182,6 +185,11 @@ function showPopup(
 }
 
 export default function AdvisorIntakeScreen() {
+  const handleNavigationBack = () => {
+    returnToRoute("/(tabs)/advisor");
+  };
+  useHardwareBack(handleNavigationBack);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -813,40 +821,9 @@ export default function AdvisorIntakeScreen() {
         }
       >
         <View style={styles.topBar}>
-          <Pressable
-            onPress={() => router.back()}
-            style={({ pressed }) => [
-              styles.backButton,
-              pressed &&
-                styles.pressed,
-            ]}
-          >
-            <Text
-              style={styles.backArrow}
-            >
-              ‹
-            </Text>
+          <BackButton onPress={handleNavigationBack} />
 
-            <Text
-              style={styles.backText}
-            >
-              Back
-            </Text>
-          </Pressable>
-
-          <View
-            style={styles.brandBadge}
-          >
-            <View
-              style={styles.brandDot}
-            />
-
-            <Text
-              style={styles.brandText}
-            >
-              PAGARIYA
-            </Text>
-          </View>
+          <BrandPill />
         </View>
 
         <View
@@ -1718,6 +1695,7 @@ function PopupModal({
       animationType="fade"
       onRequestClose={onClose}
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View
         style={styles.modalOverlay}
       >
@@ -1775,6 +1753,7 @@ function PopupModal({
           </Pressable>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }

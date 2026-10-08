@@ -1,6 +1,9 @@
-import { Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { useFocusEffect, useIsFocused } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -13,8 +16,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
 import { supabase } from "../../../../lib/supabase";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 import { colors, radius, spacing, typography } from "../../../theme";
 
 type UserRole =
@@ -25,26 +28,29 @@ type UserRole =
   | "supervisor"
   | "worker_group"
   | "billing_department"
+  | "billing_executive"
   | "watchman"
   | "store_team"
   | "final_inspector";
-
 type UserProfile = {
   id: string;
   name: string | null;
   email: string | null;
   phone: string | null;
-  role: UserRole;
+  role: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
 };
-
-type StatusFilter = "all" | "active" | "inactive";
-type RoleFilter = "all" | UserRole;
-
-const USERS_PER_PAGE = 25;
-
+type Filter = "All" | "Active" | "Inactive";
+type RoleEditor = { kind: "role"; user: UserProfile };
+type Dialog =
+  | RoleEditor
+  | { kind: "discard"; editor: RoleEditor }
+  | { kind: "roleConfirm"; editor: RoleEditor }
+  | { kind: "status"; user: UserProfile }
+  | { kind: "roleFilter" }
+  | { kind: "notice"; title: string; body: string };
 const ROLES: { value: UserRole; label: string }[] = [
   { value: "user", label: "User" },
   { value: "ceo_admin", label: "CEO / Admin" },
@@ -52,1768 +58,1027 @@ const ROLES: { value: UserRole; label: string }[] = [
   { value: "floor_incharge", label: "Floor Incharge" },
   { value: "supervisor", label: "Supervisor" },
   { value: "worker_group", label: "Worker Group" },
+  { value: "billing_executive", label: "Billing Executive" },
   { value: "billing_department", label: "Billing Department" },
   { value: "watchman", label: "Watchman" },
   { value: "store_team", label: "Store Team" },
   { value: "final_inspector", label: "Final Inspector" },
 ];
+const roleLabel = (role: string) =>
+  ROLES.find((item) => item.value === role)?.label || role.replaceAll("_", " ");
+const normal = (value: string) => value.trim().toLowerCase();
+const PAGE_SIZE = 25;
+function message(error: unknown) {
+  return (
+    (error as { message?: string })?.message ||
+    "Unable to complete the request. Refresh and try again."
+  );
+}
+function validUsers(value: unknown): value is UserProfile[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.role === "string" &&
+        typeof item.is_active === "boolean",
+    )
+  );
+}
 
 export default function UsersScreen() {
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [actorId, setActorId] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [filter, setFilter] = useState<Filter>("All");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [selectedRole, setSelectedRole] = useState("");
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const busy = useRef(false);
+  const mounted = useRef(false);
+  const requests = useRef(0);
+  const disabled = saving || loading || refreshing;
+  const focused = useIsFocused();
 
-  const [currentPage, setCurrentPage] = useState(1);
-
-  const [roleModalVisible, setRoleModalVisible] = useState(false);
-  const [roleFilterModalVisible, setRoleFilterModalVisible] = useState(false);
-  const [statusModalVisible, setStatusModalVisible] = useState(false);
-  const [messageModalVisible, setMessageModalVisible] = useState(false);
-
-  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
-  const [selectedRole, setSelectedRole] = useState<UserRole>("user");
-
-  const [messageTitle, setMessageTitle] = useState("");
-  const [messageText, setMessageText] = useState("");
-
-  const [savingRole, setSavingRole] = useState(false);
-  const [savingStatus, setSavingStatus] = useState(false);
-
-  const showMessage = useCallback((title: string, message: string) => {
-    setMessageTitle(title);
-    setMessageText(message);
-    setMessageModalVisible(true);
-  }, []);
-
-  const loadUsers = useCallback(async () => {
+  const loadUsers = useCallback(async (refresh = false) => {
+    if (busy.current) return;
+    const request = ++requests.current;
+    refresh ? setRefreshing(true) : setLoading(true);
+    setLoadError("");
     try {
-      const { data, error } = await supabase.rpc("get_admin_users");
-
-      if (error) {
-        throw error;
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      if (!auth.user) throw new Error("Sign in again to view users.");
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, is_active")
+        .eq("id", auth.user.id)
+        .single();
+      if (profileError) throw profileError;
+      if (!profile?.is_active || profile.role !== "ceo_admin")
+        throw new Error(
+          "An active CEO Admin account is required to manage users.",
+        );
+      const collected = new Map<string, UserProfile>();
+      // Range the existing table-returning RPC without changing its contract.
+      for (let offset = 0; ; offset += 500) {
+        const { data, error } = await supabase
+          .rpc("get_admin_users")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(offset, offset + 499);
+        if (error) throw error;
+        if (!validUsers(data))
+          throw new Error("The user directory returned an invalid response.");
+        if (!mounted.current || request !== requests.current) return;
+        data.forEach((user) => collected.set(user.id, user));
+        if (data.length < 500) break;
       }
-
-      setUsers((data ?? []) as UserProfile[]);
-    } catch (error: any) {
-      console.error("Error loading users:", error);
-
-      showMessage(
-        "Unable to Load Users",
-        error?.message || "Something went wrong while loading users.",
-      );
+      if (mounted.current && request === requests.current) {
+        setActorId(auth.user.id);
+        setUsers([...collected.values()]);
+      }
+    } catch (error) {
+      if (mounted.current && request === requests.current) {
+        setLoadError(message(error));
+        setUsers([]);
+        setActorId("");
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (mounted.current && request === requests.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [showMessage]);
-
+  }, []);
   useFocusEffect(
     useCallback(() => {
-      loadUsers();
+      mounted.current = true;
+      if (!busy.current) setSaving(false);
+      void loadUsers();
+      return () => {
+        mounted.current = false;
+        requests.current += 1;
+      };
     }, [loadUsers]),
   );
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    loadUsers();
-  }, [loadUsers]);
+  const closeDialog = useCallback(() => {
+    if (busy.current) return;
+    if (dialog?.kind === "role" && selectedRole !== dialog.user.role) {
+      setDialog({ kind: "discard", editor: dialog });
+      return;
+    }
+    if (dialog?.kind === "discard" || dialog?.kind === "roleConfirm")
+      setDialog(dialog.editor);
+    else setDialog(null);
+    setFormError("");
+  }, [dialog, selectedRole]);
+  const handleBack = useCallback(() => {
+    if (busy.current) return;
+    if (dialog) closeDialog();
+    else returnToRoute("/(tabs)/master-data");
+  }, [dialog, closeDialog]);
+  useHardwareBack(handleBack);
+  usePreventRemove(focused && (saving || dialog !== null), closeDialog);
 
-  const getRoleLabel = (role: UserRole) => {
-    return ROLES.find((item) => item.value === role)?.label ?? role;
+  const openRole = (user: UserProfile) => {
+    if (disabled || busy.current || !actorId || user.id === actorId) return;
+    setSelectedRole(user.role);
+    setFormError("");
+    setDialog({ kind: "role", user });
+  };
+  const changeUser = async () => {
+    if (
+      disabled ||
+      busy.current ||
+      !actorId ||
+      (dialog?.kind !== "roleConfirm" && dialog?.kind !== "status")
+    )
+      return;
+    const target = dialog.kind === "status" ? dialog.user : dialog.editor.user;
+    const changingRole = dialog.kind === "roleConfirm";
+    if (target.id === actorId) {
+      setFormError(
+        "Use another active CEO Admin account to change your own access.",
+      );
+      return;
+    }
+    if (changingRole && !ROLES.some((item) => item.value === selectedRole)) {
+      setFormError("Select a supported role.");
+      return;
+    }
+    if (changingRole && selectedRole === target.role) {
+      setDialog(null);
+      return;
+    }
+    busy.current = true;
+    setSaving(true);
+    setFormError("");
+    let applied = false;
+    try {
+      // Re-read through the authorized RPC before changing another user's access.
+      const { data: before, error: beforeError } = await supabase
+        .rpc("get_admin_users")
+        .eq("id", target.id);
+      if (beforeError) throw beforeError;
+      if (
+        !validUsers(before) ||
+        before.length !== 1 ||
+        before[0].updated_at !== target.updated_at ||
+        before[0].role !== target.role ||
+        before[0].is_active !== target.is_active
+      )
+        throw new Error(
+          "This user changed since the dialog opened. Close it, refresh and review their current access.",
+        );
+      const { error } = changingRole
+        ? await supabase.rpc("change_user_role", {
+            target_user_id: target.id,
+            new_role: selectedRole,
+          })
+        : await supabase.rpc("change_user_status", {
+            target_user_id: target.id,
+            new_status: !target.is_active,
+          });
+      if (error) throw error;
+      applied = true;
+      // Both mutation RPCs return void. Confirm the actual row instead of inventing a timestamp.
+      const { data: after, error: afterError } = await supabase
+        .rpc("get_admin_users")
+        .eq("id", target.id);
+      if (afterError) throw afterError;
+      if (
+        !validUsers(after) ||
+        after.length !== 1 ||
+        (changingRole
+          ? after[0].role !== selectedRole
+          : after[0].is_active !== !target.is_active)
+      )
+        throw new Error("The updated access could not be confirmed.");
+      if (mounted.current) {
+        setUsers((current) =>
+          current.map((user) => (user.id === target.id ? after[0] : user)),
+        );
+        setDialog({
+          kind: "notice",
+          title: changingRole
+            ? "Role updated"
+            : after[0].is_active
+              ? "User activated"
+              : "User deactivated",
+          body: `${target.name || target.email || "User"}: ${roleLabel(after[0].role)} · ${after[0].is_active ? "Active" : "Inactive"}. Existing work assignments have not been reassigned by this screen.`,
+        });
+      }
+    } catch (error) {
+      if (mounted.current) {
+        if (applied)
+          setDialog({
+            kind: "notice",
+            title: "Change sent — refresh required",
+            body: `The change was accepted, but its current result could not be verified. Refresh the directory before trying again. ${message(error)}`,
+          });
+        else setFormError(message(error));
+      }
+    } finally {
+      busy.current = false;
+      if (mounted.current) setSaving(false);
+    }
   };
 
-  const filteredUsers = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return users.filter((user) => {
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "active" && user.is_active) ||
-        (statusFilter === "inactive" && !user.is_active);
-
-      if (!matchesStatus) {
-        return false;
-      }
-
-      const matchesRole = roleFilter === "all" || user.role === roleFilter;
-
-      if (!matchesRole) {
-        return false;
-      }
-
-      if (!query) {
-        return true;
-      }
-
-      const roleLabel = getRoleLabel(user.role).toLowerCase();
-
-      return (
-        (user.name ?? "").toLowerCase().includes(query) ||
-        (user.email ?? "").toLowerCase().includes(query) ||
-        (user.phone ?? "").toLowerCase().includes(query) ||
-        user.role.toLowerCase().includes(query) ||
-        roleLabel.includes(query)
-      );
-    });
-  }, [users, search, statusFilter, roleFilter]);
-
-  const totalPages = Math.max(
-    1,
-    Math.ceil(filteredUsers.length / USERS_PER_PAGE),
-  );
-
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-
-  const paginatedUsers = useMemo(() => {
-    const startIndex = (safeCurrentPage - 1) * USERS_PER_PAGE;
-
-    return filteredUsers.slice(startIndex, startIndex + USERS_PER_PAGE);
-  }, [filteredUsers, safeCurrentPage]);
-
-  const pageStart =
-    filteredUsers.length === 0 ? 0 : (safeCurrentPage - 1) * USERS_PER_PAGE + 1;
-
-  const pageEnd =
-    filteredUsers.length === 0
-      ? 0
-      : Math.min(safeCurrentPage * USERS_PER_PAGE, filteredUsers.length);
-
-  const totalUsers = users.length;
-
-  const activeUsers = useMemo(
-    () => users.filter((user) => user.is_active).length,
+  const counts = useMemo(
+    () => ({
+      All: users.length,
+      Active: users.filter((user) => user.is_active).length,
+      Inactive: users.filter((user) => !user.is_active).length,
+    }),
     [users],
   );
-
-  const inactiveUsers = totalUsers - activeUsers;
-
-  const resetToFirstPage = () => {
-    setCurrentPage(1);
-  };
-
-  const clearFilters = () => {
+  const filtered = useMemo(
+    () =>
+      users.filter((user) => {
+        const query = normal(search);
+        const matches =
+          !query ||
+          [user.name, user.email, user.phone, roleLabel(user.role)].some(
+            (value) =>
+              typeof value === "string" && normal(value).includes(query),
+          );
+        return (
+          matches &&
+          (filter === "All" ||
+            (filter === "Active" ? user.is_active : !user.is_active)) &&
+          (roleFilter === "all" || user.role === roleFilter)
+        );
+      }),
+    [users, search, filter, roleFilter],
+  );
+  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pages);
+  const visible = filtered.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE,
+  );
+  const resetFilters = () => {
     setSearch("");
-    setStatusFilter("all");
+    setFilter("All");
     setRoleFilter("all");
-    setCurrentPage(1);
+    setPage(1);
   };
-
-  const hasActiveFilters =
-    search.trim().length > 0 || statusFilter !== "all" || roleFilter !== "all";
-
-  const openRoleModal = (user: UserProfile) => {
-    setSelectedUser(user);
-    setSelectedRole(user.role);
-    setRoleModalVisible(true);
-  };
-
-  const changeRole = async () => {
-    if (!selectedUser) {
-      return;
-    }
-
-    if (selectedRole === selectedUser.role) {
-      setRoleModalVisible(false);
-      return;
-    }
-
-    setSavingRole(true);
-
-    try {
-      const { error } = await supabase.rpc("change_user_role", {
-        target_user_id: selectedUser.id,
-        new_role: selectedRole,
-      });
-
-      if (error) {
-        throw error;
-      }
-
-      setUsers((currentUsers) =>
-        currentUsers.map((user) =>
-          user.id === selectedUser.id
-            ? {
-                ...user,
-                role: selectedRole,
-                updated_at: new Date().toISOString(),
-              }
-            : user,
-        ),
-      );
-
-      setRoleModalVisible(false);
-
-      showMessage(
-        "Role Updated",
-        `${selectedUser.name || "User"} is now ${getRoleLabel(selectedRole)}.`,
-      );
-    } catch (error: any) {
-      console.error("Error changing role:", error);
-
-      showMessage(
-        "Unable to Change Role",
-        error?.message || "Something went wrong while changing the role.",
-      );
-    } finally {
-      setSavingRole(false);
-    }
-  };
-
-  const openStatusModal = (user: UserProfile) => {
-    setSelectedUser(user);
-    setStatusModalVisible(true);
-  };
-
-  const changeStatus = async () => {
-    if (!selectedUser) {
-      return;
-    }
-
-    const newStatus = !selectedUser.is_active;
-
-    setSavingStatus(true);
-
-    try {
-      const { error } = await supabase.rpc("change_user_status", {
-        target_user_id: selectedUser.id,
-        new_status: newStatus,
-      });
-
-      if (error) {
-        throw error;
-      }
-
-      setUsers((currentUsers) =>
-        currentUsers.map((user) =>
-          user.id === selectedUser.id
-            ? {
-                ...user,
-                is_active: newStatus,
-                updated_at: new Date().toISOString(),
-              }
-            : user,
-        ),
-      );
-
-      setStatusModalVisible(false);
-
-      showMessage(
-        newStatus ? "User Activated" : "User Deactivated",
-        `${selectedUser.name || "User"} has been ${
-          newStatus ? "activated" : "deactivated"
-        }.`,
-      );
-    } catch (error: any) {
-      console.error("Error changing user status:", error);
-
-      showMessage(
-        "Unable to Change Status",
-        error?.message ||
-          "Something went wrong while changing the user status.",
-      );
-    } finally {
-      setSavingStatus(false);
-    }
-  };
-
-  const renderSummaryCard = (
-    title: string,
-    value: number,
-    icon: keyof typeof Ionicons.glyphMap,
-    iconBackground: string,
-  ) => {
-    return (
-      <View style={styles.summaryCard}>
-        <View
-          style={[
-            styles.summaryIcon,
-            {
-              backgroundColor: iconBackground,
-            },
-          ]}
-        >
-          <Ionicons name={icon} size={19} color={colors.text} />
-        </View>
-
-        <View style={styles.summaryTextContainer}>
-          <Text style={styles.summaryValue}>{value}</Text>
-
-          <Text style={styles.summaryTitle}>{title}</Text>
-        </View>
-      </View>
-    );
-  };
+  const roleChoices = [
+    ...ROLES,
+    ...[...new Set(users.map((user) => user.role))]
+      .filter((role) => !ROLES.some((item) => item.value === role))
+      .map((value) => ({ value, label: roleLabel(value) })),
+  ];
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable
-            style={styles.backButton}
-            onPress={() => router.replace("/(tabs)/master-data")}
-          >
-            <Ionicons name="arrow-back" size={22} color={colors.text} />
-          </Pressable>
-
-          <View style={styles.headerTextContainer}>
-            <Text style={styles.headerTitle}>Users</Text>
-
-            <Text style={styles.headerSubtitle}>
-              Manage roles and account access
-            </Text>
-          </View>
+    <SafeAreaView
+      style={styles.container}
+      edges={["top", "bottom", "left", "right"]}
+    >
+      <View style={styles.topBar}>
+        <BackButton accessibilityLabel="Back to Master Data" disabled={saving} onPress={handleBack} />
+        <BrandPill />
+      </View>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void loadUsers(true)}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+          />
+        }
+      >
+        <View style={styles.hero}>
+          <Text style={styles.eyebrow}>MASTER DATA · PEOPLE & ACCESS</Text>
+          <Text accessibilityRole="header" style={styles.heroTitle}>
+            Users
+          </Text>
+          <Text style={styles.heroText}>
+            Manage workshop roles and account access.
+          </Text>
         </View>
-
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={colors.primary}
-            />
-          }
-          contentContainerStyle={styles.content}
-        >
-          {/* Compact Statistics */}
-          <View style={styles.summaryRow}>
-            {renderSummaryCard(
-              "Total",
-              totalUsers,
-              "people-outline",
-              colors.primaryLight,
-            )}
-
-            {renderSummaryCard(
-              "Active",
-              activeUsers,
-              "checkmark-circle-outline",
-              colors.successLight,
-            )}
-
-            {renderSummaryCard(
-              "Inactive",
-              inactiveUsers,
-              "close-circle-outline",
-              colors.dangerLight,
-            )}
+        {loading && (
+          <View style={styles.inline}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.body}>Loading users…</Text>
           </View>
-
-          {/* Search */}
-          <View style={styles.searchContainer}>
-            <Ionicons
-              name="search-outline"
-              size={20}
-              color={colors.textLight}
+        )}
+        {!!loadError && (
+          <View style={styles.card}>
+            <Text style={styles.title}>User directory unavailable</Text>
+            <Text style={styles.body}>{loadError}</Text>
+            <Button
+              title="Try again"
+              disabled={disabled}
+              onPress={() => void loadUsers()}
             />
-
-            <TextInput
-              value={search}
-              onChangeText={(value) => {
-                setSearch(value);
-                resetToFirstPage();
-              }}
-              placeholder="Search name, email, phone or role"
-              placeholderTextColor={colors.textLight}
-              style={styles.searchInput}
-            />
-
-            {search.length > 0 && (
-              <Pressable
-                onPress={() => {
-                  setSearch("");
-                  resetToFirstPage();
-                }}
-              >
-                <Ionicons
-                  name="close-circle"
-                  size={20}
-                  color={colors.textLight}
-                />
-              </Pressable>
-            )}
           </View>
-
-          {/* Filters */}
-          <View style={styles.filterSection}>
-            <View style={styles.filterRow}>
-              <View style={styles.statusFilters}>
-                {(
-                  [
-                    ["all", "All"],
-                    ["active", "Active"],
-                    ["inactive", "Inactive"],
-                  ] as [StatusFilter, string][]
-                ).map(([value, label]) => {
-                  const selected = statusFilter === value;
-
-                  return (
-                    <Pressable
-                      key={value}
-                      style={[
-                        styles.statusFilterButton,
-                        selected && styles.statusFilterButtonSelected,
-                      ]}
-                      onPress={() => {
-                        setStatusFilter(value);
-                        resetToFirstPage();
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.statusFilterText,
-                          selected && styles.statusFilterTextSelected,
-                        ]}
-                      >
-                        {label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              <Pressable
-                style={styles.roleFilterButton}
-                onPress={() => setRoleFilterModalVisible(true)}
-              >
-                <Ionicons
-                  name="funnel-outline"
-                  size={17}
-                  color={
-                    roleFilter === "all" ? colors.textSecondary : colors.primary
-                  }
-                />
-
-                <Text
+        )}
+        {!loading && !loadError && (
+          <>
+            <View style={styles.metrics}>
+              {(["All", "Active", "Inactive"] as Filter[]).map((key) => (
+                <Pressable
+                  key={key}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: filter === key }}
+                  accessibilityLabel={`${key}: ${counts[key]} users`}
+                  onPress={() => {
+                    setFilter(key);
+                    setPage(1);
+                  }}
                   style={[
-                    styles.roleFilterText,
-                    roleFilter !== "all" && styles.roleFilterTextSelected,
+                    styles.metric,
+                    filter === key && styles.metricSelected,
                   ]}
-                  numberOfLines={1}
                 >
-                  {roleFilter === "all" ? "Role" : getRoleLabel(roleFilter)}
-                </Text>
-
+                  <Text style={styles.metricCount}>{counts[key]}</Text>
+                  <Text style={styles.body}>
+                    {key === "All" ? "Total" : key}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.card}>
+              <View style={styles.searchBox}>
                 <Ionicons
-                  name="chevron-down"
-                  size={16}
+                  name="search-outline"
+                  size={20}
                   color={colors.textSecondary}
                 />
-              </Pressable>
-            </View>
-
-            {hasActiveFilters && (
-              <Pressable
-                style={styles.clearFiltersButton}
-                onPress={clearFilters}
-              >
-                <Ionicons
-                  name="close-circle-outline"
-                  size={16}
-                  color={colors.primary}
+                <TextInput
+                  accessibilityLabel="Search users"
+                  value={search}
+                  onChangeText={(value) => {
+                    setSearch(value);
+                    setPage(1);
+                  }}
+                  placeholder="Search name, email, phone or role"
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.searchInput}
                 />
-
-                <Text style={styles.clearFiltersText}>Clear filters</Text>
-              </Pressable>
-            )}
-          </View>
-
-          {/* User List Header */}
-          <View style={styles.sectionHeader}>
-            <View>
-              <Text style={styles.sectionTitle}>User List</Text>
-
-              <Text style={styles.rangeText}>
-                {filteredUsers.length === 0
-                  ? "No users found"
-                  : `Showing ${pageStart}-${pageEnd} of ${filteredUsers.length}`}
+                {!!search && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search"
+                    style={styles.iconButton}
+                    onPress={() => {
+                      setSearch("");
+                      setPage(1);
+                    }}
+                  >
+                    <Ionicons
+                      name="close-circle-outline"
+                      size={22}
+                      color={colors.textSecondary}
+                    />
+                  </Pressable>
+                )}
+              </View>
+              <Button
+                secondary
+                icon="filter-outline"
+                title={
+                  roleFilter === "all" ? "All roles" : roleLabel(roleFilter)
+                }
+                onPress={() => setDialog({ kind: "roleFilter" })}
+                disabled={disabled}
+              />
+              <Text style={styles.body}>
+                {filtered.length
+                  ? `Showing ${(currentPage - 1) * PAGE_SIZE + 1}–${Math.min(currentPage * PAGE_SIZE, filtered.length)} of ${filtered.length} users`
+                  : "No users match these filters"}
               </Text>
             </View>
-
-            <View style={styles.pageBadge}>
-              <Text style={styles.pageBadgeText}>
-                Page {safeCurrentPage} of {totalPages}
-              </Text>
-            </View>
-          </View>
-
-          {/* Loading */}
-          {loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary} />
-
-              <Text style={styles.loadingText}>Loading users...</Text>
-            </View>
-          ) : filteredUsers.length === 0 ? (
-            /* Empty State */
-            <View style={styles.emptyContainer}>
-              <View style={styles.emptyIcon}>
+            {!visible.length && (
+              <View style={styles.empty}>
                 <Ionicons
                   name="people-outline"
-                  size={28}
-                  color={colors.textSecondary}
-                />
-              </View>
-
-              <Text style={styles.emptyTitle}>No Users Found</Text>
-
-              <Text style={styles.emptyText}>
-                Try changing your search or filters.
-              </Text>
-
-              {hasActiveFilters && (
-                <Pressable
-                  style={styles.emptyClearButton}
-                  onPress={clearFilters}
-                >
-                  <Text style={styles.emptyClearButtonText}>Clear Filters</Text>
-                </Pressable>
-              )}
-            </View>
-          ) : (
-            <>
-              {/* Users */}
-              <View style={styles.userList}>
-                {paginatedUsers.map((user) => (
-                  <View key={user.id} style={styles.userCard}>
-                    <View style={styles.userTopRow}>
-                      <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>
-                          {(user.name?.trim()?.charAt(0) || "U").toUpperCase()}
-                        </Text>
-                      </View>
-
-                      <View style={styles.userMainInfo}>
-                        <Text style={styles.userName} numberOfLines={1}>
-                          {user.name || "Unnamed User"}
-                        </Text>
-
-                        <View style={styles.contactRow}>
-                          <Ionicons
-                            name="mail-outline"
-                            size={14}
-                            color={colors.textSecondary}
-                          />
-
-                          <Text style={styles.userEmail} numberOfLines={1}>
-                            {user.email || "No email address"}
-                          </Text>
-                        </View>
-
-                        <View style={styles.contactRow}>
-                          <Ionicons
-                            name="call-outline"
-                            size={14}
-                            color={colors.textSecondary}
-                          />
-
-                          <Text style={styles.userPhone} numberOfLines={1}>
-                            {user.phone || "No phone number"}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          user.is_active
-                            ? styles.statusBadgeActive
-                            : styles.statusBadgeInactive,
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.statusDot,
-                            {
-                              backgroundColor: user.is_active
-                                ? colors.success
-                                : colors.danger,
-                            },
-                          ]}
-                        />
-
-                        <Text
-                          style={[
-                            styles.statusText,
-                            {
-                              color: user.is_active
-                                ? colors.success
-                                : colors.danger,
-                            },
-                          ]}
-                        >
-                          {user.is_active ? "Active" : "Inactive"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.userInfoRow}>
-                      <View style={styles.roleBadge}>
-                        <Ionicons
-                          name="shield-checkmark-outline"
-                          size={14}
-                          color={colors.primary}
-                        />
-
-                        <Text style={styles.roleBadgeText}>
-                          {getRoleLabel(user.role)}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.actionRow}>
-                      <Pressable
-                        style={styles.secondaryAction}
-                        onPress={() => openRoleModal(user)}
-                      >
-                        <Ionicons
-                          name="shield-checkmark-outline"
-                          size={17}
-                          color={colors.primary}
-                        />
-
-                        <Text style={styles.secondaryActionText}>
-                          Change Role
-                        </Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={[
-                          styles.statusAction,
-                          user.is_active
-                            ? styles.deactivateAction
-                            : styles.activateAction,
-                        ]}
-                        onPress={() => openStatusModal(user)}
-                      >
-                        <Ionicons
-                          name={
-                            user.is_active
-                              ? "close-circle-outline"
-                              : "checkmark-circle-outline"
-                          }
-                          size={17}
-                          color={
-                            user.is_active ? colors.danger : colors.success
-                          }
-                        />
-
-                        <Text
-                          style={[
-                            styles.statusActionText,
-                            {
-                              color: user.is_active
-                                ? colors.danger
-                                : colors.success,
-                            },
-                          ]}
-                        >
-                          {user.is_active ? "Deactivate" : "Activate"}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ))}
-              </View>
-
-              {/* Pagination */}
-              <View style={styles.pagination}>
-                <Pressable
-                  style={[
-                    styles.paginationButton,
-                    safeCurrentPage === 1 && styles.paginationButtonDisabled,
-                  ]}
-                  disabled={safeCurrentPage === 1}
-                  onPress={() =>
-                    setCurrentPage((page) => Math.max(1, page - 1))
-                  }
-                >
-                  <Ionicons
-                    name="chevron-back"
-                    size={18}
-                    color={
-                      safeCurrentPage === 1 ? colors.textLight : colors.text
-                    }
-                  />
-
-                  <Text
-                    style={[
-                      styles.paginationButtonText,
-                      safeCurrentPage === 1 && styles.paginationTextDisabled,
-                    ]}
-                  >
-                    Previous
-                  </Text>
-                </Pressable>
-
-                <View style={styles.paginationCenter}>
-                  <Text style={styles.paginationPageText}>
-                    Page {safeCurrentPage} of {totalPages}
-                  </Text>
-                </View>
-
-                <Pressable
-                  style={[
-                    styles.paginationButton,
-                    safeCurrentPage === totalPages &&
-                      styles.paginationButtonDisabled,
-                  ]}
-                  disabled={safeCurrentPage === totalPages}
-                  onPress={() =>
-                    setCurrentPage((page) => Math.min(totalPages, page + 1))
-                  }
-                >
-                  <Text
-                    style={[
-                      styles.paginationButtonText,
-                      safeCurrentPage === totalPages &&
-                        styles.paginationTextDisabled,
-                    ]}
-                  >
-                    Next
-                  </Text>
-
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={
-                      safeCurrentPage === totalPages
-                        ? colors.textLight
-                        : colors.text
-                    }
-                  />
-                </Pressable>
-              </View>
-            </>
-          )}
-        </ScrollView>
-      </View>
-
-      {/* Role Filter Modal */}
-      <Modal
-        visible={roleFilterModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setRoleFilterModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.filterModal}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Filter by Role</Text>
-
-                <Text style={styles.modalSubtitle}>Select a user role</Text>
-              </View>
-
-              <Pressable onPress={() => setRoleFilterModalVisible(false)}>
-                <Ionicons name="close" size={24} color={colors.textSecondary} />
-              </Pressable>
-            </View>
-
-            <Pressable
-              style={[
-                styles.roleFilterOption,
-                roleFilter === "all" && styles.roleFilterOptionSelected,
-              ]}
-              onPress={() => {
-                setRoleFilter("all");
-                setCurrentPage(1);
-                setRoleFilterModalVisible(false);
-              }}
-            >
-              <Text
-                style={[
-                  styles.roleFilterOptionText,
-                  roleFilter === "all" && styles.roleFilterOptionTextSelected,
-                ]}
-              >
-                All Roles
-              </Text>
-
-              {roleFilter === "all" && (
-                <Ionicons
-                  name="checkmark-circle"
-                  size={21}
+                  size={32}
                   color={colors.primary}
                 />
-              )}
-            </Pressable>
-
-            {ROLES.map((role) => {
-              const selected = roleFilter === role.value;
-
-              return (
-                <Pressable
-                  key={role.value}
-                  style={[
-                    styles.roleFilterOption,
-                    selected && styles.roleFilterOptionSelected,
-                  ]}
-                  onPress={() => {
-                    setRoleFilter(role.value);
-                    setCurrentPage(1);
-                    setRoleFilterModalVisible(false);
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.roleFilterOptionText,
-                      selected && styles.roleFilterOptionTextSelected,
-                    ]}
-                  >
-                    {role.label}
-                  </Text>
-
-                  {selected && (
+                <Text style={styles.title}>
+                  {users.length ? "No matching users" : "No users found"}
+                </Text>
+                <Text style={styles.body}>
+                  Try another search or clear the filters.
+                </Text>
+                <Button
+                  secondary
+                  title="Clear search & filters"
+                  onPress={resetFilters}
+                />
+              </View>
+            )}
+            {visible.map((user) => (
+              <View key={user.id} style={styles.card}>
+                <View style={styles.modelHeading}>
+                  <View style={styles.modelIcon}>
                     <Ionicons
-                      name="checkmark-circle"
-                      size={21}
+                      name="person-outline"
+                      size={24}
                       color={colors.primary}
                     />
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      </Modal>
-
-      {/* Change Role Modal */}
-      <Modal
-        visible={roleModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          if (!savingRole) {
-            setRoleModalVisible(false);
-          }
-        }}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Change Role</Text>
-
-                <Text style={styles.modalSubtitle}>
-                  {selectedUser?.name || "User"}
-                </Text>
-              </View>
-
-              <Pressable
-                onPress={() => {
-                  if (!savingRole) {
-                    setRoleModalVisible(false);
-                  }
-                }}
-                disabled={savingRole}
-              >
-                <Ionicons name="close" size={24} color={colors.textSecondary} />
-              </Pressable>
-            </View>
-
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              style={styles.roleList}
-            >
-              {ROLES.map((role) => {
-                const selected = selectedRole === role.value;
-
-                return (
-                  <Pressable
-                    key={role.value}
+                  </View>
+                  <View style={styles.grow}>
+                    <Text style={styles.title}>
+                      {user.name || "Name not recorded"}
+                      {user.id === actorId ? " · You" : ""}
+                    </Text>
+                    <Text selectable style={styles.body}>
+                      {user.email || "Email not recorded"}
+                    </Text>
+                  </View>
+                  <View
                     style={[
-                      styles.roleOption,
-                      selected && styles.roleOptionSelected,
+                      styles.badge,
+                      user.is_active
+                        ? styles.activeBadge
+                        : styles.inactiveBadge,
                     ]}
-                    onPress={() => setSelectedRole(role.value)}
-                    disabled={savingRole}
                   >
-                    <View style={styles.roleOptionTextContainer}>
-                      <Text
-                        style={[
-                          styles.roleOptionTitle,
-                          selected && styles.roleOptionTitleSelected,
-                        ]}
-                      >
-                        {role.label}
-                      </Text>
-
-                      <Text style={styles.roleOptionCode}>{role.value}</Text>
-                    </View>
-
-                    {selected && (
-                      <Ionicons
-                        name="checkmark-circle"
-                        size={22}
-                        color={colors.primary}
-                      />
-                    )}
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.modalActions}>
-              <Pressable
-                style={styles.cancelButton}
-                onPress={() => setRoleModalVisible(false)}
-                disabled={savingRole}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.confirmButton,
-                  savingRole && styles.disabledButton,
-                ]}
-                onPress={changeRole}
-                disabled={savingRole}
-              >
-                {savingRole ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <Text style={styles.confirmButtonText}>Save Role</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Status Confirmation Modal */}
-      <Modal
-        visible={statusModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          if (!savingStatus) {
-            setStatusModalVisible(false);
-          }
-        }}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.confirmModal}>
-            <View
-              style={[
-                styles.confirmIcon,
-                {
-                  backgroundColor: selectedUser?.is_active
-                    ? colors.dangerLight
-                    : colors.successLight,
-                },
-              ]}
-            >
-              <Ionicons
-                name={
-                  selectedUser?.is_active
-                    ? "close-circle-outline"
-                    : "checkmark-circle-outline"
-                }
-                size={30}
-                color={selectedUser?.is_active ? colors.danger : colors.success}
-              />
-            </View>
-
-            <Text style={styles.confirmTitle}>
-              {selectedUser?.is_active ? "Deactivate User?" : "Activate User?"}
-            </Text>
-
-            <Text style={styles.confirmText}>
-              {selectedUser?.is_active
-                ? `Are you sure you want to deactivate ${
-                    selectedUser?.name || "this user"
-                  }? They will no longer be treated as an active user.`
-                : `Are you sure you want to activate ${
-                    selectedUser?.name || "this user"
-                  }?`}
-            </Text>
-
-            <View style={styles.modalActions}>
-              <Pressable
-                style={styles.cancelButton}
-                onPress={() => setStatusModalVisible(false)}
-                disabled={savingStatus}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.confirmButton,
-                  selectedUser?.is_active
-                    ? styles.dangerButton
-                    : styles.successButton,
-                  savingStatus && styles.disabledButton,
-                ]}
-                onPress={changeStatus}
-                disabled={savingStatus}
-              >
-                {savingStatus ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <Text style={styles.confirmButtonText}>
-                    {selectedUser?.is_active ? "Deactivate" : "Activate"}
+                    <Text
+                      style={[
+                        styles.badgeText,
+                        {
+                          color: user.is_active
+                            ? "#217A50"
+                            : colors.textSecondary,
+                        },
+                      ]}
+                    >
+                      {user.is_active ? "Active" : "Inactive"}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.label}>{roleLabel(user.role)}</Text>
+                <Text selectable style={styles.body}>
+                  Phone: {user.phone || "Not recorded"}
+                </Text>
+                <View style={styles.actions}>
+                  <Button
+                    secondary
+                    icon="shield-checkmark-outline"
+                    title="Change role"
+                    disabled={disabled || user.id === actorId}
+                    onPress={() => openRole(user)}
+                  />
+                  <Button
+                    secondary
+                    icon="power-outline"
+                    title={user.is_active ? "Deactivate" : "Activate"}
+                    disabled={disabled || user.id === actorId}
+                    onPress={() => {
+                      if (busy.current) return;
+                      setFormError("");
+                      setDialog({ kind: "status", user });
+                    }}
+                  />
+                </View>
+                {user.id === actorId && (
+                  <Text style={styles.hint}>
+                    Another active CEO Admin can change your own access.
                   </Text>
                 )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Message Modal */}
-      <Modal
-        visible={messageModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setMessageModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.messageModal}>
-            <View style={styles.messageIcon}>
+              </View>
+            ))}
+            {pages > 1 && (
+              <View style={styles.heading}>
+                <Button
+                  secondary
+                  title="Previous"
+                  disabled={disabled || currentPage === 1}
+                  onPress={() => setPage(currentPage - 1)}
+                />
+                <Text style={styles.body}>
+                  Page {currentPage} of {pages}
+                </Text>
+                <Button
+                  secondary
+                  title="Next"
+                  disabled={disabled || currentPage === pages}
+                  onPress={() => setPage(currentPage + 1)}
+                />
+              </View>
+            )}
+            <View style={styles.note}>
               <Ionicons
                 name="information-circle-outline"
-                size={30}
-                color={colors.info}
+                size={20}
+                color={colors.textSecondary}
               />
+              <Text style={[styles.body, styles.grow]}>
+                Review pending work before changing access. Role changes and
+                deactivation do not transfer existing vehicle assignments.
+                Billing Executive and Billing Department are separate roles.
+              </Text>
             </View>
-
-            <Text style={styles.messageTitle}>{messageTitle}</Text>
-
-            <Text style={styles.messageText}>{messageText}</Text>
-
-            <Pressable
-              style={styles.confirmButton}
-              onPress={() => setMessageModalVisible(false)}
-            >
-              <Text style={styles.confirmButtonText}>OK</Text>
-            </Pressable>
-          </View>
-        </View>
+          </>
+        )}
+      </ScrollView>
+      <Modal
+        visible={!!dialog}
+        transparent
+        animationType="fade"
+        onRequestClose={closeDialog}
+      >
+        <SafeAreaView
+          style={styles.overlay}
+          edges={["top", "bottom", "left", "right"]}
+        >
+          <ScrollView
+            contentContainerStyle={styles.modalScroll}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.dialog}>
+              {dialog?.kind === "role" && (
+                <>
+                  <Text style={styles.title}>Change user role</Text>
+                  <Text style={styles.body}>
+                    {dialog.user.name || dialog.user.email || "User"} · Current:{" "}
+                    {roleLabel(dialog.user.role)}
+                  </Text>
+                  {ROLES.map((role) => (
+                    <Pressable
+                      key={role.value}
+                      accessibilityRole="radio"
+                      accessibilityState={{
+                        checked: selectedRole === role.value,
+                        disabled: saving,
+                      }}
+                      disabled={saving}
+                      onPress={() => {
+                        setSelectedRole(role.value);
+                        setFormError("");
+                      }}
+                      style={[
+                        styles.option,
+                        selectedRole === role.value && styles.optionSelected,
+                      ]}
+                    >
+                      <Ionicons
+                        name={
+                          selectedRole === role.value
+                            ? "radio-button-on"
+                            : "radio-button-off"
+                        }
+                        size={20}
+                        color={colors.primaryDark}
+                      />
+                      <Text style={styles.optionText}>{role.label}</Text>
+                    </Pressable>
+                  ))}
+                  <Text style={styles.hint}>
+                    Billing Executive opens the executive billing workflow.
+                    Billing Department is a separate department role.
+                  </Text>
+                  <View style={styles.actions}>
+                    <Button
+                      secondary
+                      title="Cancel"
+                      onPress={closeDialog}
+                      disabled={saving}
+                    />
+                    <Button
+                      title="Review change"
+                      disabled={
+                        disabled ||
+                        selectedRole === dialog.user.role ||
+                        !ROLES.some((role) => role.value === selectedRole)
+                      }
+                      onPress={() =>
+                        setDialog({ kind: "roleConfirm", editor: dialog })
+                      }
+                    />
+                  </View>
+                </>
+              )}
+              {dialog?.kind === "roleConfirm" && (
+                <>
+                  <Text style={styles.title}>Confirm role change</Text>
+                  <Text style={styles.body}>
+                    {dialog.editor.user.name ||
+                      dialog.editor.user.email ||
+                      "User"}
+                    : {roleLabel(dialog.editor.user.role)} →{" "}
+                    {roleLabel(selectedRole)}
+                  </Text>
+                  <Text style={styles.body}>
+                    This changes their available screens and permissions.
+                    Existing vehicle assignments will not be transferred.
+                  </Text>
+                  <Button
+                    title={saving ? "Saving…" : "Confirm role change"}
+                    disabled={disabled}
+                    busy={saving}
+                    onPress={() => void changeUser()}
+                  />
+                  <BackButton disabled={saving} onPress={closeDialog} accessibilityLabel="Back to roles" />
+                </>
+              )}
+              {dialog?.kind === "status" && (
+                <>
+                  <Text style={styles.title}>
+                    {dialog.user.is_active ? "Deactivate" : "Activate"} user?
+                  </Text>
+                  <Text style={styles.label}>
+                    {dialog.user.name || dialog.user.email || "User"}
+                  </Text>
+                  <Text style={styles.body}>
+                    {dialog.user.is_active
+                      ? "This account will be marked inactive. Review and reassign pending work separately. The user and their work history will not be deleted."
+                      : "This account will be marked active with its current role and permissions."}
+                  </Text>
+                  <Button
+                    title={
+                      saving
+                        ? "Updating…"
+                        : dialog.user.is_active
+                          ? "Deactivate user"
+                          : "Activate user"
+                    }
+                    busy={saving}
+                    disabled={disabled}
+                    onPress={() => void changeUser()}
+                  />
+                  <Button
+                    secondary
+                    title="Cancel"
+                    disabled={saving}
+                    onPress={closeDialog}
+                  />
+                </>
+              )}
+              {dialog?.kind === "roleFilter" && (
+                <>
+                  <Text style={styles.title}>Filter by role</Text>
+                  {[{ value: "all", label: "All roles" }, ...roleChoices].map(
+                    (role) => (
+                      <Pressable
+                        key={role.value}
+                        accessibilityRole="radio"
+                        accessibilityState={{
+                          checked: roleFilter === role.value,
+                        }}
+                        onPress={() => {
+                          setRoleFilter(role.value);
+                          setPage(1);
+                          setDialog(null);
+                        }}
+                        style={[
+                          styles.option,
+                          roleFilter === role.value && styles.optionSelected,
+                        ]}
+                      >
+                        <Text style={styles.optionText}>
+                          {role.label} ·{" "}
+                          {role.value === "all"
+                            ? users.length
+                            : users.filter((user) => user.role === role.value)
+                                .length}
+                        </Text>
+                      </Pressable>
+                    ),
+                  )}
+                  <Button secondary title="Close" onPress={closeDialog} />
+                </>
+              )}
+              {dialog?.kind === "discard" && (
+                <>
+                  <Text style={styles.title}>Discard role selection?</Text>
+                  <Text style={styles.body}>
+                    The selected role has not been saved.
+                  </Text>
+                  <Button
+                    title="Keep reviewing"
+                    onPress={() => setDialog(dialog.editor)}
+                  />
+                  <Button
+                    secondary
+                    title="Discard selection"
+                    onPress={() => {
+                      setDialog(null);
+                      setFormError("");
+                    }}
+                  />
+                </>
+              )}
+              {dialog?.kind === "notice" && (
+                <>
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={30}
+                    color={colors.primary}
+                  />
+                  <Text style={styles.title}>{dialog.title}</Text>
+                  <Text style={styles.body}>{dialog.body}</Text>
+                  <Button title="OK" onPress={closeDialog} />
+                </>
+              )}
+              {!!formError && (
+                <Text accessibilityRole="alert" style={styles.error}>
+                  {formError}
+                </Text>
+              )}
+            </View>
+          </ScrollView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
 }
 
+function Button({
+  title,
+  onPress,
+  secondary = false,
+  disabled = false,
+  busy = false,
+  icon,
+}: {
+  title: string;
+  onPress: () => void;
+  secondary?: boolean;
+  disabled?: boolean;
+  busy?: boolean;
+  icon?: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.button,
+        secondary && styles.secondaryButton,
+        disabled && styles.disabled,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      {busy ? (
+        <ActivityIndicator
+          size="small"
+          color={secondary ? colors.primaryDark : colors.white}
+        />
+      ) : (
+        icon && (
+          <Ionicons
+            name={icon}
+            size={18}
+            color={secondary ? colors.primaryDark : colors.white}
+          />
+        )
+      )}
+      <Text style={[styles.buttonText, secondary && styles.secondaryText]}>
+        {title}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
-  content: {
+  container: { flex: 1, backgroundColor: colors.background },
+  topBar: {
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-
-  header: {
+    paddingVertical: spacing.xs,
     flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    gap: spacing.xs,
   },
-
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.round,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.background,
-    marginRight: spacing.md,
-  },
-
-  headerTextContainer: {
-    flex: 1,
-  },
-
-  headerTitle: {
-    ...typography.heading,
-    color: colors.text,
-  },
-
-  headerSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  summaryRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginTop: spacing.lg,
-  },
-
-  summaryCard: {
-    flex: 1,
-    minHeight: 70,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  summaryIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  summaryTextContainer: {
-    flex: 1,
-    marginLeft: spacing.sm,
-  },
-
-  summaryValue: {
-    ...typography.subheading,
-    color: colors.text,
-  },
-
-  summaryTitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.lg,
+  back: {
     minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingRight: spacing.sm,
   },
-
+  backText: {
+    ...typography.caption,
+    fontWeight: "700",
+    color: colors.textSecondary,
+  },
+  brand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    padding: 10,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
+  },
+  brandText: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+    color: colors.text,
+  },
+  content: {
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.lg,
+  },
+  hero: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  eyebrow: {
+    fontSize: 10,
+    letterSpacing: 0.7,
+    fontWeight: "800",
+    color: colors.white,
+  },
+  heroTitle: { ...typography.title, fontSize: 27, color: colors.white },
+  heroText: { ...typography.caption, color: colors.white, lineHeight: 21 },
+  inline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    padding: spacing.lg,
+  },
+  card: {
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.md,
+  },
+  heading: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  grow: { flex: 1, minWidth: 0 },
+  title: { ...typography.subheading, color: colors.text },
+  body: { ...typography.caption, lineHeight: 20, color: colors.textSecondary },
+  metrics: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  metric: {
+    flex: 1,
+    minWidth: 88,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    gap: spacing.xs,
+  },
+  metricSelected: { borderColor: colors.primary },
+  metricCount: { fontSize: 25, fontWeight: "800", color: colors.text },
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingLeft: spacing.md,
+    backgroundColor: colors.background,
+  },
   searchInput: {
     flex: 1,
-    ...typography.body,
+    minWidth: 0,
+    minHeight: 48,
+    paddingHorizontal: spacing.sm,
     color: colors.text,
-    marginLeft: spacing.sm,
-    paddingVertical: 0,
+    fontSize: 14,
   },
-
-  filterSection: {
-    marginTop: spacing.md,
+  iconButton: {
+    width: 48,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
   },
-
-  filterRow: {
+  empty: {
+    padding: spacing.xl,
+    alignItems: "center",
+    gap: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+  },
+  modelHeading: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  modelIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badge: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.sm },
+  activeBadge: { backgroundColor: "#E8F5EE" },
+  inactiveBadge: { backgroundColor: colors.background },
+  badgeText: { fontSize: 12, fontWeight: "700" },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  button: {
+    minHeight: 48,
+    backgroundColor: colors.primaryDark,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: spacing.sm,
   },
-
-  statusFilters: {
-    flex: 1,
-    flexDirection: "row",
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-
-  statusFilterButton: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 38,
-    borderRadius: radius.sm,
-  },
-
-  statusFilterButtonSelected: {
-    backgroundColor: colors.primary,
-  },
-
-  statusFilterText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: "500",
-  },
-
-  statusFilterTextSelected: {
+  buttonText: {
+    ...typography.button,
     color: colors.white,
-    fontWeight: "600",
-  },
-
-  roleFilterButton: {
-    minWidth: 105,
-    maxWidth: 145,
-    minHeight: 46,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-  },
-
-  roleFilterText: {
-    ...typography.caption,
-    color: colors.textSecondary,
+    textAlign: "center",
     flexShrink: 1,
   },
-
-  roleFilterTextSelected: {
-    color: colors.primary,
-    fontWeight: "600",
-  },
-
-  clearFiltersButton: {
-    alignSelf: "flex-start",
+  secondaryButton: { backgroundColor: colors.primaryLight },
+  secondaryText: { color: colors.primaryDark },
+  disabled: { opacity: 0.5 },
+  pressed: { opacity: 0.75 },
+  note: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginTop: spacing.sm,
-    paddingVertical: 3,
-  },
-
-  clearFiltersText: {
-    ...typography.caption,
-    color: colors.primary,
-    fontWeight: "600",
-  },
-
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: spacing.xl,
-    marginBottom: spacing.md,
-  },
-
-  sectionTitle: {
-    ...typography.subheading,
-    color: colors.text,
-  },
-
-  rangeText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  pageBadge: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.round,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-  },
-
-  pageBadgeText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: "600",
-  },
-
-  loadingContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: spacing.xxl,
-  },
-
-  loadingText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    marginTop: spacing.md,
-  },
-
-  emptyContainer: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    alignItems: "center",
-    padding: spacing.xxl,
-  },
-
-  emptyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.round,
-    backgroundColor: colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.md,
-  },
-
-  emptyTitle: {
-    ...typography.subheading,
-    color: colors.text,
-  },
-
-  emptyText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: "center",
-    marginTop: spacing.xs,
-  },
-
-  emptyClearButton: {
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryLight,
-  },
-
-  emptyClearButtonText: {
-    ...typography.button,
-    color: colors.primary,
-  },
-
-  userList: {
-    gap: spacing.sm,
-  },
-
-  userCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
-  },
-
-  userTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.round,
-    backgroundColor: colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  avatarText: {
-    ...typography.subheading,
-    color: colors.primary,
-  },
-
-  userMainInfo: {
-    flex: 1,
-    marginLeft: spacing.md,
-    marginRight: spacing.sm,
-  },
-
-  userName: {
-    ...typography.bodyMedium,
-    color: colors.text,
-  },
-
-  contactRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 3,
-    minWidth: 0,
-  },
-
-  userEmail: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginLeft: 5,
-    flex: 1,
-  },
-
-  userPhone: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginLeft: 5,
-    flex: 1,
-  },
-
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: radius.round,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-  },
-
-  statusBadgeActive: {
-    backgroundColor: colors.successLight,
-  },
-
-  statusBadgeInactive: {
-    backgroundColor: colors.dangerLight,
-  },
-
-  statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: radius.round,
-    marginRight: 5,
-  },
-
-  statusText: {
-    ...typography.caption,
-    fontWeight: "600",
-  },
-
-  userInfoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: spacing.sm,
-  },
-
-  roleBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: colors.primaryLight,
-    borderRadius: radius.round,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-  },
-
-  roleBadgeText: {
-    ...typography.caption,
-    color: colors.primary,
-    fontWeight: "600",
-  },
-
-  actionRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-
-  secondaryAction: {
-    flex: 1,
-    minHeight: 40,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 5,
-  },
-
-  secondaryActionText: {
-    ...typography.caption,
-    color: colors.primary,
-    fontWeight: "600",
-  },
-
-  statusAction: {
-    flex: 1,
-    minHeight: 40,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 5,
-  },
-
-  deactivateAction: {
-    borderColor: colors.danger,
-    backgroundColor: colors.dangerLight,
-  },
-
-  activateAction: {
-    borderColor: colors.success,
-    backgroundColor: colors.successLight,
-  },
-
-  statusActionText: {
-    ...typography.caption,
-    fontWeight: "600",
-  },
-
-  pagination: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: spacing.lg,
-    padding: spacing.sm,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-  },
-
-  paginationButton: {
-    flex: 1,
-    minHeight: 40,
-    borderRadius: radius.sm,
-    backgroundColor: colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 3,
-  },
-
-  paginationButtonDisabled: {
-    opacity: 0.5,
-  },
-
-  paginationButtonText: {
-    ...typography.caption,
-    color: colors.text,
-    fontWeight: "600",
-  },
-
-  paginationTextDisabled: {
-    color: colors.textLight,
-  },
-
-  paginationCenter: {
-    minWidth: 95,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  paginationPageText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: "600",
-  },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.lg,
-  },
-
-  filterModal: {
-    width: "100%",
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.lg,
-  },
-
-  modalContainer: {
-    width: "100%",
-    maxHeight: "85%",
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.lg,
-  },
-
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: spacing.md,
-  },
-
-  modalTitle: {
-    ...typography.heading,
-    color: colors.text,
-  },
-
-  modalSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 3,
-  },
-
-  roleFilterOption: {
-    minHeight: 44,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
-  roleFilterOptionSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryLight,
-  },
-
-  roleFilterOptionText: {
-    ...typography.bodyMedium,
-    color: colors.text,
-  },
-
-  roleFilterOptionTextSelected: {
-    color: colors.primary,
-  },
-
-  roleList: {
-    maxHeight: 430,
-  },
-
-  roleOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-  },
-
-  roleOptionSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryLight,
-  },
-
-  roleOptionTextContainer: {
-    flex: 1,
-  },
-
-  roleOptionTitle: {
-    ...typography.bodyMedium,
-    color: colors.text,
-  },
-
-  roleOptionTitleSelected: {
-    color: colors.primary,
-  },
-
-  roleOptionCode: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  modalActions: {
-    flexDirection: "row",
     gap: spacing.sm,
-    marginTop: spacing.md,
+    padding: spacing.sm,
   },
-
-  cancelButton: {
-    flex: 1,
-    minHeight: 46,
-    borderRadius: radius.md,
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.48)" },
+  modalFrame: { flex: 1 },
+  modalScroll: { flexGrow: 1, justifyContent: "center", padding: spacing.lg },
+  dialog: {
+    width: "100%",
+    maxWidth: 520,
+    alignSelf: "center",
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    gap: spacing.md,
+  },
+  label: { ...typography.bodyMedium, color: colors.text },
+  input: {
     borderWidth: 1,
     borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  cancelButtonText: {
-    ...typography.button,
-    color: colors.text,
-  },
-
-  confirmButton: {
-    flex: 1,
-    minHeight: 46,
     borderRadius: radius.md,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  confirmButtonText: {
-    ...typography.button,
-    color: colors.white,
-  },
-
-  dangerButton: {
-    backgroundColor: colors.danger,
-  },
-
-  successButton: {
-    backgroundColor: colors.success,
-  },
-
-  disabledButton: {
-    opacity: 0.6,
-  },
-
-  confirmModal: {
-    width: "100%",
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    alignItems: "center",
-  },
-
-  confirmIcon: {
-    width: 62,
-    height: 62,
-    borderRadius: radius.round,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.md,
-  },
-
-  confirmTitle: {
-    ...typography.heading,
+    minHeight: 48,
+    padding: spacing.md,
     color: colors.text,
-    textAlign: "center",
+    fontSize: 15,
+    backgroundColor: colors.background,
   },
-
-  confirmText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: "center",
-    lineHeight: 22,
-    marginTop: spacing.sm,
-  },
-
-  messageModal: {
-    width: "100%",
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    alignItems: "center",
-  },
-
-  messageIcon: {
-    width: 62,
-    height: 62,
-    borderRadius: radius.round,
-    backgroundColor: colors.infoLight,
-    alignItems: "center",
+  hint: { ...typography.caption, color: colors.textSecondary, lineHeight: 19 },
+  option: {
+    flex: 1,
+    minHeight: 48,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    flexDirection: "row",
     justifyContent: "center",
-    marginBottom: spacing.md,
+    alignItems: "center",
+    gap: spacing.sm,
   },
-
-  messageTitle: {
-    ...typography.heading,
+  optionSelected: {
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primary,
+  },
+  optionText: { ...typography.bodyMedium, color: colors.primaryDark },
+  error: { ...typography.caption, color: colors.error, lineHeight: 20 },
+  modelPreview: {
+    ...typography.bodyMedium,
     color: colors.text,
-    textAlign: "center",
-  },
-
-  messageText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: "center",
-    lineHeight: 22,
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
   },
 });

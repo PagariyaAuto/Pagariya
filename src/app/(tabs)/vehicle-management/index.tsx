@@ -1,3 +1,4 @@
+import BackButton from "../../../components/navigation/BackButton";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
@@ -753,23 +754,7 @@ export default function VehicleManagementScreen() {
             <>
               <View style={styles.header}>
                 <View style={styles.headerLeft}>
-                  <Pressable
-                    onPress={goHome}
-                    hitSlop={10}
-                    style={styles.backButton}
-                  >
-                    <Ionicons
-                      name="chevron-back"
-                      size={20}
-                      color={COLORS.charcoal}
-                    />
-
-                    <Text
-                      style={styles.backButtonText}
-                    >
-                      Home
-                    </Text>
-                  </Pressable>
+                  <BackButton onPress={goHome} hitSlop={10} />
 
                   <Text style={styles.eyebrow}>
                     PAGARIYA AUTO
@@ -1195,6 +1180,7 @@ export default function VehicleManagementScreen() {
             setFilterModalVisible(false)
           }
         >
+          <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
           <Pressable
             style={styles.modalOverlay}
             onPress={() =>
@@ -1332,6 +1318,7 @@ export default function VehicleManagementScreen() {
               })}
             </Pressable>
           </Pressable>
+          </SafeAreaView>
         </Modal>
       </View>
     </SafeAreaView>

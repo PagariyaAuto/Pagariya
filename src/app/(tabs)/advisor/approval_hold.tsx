@@ -1,3 +1,5 @@
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
@@ -13,6 +15,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 
 import { supabase } from "../../../../lib/supabase";
 import { colors, spacing, typography } from "../../../theme";
@@ -68,6 +71,13 @@ type ApprovalCycle = {
   created_at: string | null;
 };
 
+type IntakeContact = {
+  visit_id: string;
+  vehicle_id: string;
+  customer_name: string | null;
+  customer_mobile: string | null;
+};
+
 type HoldItem = {
   visit: WorkshopVisit;
   vehicle: Vehicle;
@@ -105,6 +115,29 @@ const AGE_ORDER: Record<HoldAge, number> = {
 /* ============================================================
    HELPERS
 ============================================================ */
+
+function contactValue(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const text = String(value).trim();
+  return !text || ["—", "-", "null", "undefined"].includes(text.toLowerCase())
+    ? null
+    : text;
+}
+
+function resolveCustomerContact(
+  vehicle: Vehicle,
+  intake: IntakeContact | null,
+) {
+  const matchingIntake = intake?.vehicle_id === vehicle.id ? intake : null;
+  return {
+    customer_name:
+      contactValue(matchingIntake?.customer_name) ||
+      contactValue(vehicle.customer_name),
+    customer_mobile:
+      contactValue(matchingIntake?.customer_mobile) ||
+      contactValue(vehicle.customer_mobile),
+  };
+}
 
 function formatIndiaDateTime(value: string | null | undefined): string {
   if (!value) {
@@ -215,6 +248,11 @@ function getHoldRemark(item: HoldItem): string {
 ============================================================ */
 
 export default function ApprovalHoldScreen() {
+  const handleNavigationBack = () => {
+    returnToRoute("/(tabs)/advisor");
+  };
+  useHardwareBack(handleNavigationBack);
+
   const [profile, setProfile] = useState<Profile | null>(null);
   const [holds, setHolds] = useState<HoldItem[]>([]);
 
@@ -325,7 +363,7 @@ export default function ApprovalHoldScreen() {
          LOAD VEHICLES + HOLD CYCLES
       ------------------------------------------------------ */
 
-      const [vehiclesResult, cyclesResult] = await Promise.all([
+      const [vehiclesResult, cyclesResult, intakeResult] = await Promise.all([
         supabase
           .from("vehicles")
           .select(
@@ -370,7 +408,15 @@ export default function ApprovalHoldScreen() {
           .order("cycle_no", {
             ascending: false,
           }),
+        supabase
+          .from("vehicle_intake")
+          .select("visit_id, vehicle_id, customer_name, customer_mobile")
+          .in("visit_id", visitIds),
       ]);
+
+      if (intakeResult.error) {
+        throw intakeResult.error;
+      }
 
       if (vehiclesResult.error) {
         throw vehiclesResult.error;
@@ -393,6 +439,11 @@ export default function ApprovalHoldScreen() {
       vehicles.forEach((vehicle) => {
         vehicleMap.set(vehicle.id, vehicle);
       });
+
+      const intakeMap = new Map<string, IntakeContact>();
+      for (const intake of (intakeResult.data ?? []) as IntakeContact[]) {
+        intakeMap.set(intake.visit_id, intake);
+      }
 
       const latestHoldByVisit = new Map<string, ApprovalCycle>();
 
@@ -450,7 +501,10 @@ export default function ApprovalHoldScreen() {
 
         combined.push({
           visit,
-          vehicle,
+          vehicle: {
+            ...vehicle,
+            ...resolveCustomerContact(vehicle, intakeMap.get(visit.id) || null),
+          },
           hold,
           heldByName: hold.decided_by
             ? profileMap.get(hold.decided_by) || "User name unavailable"
@@ -615,65 +669,81 @@ export default function ApprovalHoldScreen() {
         ---------------------------------------------------- */}
 
         <View style={styles.topBar}>
-          <Pressable
-            onPress={() => router.replace("/(tabs)/advisor")}
-            hitSlop={10}
-            style={({ pressed }) => [
-              styles.backButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Ionicons name="arrow-back" size={20} color={colors.primary} />
+          <BackButton onPress={handleNavigationBack} hitSlop={10} />
 
-            <Text style={styles.backText}>Back</Text>
-          </Pressable>
-
-          <Text style={styles.brand}>PAGARIYA</Text>
+          <BrandPill />
         </View>
 
         {/* ----------------------------------------------------
             HERO
         ---------------------------------------------------- */}
 
-        <View style={styles.hero}>
-          <View style={styles.heroIcon}>
-            <Ionicons name="pause-circle-outline" size={28} color="#FFFFFF" />
-          </View>
-
-          <Text style={styles.eyebrow}>ADVISOR WORKSPACE</Text>
-
-          <Text style={styles.heading}>Approval Hold</Text>
-
-          <Text style={styles.subtitle}>
-            Vehicles currently waiting because approval is on hold.
-          </Text>
-
-          <View style={styles.heroBottom}>
-            <View style={styles.countBadge}>
-              <Text style={styles.countText}>
-                {holds.length} {holds.length === 1 ? "vehicle" : "vehicles"} on
-                hold
+        <View style={styles.holdDesignHero}>
+          <View pointerEvents="none" style={styles.holdDesignHeroCircleTop} />
+          <View
+            pointerEvents="none"
+            style={styles.holdDesignHeroCircleBottom}
+          />
+          <View style={styles.holdDesignHeroContent}>
+            <View style={styles.holdDesignHeroPill}>
+              <Text style={styles.holdDesignHeroPillText}>
+                ADVISOR WORKSPACE
               </Text>
             </View>
-
-            {profile?.role === "ceo_admin" && (
-              <View style={styles.adminBadge}>
-                <Ionicons
-                  name="shield-checkmark-outline"
-                  size={14}
-                  color="#FFFFFF"
-                />
-
-                <Text style={styles.adminBadgeText}>CEO Admin</Text>
+            <View style={styles.holdDesignHeroTitleRow}>
+              <Text
+                accessibilityRole="header"
+                style={styles.holdDesignHeroTitle}
+              >
+                Approval Hold
+              </Text>
+              {profile?.role === "ceo_admin" && (
+                <View style={styles.adminBadge}>
+                  <Text style={styles.adminBadgeText}>CEO Admin</Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.holdDesignHeroDescription}>
+              Vehicles currently waiting because approval is on hold.
+            </Text>
+            <View style={styles.holdDesignHeroDivider} />
+            <View style={styles.holdDesignHeroStats}>
+              <View style={styles.holdDesignHeroStat}>
+                <Text style={styles.holdDesignHeroStatNumber}>
+                  {errorMessage ? "—" : holds.length}
+                </Text>
+                <Text style={styles.holdDesignHeroStatLabel}>On hold</Text>
               </View>
+              <View style={styles.holdDesignHeroStatDivider} />
+              <View style={styles.holdDesignHeroStat}>
+                <Text style={styles.holdDesignHeroStatNumber}>
+                  {errorMessage
+                    ? "—"
+                    : holds.filter(
+                        (item) =>
+                          item.visit.current_assigned_to === profile?.id,
+                      ).length}
+                </Text>
+                <Text style={styles.holdDesignHeroStatLabel}>
+                  Assigned to you
+                </Text>
+              </View>
+            </View>
+            {lastUpdated && (
+              <Text style={styles.updatedText}>
+                {refreshing
+                  ? "Updating…"
+                  : "Last updated: " +
+                    lastUpdated.toLocaleTimeString("en-IN", {
+                      timeZone: "Asia/Kolkata",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: true,
+                    }) +
+                    " IST"}
+              </Text>
             )}
           </View>
-
-          {lastUpdated && (
-            <Text style={styles.updatedText}>
-              Last updated: {lastUpdated.toLocaleTimeString()}
-            </Text>
-          )}
         </View>
 
         {/* ----------------------------------------------------
@@ -1227,6 +1297,178 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 1.8,
     color: colors.text,
+  },
+
+  holdOverview: {
+    borderRadius: 20,
+    overflow: "hidden",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.md,
+  },
+  holdOverviewTop: {
+    backgroundColor: colors.primaryDark,
+    padding: 20,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+  },
+  holdOverviewHeading: { flex: 1, minWidth: 0, gap: 7 },
+  holdOverviewEyebrow: {
+    color: "#FFE5E7",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  holdOverviewTitle: { color: colors.white, fontSize: 27, fontWeight: "900" },
+  holdOverviewDescription: { color: "#FFF0F0", fontSize: 13, lineHeight: 21 },
+  holdOverviewIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  holdOverviewSummary: {
+    padding: 18,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+  holdOverviewCountBlock: { gap: 4 },
+  holdOverviewCount: { color: colors.text, fontSize: 34, fontWeight: "900" },
+  holdOverviewCountLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  holdOverviewStatusBlock: { gap: 8, alignItems: "flex-start" },
+  holdOverviewStatus: {
+    backgroundColor: colors.primaryLight,
+    borderRadius: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  holdOverviewClearStatus: { backgroundColor: "#E8F5EE" },
+  holdOverviewStatusText: {
+    color: colors.primaryDark,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  holdOverviewUpdated: { color: colors.textSecondary, fontSize: 11 },
+
+  holdDesignHero: {
+    minHeight: 215,
+    borderRadius: 17,
+    overflow: "hidden",
+    backgroundColor: "#F20D1D",
+    marginBottom: 18,
+    position: "relative",
+    shadowColor: "#F20D1D",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    elevation: 4,
+  },
+  holdDesignHeroContent: {
+    paddingHorizontal: 18,
+    paddingTop: 15,
+    paddingBottom: 15,
+    position: "relative",
+    zIndex: 2,
+  },
+  holdDesignHeroCircleTop: {
+    position: "absolute",
+    width: 145,
+    height: 145,
+    borderRadius: 73,
+    right: -42,
+    top: -67,
+    backgroundColor: "rgba(255,255,255,0.09)",
+  },
+  holdDesignHeroCircleBottom: {
+    position: "absolute",
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    right: 18,
+    bottom: -57,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  holdDesignHeroPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.17)",
+    marginBottom: 9,
+  },
+  holdDesignHeroPillText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+  holdDesignHeroTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  holdDesignHeroTitle: {
+    color: "#FFFFFF",
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: "900",
+  },
+  holdDesignHeroDescription: {
+    color: "rgba(255,255,255,0.94)",
+    fontSize: 13,
+    lineHeight: 19,
+    maxWidth: 540,
+    marginTop: 4,
+  },
+  holdDesignHeroDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    marginTop: 13,
+    marginBottom: 11,
+  },
+  holdDesignHeroStats: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  holdDesignHeroStat: {
+    minWidth: 86,
+    paddingRight: 12,
+  },
+  holdDesignHeroStatNumber: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    lineHeight: 23,
+    fontWeight: "900",
+  },
+  holdDesignHeroStatLabel: {
+    color: "rgba(255,255,255,0.84)",
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  holdDesignHeroStatDivider: {
+    width: 1,
+    height: 31,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    marginRight: 13,
   },
 
   hero: {

@@ -1,9 +1,10 @@
+import BackButton from "../../components/navigation/BackButton";
+import { returnToRoute, useHardwareBack } from "../../lib/back-navigation";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
-import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -16,16 +17,13 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import PhotoGallery from "../../../components/PhotoGallery";
-import PhotoUploadModal from "../../../components/PhotoUploadModal";
 import PhotoViewer from "../../../components/PhotoViewer";
-import ApprovalStage from "../../../components/workflow/ApprovalStage";
 import AssignedAdvisor from "../../../components/workflow/AssignedAdvisor";
 import CustomerInformation from "../../../components/workflow/CustomerInformation";
-import SurveyStage from "../../../components/workflow/SurveyStage";
 import SurveySubmittedStage from "../../../components/workflow/SurveySubmittedStage";
 import VehicleInformation from "../../../components/workflow/VehicleInformation";
 import { supabase } from "../../../lib/supabase";
+import { getCurrentWorkflowRoute } from "../../lib/workflow-route";
 import { colors, radius, spacing, typography } from "../../theme";
 
 type Vehicle = {
@@ -96,6 +94,11 @@ type PhotoItem = {
 };
 
 export default function VehicleDetailScreen() {
+  const handleNavigationBack = () => {
+    returnToRoute("/(tabs)/vehicles");
+  };
+  useHardwareBack(handleNavigationBack);
+
   const params = useLocalSearchParams<{ vehicleId?: string }>();
   const vehicleId = params.vehicleId;
 
@@ -143,10 +146,8 @@ export default function VehicleDetailScreen() {
   const [advisorRemarks, setAdvisorRemarks] = useState("");
 
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
-  const [photoUploadVisible, setPhotoUploadVisible] = useState(false);
   const [photoViewerVisible, setPhotoViewerVisible] = useState(false);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(0);
-  const [submitting, setSubmitting] = useState(false);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [modalTitle, setModalTitle] = useState("");
@@ -447,18 +448,13 @@ export default function VehicleDetailScreen() {
     vehicle.current_assigned_to === currentUserId;
 
   const isPendingAdvisor = vehicle?.current_stage === "PENDING_ADVISOR";
-  const isSurveyStage = vehicle?.current_stage === "SURVEY";
+
 
   const isLaterWorkflowStage =
     !!vehicle &&
     !["PENDING_ADVISOR", "ADVISOR_ASSIGNED", "SURVEY"].includes(
       vehicle.current_stage
     );
-
-  const canEditSurvey =
-    !!vehicle &&
-    vehicle.current_stage === "ADVISOR_ASSIGNED" &&
-    (isAssignedAdvisor || currentUserRole === "ceo_admin");
 
   // Only the assigned Advisor or a CEO Admin can assign/update the Floor Incharge.
   const canAssignFloorIncharge =
@@ -524,192 +520,16 @@ export default function VehicleDetailScreen() {
     }
   };
 
-  const handleTakeVehicle = async () => {
-    if (!vehicleId || currentUserRole !== "advisor") return;
-
+  const handleOpenWorkflow = async (intakeOnly = false) => {
+    if (!vehicleId || takingVehicle) return;
     try {
       setTakingVehicle(true);
-
-      const { error } = await supabase.rpc("take_vehicle_as_advisor", {
-        p_vehicle_id: vehicleId,
-      });
-
-      if (error) throw error;
-
-      showModal(
-        "Vehicle Assigned",
-        "The vehicle has been assigned to you successfully."
-      );
-
-      await loadVehicle();
+      const target = await getCurrentWorkflowRoute(vehicleId, intakeOnly);
+      router.push({ ...target, params: { ...target.params, returnTo: "vehicle-detail" } });
     } catch (error: any) {
-      console.error("Take vehicle error:", error);
-      showModal(
-        "Unable to Take Vehicle",
-        error?.message || "The vehicle could not be assigned to you."
-      );
+      showModal("Unable to Open Workflow", error?.message || "Please refresh and try again.");
     } finally {
       setTakingVehicle(false);
-    }
-  };
-
-  const addPhoto = async (source: "camera" | "gallery") => {
-    if (!canEditSurvey) return;
-
-    try {
-      let result: ImagePicker.ImagePickerResult;
-
-      if (source === "camera") {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-
-        if (!permission.granted) {
-          showModal(
-            "Camera Permission",
-            "Camera permission is required to take a survey photo."
-          );
-          return;
-        }
-
-        result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ["images"],
-          quality: 0.8,
-          allowsEditing: false,
-        });
-      } else {
-        const permission =
-          await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-        if (!permission.granted) {
-          showModal(
-            "Gallery Permission",
-            "Gallery permission is required to select a survey photo."
-          );
-          return;
-        }
-
-        result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ["images"],
-          quality: 0.8,
-          allowsEditing: false,
-          allowsMultipleSelection: true,
-        });
-      }
-
-      if (result.canceled) return;
-
-      const selectedAssets = result.assets ?? [];
-
-      const newPhotos: PhotoItem[] = selectedAssets.map((asset, index) => ({
-        id: `${Date.now()}-${index}-${Math.random()}`,
-        uri: asset.uri,
-        status: "pending",
-      }));
-
-      setPhotos((current) => [...current, ...newPhotos]);
-    } catch (error: any) {
-      console.error("Add survey photo error:", error);
-      showModal("Photo Error", error?.message || "Unable to select photo.");
-    }
-  };
-
-  const removePhoto = (photoId: string) => {
-    if (!canEditSurvey) return;
-    setPhotos((current) => current.filter((photo) => photo.id !== photoId));
-  };
-
-  const uploadPhoto = async (photo: PhotoItem) => {
-    if (!vehicleId) throw new Error("Vehicle ID is missing.");
-
-    const fileName = `${Date.now()}-${Math.random()
-      .toString(36)
-      .substring(2, 10)}.jpg`;
-
-    const storagePath = `vehicles/${vehicleId}/SURVEY/${fileName}`;
-
-    setPhotos((current) =>
-      current.map((item) =>
-        item.id === photo.id
-          ? { ...item, status: "uploading", progress: 20 }
-          : item
-      )
-    );
-
-    const response = await fetch(photo.uri);
-    const arrayBuffer = await response.arrayBuffer();
-
-    setPhotos((current) =>
-      current.map((item) =>
-        item.id === photo.id ? { ...item, progress: 60 } : item
-      )
-    );
-
-    const { error: uploadError } = await supabase.storage
-      .from("vehicle-photos")
-      .upload(storagePath, arrayBuffer, {
-        contentType: "image/jpeg",
-        upsert: false,
-      });
-
-    if (uploadError) throw uploadError;
-
-    setPhotos((current) =>
-      current.map((item) =>
-        item.id === photo.id ? { ...item, progress: 85 } : item
-      )
-    );
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    const { error: photoDbError } = await supabase
-      .from("vehicle_photos")
-      .insert({
-        vehicle_id: vehicleId,
-        event_id: null,
-        photo_type: "SURVEY",
-        storage_path: storagePath,
-        uploaded_by: user?.id,
-      });
-
-    if (photoDbError) {
-      await supabase.storage.from("vehicle-photos").remove([storagePath]);
-      throw photoDbError;
-    }
-
-    setPhotos((current) =>
-      current.map((item) =>
-        item.id === photo.id
-          ? {
-              ...item,
-              status: "uploaded",
-              progress: 100,
-              storagePath,
-            }
-          : item
-      )
-    );
-  };
-
-  const uploadAllPhotos = async () => {
-    const pendingPhotos = photos.filter(
-      (photo) => photo.status === "pending" || photo.status === "failed"
-    );
-
-    for (const photo of pendingPhotos) {
-      try {
-        await uploadPhoto(photo);
-      } catch (error) {
-        console.error("Survey photo upload error:", error);
-
-        setPhotos((current) =>
-          current.map((item) =>
-            item.id === photo.id ? { ...item, status: "failed" } : item
-          )
-        );
-
-        throw error;
-      }
     }
   };
 
@@ -784,112 +604,6 @@ export default function VehicleDetailScreen() {
     return formatDateTime(parsed);
   };
 
-  const validateForm = () => {
-    if (!canEditSurvey) {
-      showModal(
-        "Vehicle Not Assigned",
-        "You must take this vehicle before filling the survey."
-      );
-      return false;
-    }
-
-    if (!jobType) {
-      showModal("Job Type Required", "Please select Insurance or Paid job.");
-      return false;
-    }
-
-    if (jobType === "INSURANCE" && !selectedInsuranceCompany) {
-      showModal(
-        "Insurance Company Required",
-        "Please select the insurance company."
-      );
-      return false;
-    }
-
-    if (jobType === "INSURANCE" && !estimateId.trim()) {
-      showModal("Estimate ID Required", "Please enter the Estimate ID.");
-      return false;
-    }
-
-    if (jobType === "INSURANCE" && !claimNo.trim()) {
-      showModal("Claim No. Required", "Please enter the Claim No.");
-      return false;
-    }
-
-    if (jobType === "INSURANCE" && !claimIntimationAt) {
-      showModal(
-        "Claim Intimation Required",
-        "Please select the Claim Intimation date and time."
-      );
-      return false;
-    }
-
-    if (!surveyAt) {
-      showModal(
-        "Survey Date & Time Required",
-        "Please select the Survey date and time."
-      );
-      return false;
-    }
-
-    if (jobType === "PAID" && !customerApprovalAt.trim()) {
-      showModal(
-        "Customer Approval Required",
-        "Please enter the customer approval date/time."
-      );
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleSubmitSurvey = async () => {
-    if (!vehicleId) return;
-    if (!validateForm()) return;
-
-    try {
-      setSubmitting(true);
-
-      await uploadAllPhotos();
-
-      const { error } = await supabase.rpc("start_vehicle_survey", {
-        p_vehicle_id: vehicleId,
-        p_job_type: jobType,
-        p_job_card_no: jobCardNo.trim() || null,
-        p_insurance_company_id:
-          jobType === "INSURANCE" ? selectedInsuranceCompany : null,
-        p_claim_intimation_at:
-          jobType === "INSURANCE" ? claimIntimationAt || null : null,
-        p_estimate_id:
-          jobType === "INSURANCE" ? estimateId.trim() || null : null,
-        p_claim_no: jobType === "INSURANCE" ? claimNo.trim() || null : null,
-        p_survey_at: surveyAt || null,
-        p_customer_approval_at:
-          jobType === "PAID"
-            ? new Date(customerApprovalAt).toISOString()
-            : null,
-        p_paid_job_remarks:
-          jobType === "PAID" ? paidJobRemarks.trim() || null : null,
-        p_advisor_remarks: advisorRemarks.trim() || null,
-      });
-
-      if (error) throw error;
-
-      showModal(
-        "Survey Submitted",
-        "Vehicle survey has been submitted successfully."
-      );
-    } catch (error: any) {
-      console.error("Submit survey error:", error);
-      showModal(
-        "Unable to Submit Survey",
-        error?.message || "Something went wrong while submitting the survey."
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const openPhotoViewer = (photo: PhotoItem) => {
     const index = photos.findIndex((item) => item.id === photo.id);
 
@@ -916,12 +630,7 @@ export default function VehicleDetailScreen() {
         <View style={styles.emptyContainer}>
           <Ionicons name="car-outline" size={42} color={colors.textLight} />
           <Text style={styles.emptyTitle}>Vehicle not found</Text>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => router.back()}
-          >
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
+          <BackButton onPress={handleNavigationBack} />
         </View>
       </SafeAreaView>
     );
@@ -935,12 +644,7 @@ export default function VehicleDetailScreen() {
       >
         {/* HEADER */}
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.headerBack}
-            onPress={() => router.back()}
-          >
-            <Ionicons name="arrow-back" size={22} color={colors.text} />
-          </TouchableOpacity>
+          <BackButton onPress={handleNavigationBack} />
 
           <View style={styles.headerText}>
             <Text style={styles.title}>Vehicle Details</Text>
@@ -977,20 +681,20 @@ export default function VehicleDetailScreen() {
               before filling the survey details.
             </Text>
 
-            {currentUserRole === "advisor" && (
+            {["advisor", "ceo_admin"].includes(currentUserRole ?? "") && (
               <TouchableOpacity
                 style={[
                   styles.takeButton,
                   takingVehicle && styles.takeButtonDisabled,
                 ]}
-                onPress={handleTakeVehicle}
+                onPress={() => handleOpenWorkflow(true)}
                 disabled={takingVehicle}
                 activeOpacity={0.8}
               >
                 {takingVehicle ? (
                   <>
                     <ActivityIndicator size="small" color={colors.white} />
-                    <Text style={styles.takeButtonText}>Assigning...</Text>
+                    <Text style={styles.takeButtonText}>Opening...</Text>
                   </>
                 ) : (
                   <>
@@ -999,7 +703,7 @@ export default function VehicleDetailScreen() {
                       size={19}
                       color={colors.white}
                     />
-                    <Text style={styles.takeButtonText}>Take Vehicle</Text>
+                    <Text style={styles.takeButtonText}>Open Intake</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -1009,8 +713,8 @@ export default function VehicleDetailScreen() {
 
         {/* WRONG ADVISOR LOCK */}
         {vehicle.current_stage === "ADVISOR_ASSIGNED" &&
-          !isAssignedAdvisor &&
-          currentUserRole !== "ceo_admin" && (
+          currentUserRole === "advisor" && !isAssignedAdvisor &&
+          (
             <View style={styles.lockCard}>
               <View style={styles.lockIcon}>
                 <Ionicons
@@ -1043,16 +747,25 @@ export default function VehicleDetailScreen() {
           />
         )}
 
-        {/* APPROVAL - AVAILABLE WHILE THE VEHICLE IS AT SURVEY */}
-        {isSurveyStage && surveyJob && (
-          <ApprovalStage
-            key={`${surveyJob.id}-${surveyJob.approval_status}-${surveyJob.job_type}`}
-            vehicleId={vehicle.id}
-            job={surveyJob}
-            currentUserRole={currentUserRole}
-            onCompleted={loadVehicle}
-            showMessage={showModal}
-          />
+        {/* Visit-based workflow entry; vehicle details remain on this screen. */}
+        {!isPendingAdvisor && ["advisor", "ceo_admin"].includes(currentUserRole ?? "") && (
+          <View style={styles.lockCard}>
+            <Text style={styles.lockTitle}>Current Workflow</Text>
+            <Text style={styles.lockText}>
+              Open the current Intake, Survey, Approval or Approval Hold screen.
+              The active workshop visit determines the available action.
+            </Text>
+            <TouchableOpacity
+              style={[styles.takeButton, takingVehicle && styles.takeButtonDisabled]}
+              onPress={() => handleOpenWorkflow()}
+              disabled={takingVehicle}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.takeButtonText}>
+                {takingVehicle ? "Opening..." : "Open Current Workflow"}
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* FLOOR INCHARGE ASSIGNMENT */}
@@ -1170,48 +883,6 @@ export default function VehicleDetailScreen() {
           </View>
         )}
 
-        {/* SURVEY FORM */}
-        {canEditSurvey && (
-          <SurveyStage
-            jobType={jobType}
-            setJobType={setJobType}
-            jobCardNo={jobCardNo}
-            setJobCardNo={setJobCardNo}
-            estimateId={estimateId}
-            setEstimateId={setEstimateId}
-            claimNo={claimNo}
-            setClaimNo={setClaimNo}
-            selectedInsuranceCompany={selectedInsuranceCompany}
-            setSelectedInsuranceCompany={setSelectedInsuranceCompany}
-            insuranceCompanies={insuranceCompanies}
-            onOpenInsuranceDropdown={() => setInsuranceDropdownVisible(true)}
-            claimIntimationAt={claimIntimationAt}
-            setClaimIntimationAt={setClaimIntimationAt}
-            surveyAt={surveyAt}
-            setSurveyAt={setSurveyAt}
-            getPickerLabel={getPickerLabel}
-            onOpenDateTimePicker={openDateTimePicker}
-            customerApprovalAt={customerApprovalAt}
-            setCustomerApprovalAt={setCustomerApprovalAt}
-            paidJobRemarks={paidJobRemarks}
-            setPaidJobRemarks={setPaidJobRemarks}
-            advisorRemarks={advisorRemarks}
-            setAdvisorRemarks={setAdvisorRemarks}
-          />
-        )}
-
-        {/* SURVEY PHOTOS */}
-        {canEditSurvey && (
-          <View style={styles.card}>
-            <PhotoGallery
-              photos={photos}
-              onAddPhoto={() => setPhotoUploadVisible(true)}
-              onRemovePhoto={removePhoto}
-              onViewPhoto={openPhotoViewer}
-            />
-          </View>
-        )}
-
         {/* LATER WORKFLOW STAGES */}
         {isLaterWorkflowStage && (
           <View style={styles.lockCard}>
@@ -1231,53 +902,8 @@ export default function VehicleDetailScreen() {
           </View>
         )}
 
-        {/* SUBMIT */}
-        {canEditSurvey && (
-          <TouchableOpacity
-            style={[
-              styles.submitButton,
-              submitting && styles.submitButtonDisabled,
-            ]}
-            onPress={handleSubmitSurvey}
-            disabled={submitting}
-            activeOpacity={0.8}
-          >
-            {submitting ? (
-              <>
-                <ActivityIndicator size="small" color={colors.white} />
-                <Text style={styles.submitButtonText}>
-                  Submitting Survey...
-                </Text>
-              </>
-            ) : (
-              <>
-                <Ionicons
-                  name="checkmark-circle-outline"
-                  size={21}
-                  color={colors.white}
-                />
-                <Text style={styles.submitButtonText}>Submit Survey</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        )}
-
         <View style={styles.bottomSpace} />
       </ScrollView>
-
-      {/* PHOTO UPLOAD MODAL */}
-      <PhotoUploadModal
-        visible={photoUploadVisible}
-        onClose={() => setPhotoUploadVisible(false)}
-        onTakePhoto={() => {
-          setPhotoUploadVisible(false);
-          addPhoto("camera");
-        }}
-        onChooseFromGallery={() => {
-          setPhotoUploadVisible(false);
-          addPhoto("gallery");
-        }}
-      />
 
       {/* PHOTO VIEWER */}
       <PhotoViewer
@@ -1298,6 +924,7 @@ export default function VehicleDetailScreen() {
           setDatePickerStep("date");
         }}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.datePickerOverlay}>
           <View style={styles.datePickerCard}>
             <View style={styles.datePickerHeader}>
@@ -1338,6 +965,7 @@ export default function VehicleDetailScreen() {
             </Text>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* INSURANCE DROPDOWN */}
@@ -1347,6 +975,7 @@ export default function VehicleDetailScreen() {
         animationType="fade"
         onRequestClose={() => setInsuranceDropdownVisible(false)}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <TouchableOpacity
           style={styles.dropdownOverlay}
           activeOpacity={1}
@@ -1383,6 +1012,7 @@ export default function VehicleDetailScreen() {
             )}
           </View>
         </TouchableOpacity>
+        </SafeAreaView>
       </Modal>
 
       {/* FLOOR INCHARGE DROPDOWN */}
@@ -1392,6 +1022,7 @@ export default function VehicleDetailScreen() {
         animationType="fade"
         onRequestClose={() => setFloorDropdownVisible(false)}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <TouchableOpacity
           style={styles.dropdownOverlay}
           activeOpacity={1}
@@ -1442,6 +1073,7 @@ export default function VehicleDetailScreen() {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+        </SafeAreaView>
       </Modal>
 
       {/* DELETE PHOTO CONFIRMATION */}
@@ -1455,6 +1087,7 @@ export default function VehicleDetailScreen() {
           setPhotoToDelete(null);
         }}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalIcon}>
@@ -1497,6 +1130,7 @@ export default function VehicleDetailScreen() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* GENERAL MODAL */}
@@ -1506,6 +1140,7 @@ export default function VehicleDetailScreen() {
         animationType="fade"
         onRequestClose={() => setModalVisible(false)}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalIcon}>
@@ -1533,6 +1168,7 @@ export default function VehicleDetailScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

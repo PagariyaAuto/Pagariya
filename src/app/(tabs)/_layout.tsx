@@ -1,7 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { Tabs } from "expo-router";
+import { Redirect, Tabs } from "expo-router";
 import { useEffect, useState } from "react";
-import { StyleSheet, View, type ColorValue } from "react-native";
+import {
+  ActivityIndicator,
+  StyleSheet,
+  View,
+  type ColorValue,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { supabase } from "../../../lib/supabase";
@@ -13,31 +18,38 @@ type UserRole =
   | "advisor"
   | "store_team"
   | "floor_incharge"
+  | "final_inspector"
   | "supervisor"
   | "worker_group"
   | "billing_department"
+  | "billing_executive"
   | null;
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
 
   const [role, setRole] = useState<UserRole>(null);
+
   const [loadingRole, setLoadingRole] = useState(true);
 
   const bottomInset = Math.max(insets.bottom, 0);
 
   useEffect(() => {
     let mounted = true;
+    let request = 0;
+    let scheduledReload: ReturnType<typeof setTimeout> | undefined;
 
     const loadRole = async () => {
+      const currentRequest = ++request;
       try {
         const {
           data: { user },
         } = await supabase.auth.getUser();
 
         if (!user) {
-          if (mounted) {
+          if (mounted && currentRequest === request) {
             setRole(null);
+
             setLoadingRole(false);
           }
 
@@ -46,89 +58,113 @@ export default function TabsLayout() {
 
         const { data, error } = await supabase
           .from("profiles")
-          .select("role, is_active")
+          .select("role,is_active")
           .eq("id", user.id)
           .single();
 
         if (error) {
           console.error("Failed to load user role:", error);
 
-          if (mounted) {
+          if (mounted && currentRequest === request) {
             setRole(null);
+
             setLoadingRole(false);
           }
 
           return;
         }
 
-        if (mounted) {
-          if (!data?.is_active) {
-            setRole(null);
-          } else {
-            setRole((data.role as UserRole) ?? null);
-          }
-
-          setLoadingRole(false);
+        if (!mounted || currentRequest !== request) {
+          return;
         }
+
+        if (!data?.is_active) {
+          setRole(null);
+        } else {
+          setRole((data.role as UserRole) ?? null);
+        }
+
+        setLoadingRole(false);
       } catch (error) {
         console.error("Failed to load user role:", error);
 
-        if (mounted) {
+        if (mounted && currentRequest === request) {
           setRole(null);
+
           setLoadingRole(false);
         }
       }
     };
 
-    loadRole();
+    void loadRole();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      loadRole();
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (scheduledReload) clearTimeout(scheduledReload);
+      if (event === "SIGNED_OUT") {
+        request += 1;
+        setRole(null);
+        setLoadingRole(false);
+        return;
+      }
+      // Defer Auth calls until the current auth event has finished.
+      scheduledReload = setTimeout(() => {
+        if (mounted) void loadRole();
+      }, 0);
     });
 
     return () => {
       mounted = false;
+      request += 1;
+      if (scheduledReload) clearTimeout(scheduledReload);
+
       subscription.unsubscribe();
     };
   }, []);
 
   const isWatchman = role === "watchman";
+
   const isStoreTeam = role === "store_team";
 
-  /*
-   * Normal workspace roles:
-   *
-   * HOME → VEHICLES → WORK → PROFILE
-   */
-  const isNormalWorkspace =
-    role === "advisor" ||
-    role === "floor_incharge" ||
-    role === "supervisor" ||
-    role === "worker_group" ||
-    role === "billing_department" ||
-    role === "ceo_admin";
+  const isFloorIncharge = role === "floor_incharge";
 
+  const isFinalInspector = role === "final_inspector";
+
+  const isBillingExecutive = role === "billing_executive";
+
+  /*
+   * Advisor and CEO Admin retain
+   * their normal workspace tabs:
+   *
+   * HOME
+   * VEHICLES
+   * WORK
+   * PROFILE
+   */
+  const isNormalWorkspace = role === "advisor" || role === "ceo_admin";
+
+  const hasOperationalWorkspace =
+    isWatchman ||
+    isStoreTeam ||
+    isFloorIncharge ||
+    isFinalInspector ||
+    isBillingExecutive ||
+    isNormalWorkspace;
+
+  /*
+   * Hide the tab bar while role
+   * information is loading.
+   */
   if (loadingRole) {
     return (
-      <Tabs
-        screenOptions={{
-          headerShown: false,
-          tabBarStyle: {
-            display: "none",
-          },
-        }}
-      >
-        <Tabs.Screen
-          name="index"
-          options={{
-            href: null,
-          }}
-        />
-      </Tabs>
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
     );
   }
+
+  if (!role) return <Redirect href="/login" />;
 
   return (
     <Tabs
@@ -141,58 +177,58 @@ export default function TabsLayout() {
 
         tabBarStyle: {
           height: 68 + bottomInset,
+
           paddingBottom: 8 + bottomInset,
+
           paddingTop: 7,
 
           backgroundColor: colors.surface,
 
           borderTopWidth: 1,
+
           borderTopColor: colors.border,
         },
 
         tabBarLabelStyle: {
           fontSize: 12,
+
           fontWeight: "600",
         },
       }}
     >
       {/* =====================================================
-          HOME
+          HOME / ROLE WORKSPACE
 
-          STORE TEAM:
-          HOME → STORE DASHBOARD → PROFILE
+          FLOOR INCHARGE
+          Home -> Floor dashboard
 
-          WATCHMAN:
-          HOME → PENDING ADVISOR → GATE OUT → PROFILE
+          FINAL INSPECTOR
+          Home -> Final Inspector dashboard
 
-          NORMAL USERS:
-          HOME → VEHICLES → WORK → PROFILE
+          STORE TEAM
+          Home -> Store dashboard
+
+          WATCHMAN
+          Home -> Watchman dashboard
+
+          ADVISOR / CEO ADMIN
+          Home -> Advisor workspace
       ====================================================== */}
 
       <Tabs.Screen
         name="index"
         options={{
-          title: "Home",
+          title: isStoreTeam ? "Store" : isWatchman ? "Gate" : "Home",
 
-          /*
-           * IMPORTANT:
-           *
-           * Store Team must NOT go to the old /(tabs)/index.tsx
-           * dashboard when Home is pressed.
-           *
-           * Their Home tab now points directly to:
-           *
-           * /(tabs)/store
-           *
-           * Other roles keep their existing Home destinations.
-           */
           href: isStoreTeam
             ? "/(tabs)/store"
             : isWatchman
               ? "/(tabs)/watchman"
-              : isNormalWorkspace
-                ? "/(tabs)"
-                : null,
+              : isFloorIncharge
+                ? ("/(tabs)/floor-incharge" as any)
+                : isNormalWorkspace
+                  ? "/(tabs)"
+                  : null,
 
           tabBarIcon: ({ focused, color }) => (
             <TabIcon
@@ -207,7 +243,8 @@ export default function TabsLayout() {
 
       {/* =====================================================
           VEHICLES
-          NORMAL WORKSPACE USERS ONLY
+
+          ADVISOR + CEO ADMIN ONLY
       ====================================================== */}
 
       <Tabs.Screen
@@ -230,7 +267,8 @@ export default function TabsLayout() {
 
       {/* =====================================================
           WORK
-          NORMAL WORKSPACE USERS ONLY
+
+          ADVISOR + CEO ADMIN ONLY
       ====================================================== */}
 
       <Tabs.Screen
@@ -252,15 +290,76 @@ export default function TabsLayout() {
       />
 
       {/* =====================================================
+          FLOOR INCHARGE
+
+          Visible tabs:
+          HOME | PROFILE
+
+          Vehicle detail remains hidden.
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="floor-incharge/index"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="floor-incharge/vehicles"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          FINAL INSPECTOR
+
+          Visible tabs:
+          HOME | PROFILE
+
+          Vehicle inspection screen is
+          internal only.
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="billing"
+        options={{
+          title: "Home",
+          href: isBillingExecutive ? ("/(tabs)/billing" as any) : null,
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon
+              focused={focused}
+              activeIcon="home"
+              inactiveIcon="home-outline"
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="final-inspector"
+        options={{
+          title: "Home",
+          href: isFinalInspector ? ("/(tabs)/final-inspector" as any) : null,
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon
+              focused={focused}
+              activeIcon="home"
+              inactiveIcon="home-outline"
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      {/* =====================================================
           STORE
 
-          NOT A VISIBLE TAB.
+          Store dashboard is entered
+          through Home / Store.
 
-          Store Team uses:
-          HOME → STORE DASHBOARD → PROFILE
-
-          The Store screen remains available internally at:
-          /(tabs)/store
+          Vehicle action is internal.
       ====================================================== */}
 
       <Tabs.Screen
@@ -270,11 +369,23 @@ export default function TabsLayout() {
         }}
       />
 
+      <Tabs.Screen
+        name="store/vehicle-action"
+        options={{
+          href: null,
+        }}
+      />
+
       {/* =====================================================
           WATCHMAN
-          PENDING ADVISOR
-          WATCHMAN ONLY
       ====================================================== */}
+
+      <Tabs.Screen
+        name="watchman/index"
+        options={{
+          href: null,
+        }}
+      />
 
       <Tabs.Screen
         name="watchman/vehicles"
@@ -294,11 +405,6 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* =====================================================
-          WATCHMAN
-          GATE OUT
-      ====================================================== */}
-
       <Tabs.Screen
         name="watchman/gate-out"
         options={{
@@ -317,17 +423,25 @@ export default function TabsLayout() {
         }}
       />
 
+      <Tabs.Screen
+        name="watchman/gate-in"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="watchman/assignment-history"
+        options={{
+          href: null,
+        }}
+      />
+
       {/* =====================================================
           PROFILE
 
-          STORE TEAM:
-          HOME → STORE DASHBOARD → PROFILE
-
-          WATCHMAN:
-          HOME → PENDING ADVISOR → GATE OUT → PROFILE
-
-          NORMAL USERS:
-          HOME → VEHICLES → WORK → PROFILE
+          Visible for all current
+          operational workspaces.
       ====================================================== */}
 
       <Tabs.Screen
@@ -335,8 +449,7 @@ export default function TabsLayout() {
         options={{
           title: "Profile",
 
-          href:
-            isStoreTeam || isWatchman || isNormalWorkspace ? undefined : null,
+          href: hasOperationalWorkspace ? undefined : null,
 
           tabBarIcon: ({ focused, color }) => (
             <TabIcon
@@ -350,7 +463,7 @@ export default function TabsLayout() {
       />
 
       {/* =====================================================
-          HIDDEN OLD / INTERNAL ROUTES
+          OLD / INTERNAL TOP-LEVEL ROUTES
       ====================================================== */}
 
       <Tabs.Screen
@@ -396,18 +509,7 @@ export default function TabsLayout() {
       />
 
       {/* =====================================================
-          WORK INTERNAL ROUTES
-      ====================================================== */}
-
-      <Tabs.Screen
-        name="work/floor-incharge"
-        options={{
-          href: null,
-        }}
-      />
-
-      {/* =====================================================
-          ADVISOR ROUTES
+          ADVISOR DASHBOARD / CORE ROUTES
       ====================================================== */}
 
       <Tabs.Screen
@@ -454,6 +556,144 @@ export default function TabsLayout() {
 
       <Tabs.Screen
         name="advisor/claim-intimation-form"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          APPROVAL
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="advisor/approval_vehicles"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/approval_form"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          APPROVAL HOLD
+
+          Always hidden.
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="advisor/approval_hold"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/approval_hold_details"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          ADVISOR WORK
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="advisor/work"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/advisor_work_form"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/floor"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          ADVISOR / CEO ADMIN
+          FINAL INSPECTION MANAGEMENT
+
+          These files will be created
+          separately from the execution
+          workspace.
+
+          Keep them hidden from tabs.
+      ====================================================== */}
+
+      <Tabs.Screen name="advisor/ready-for-delivery" options={{ href: null }} />
+      <Tabs.Screen name="advisor/billing" options={{ href: null }} />
+
+      <Tabs.Screen
+        name="advisor/final_inspection"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/final_inspection_details"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          SUPPLEMENTARY
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="advisor/supplementary"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/supplementary-detail"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          STORE MONITORING
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="advisor/store-monitor/index"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="advisor/store-monitor/vehicle-details"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* =====================================================
+          OTHER ADVISOR INTERNAL ROUTES
+      ====================================================== */}
+
+      <Tabs.Screen
+        name="advisor/app"
         options={{
           href: null,
         }}
@@ -580,7 +820,7 @@ export default function TabsLayout() {
       />
 
       {/* =====================================================
-          INTAKE HELPER FILES
+          INTAKE HELPERS
       ====================================================== */}
 
       <Tabs.Screen
@@ -663,108 +903,25 @@ export default function TabsLayout() {
           href: null,
         }}
       />
-
-      <Tabs.Screen
-        name="vehicle-management/components/PreviousJobCards"
-        options={{
-          href: null,
-        }}
-      />
-
-      {/* =====================================================
-          WATCHMAN INTERNAL ROUTES
-      ====================================================== */}
-
-      <Tabs.Screen
-        name="watchman/index"
-        options={{
-          href: null,
-        }}
-      />
-
-      <Tabs.Screen
-        name="watchman/gate-in"
-        options={{
-          href: null,
-        }}
-      />
-
-      <Tabs.Screen
-        name="watchman/assignment-history"
-        options={{
-          href: null,
-        }}
-      />
-
-      {/* =====================================================
-          ADVISOR WORKFLOW INTERNAL ROUTES
-      ====================================================== */}
-
-      <Tabs.Screen
-        name="advisor/approval_vehicles"
-        options={{
-          href: null,
-        }}
-      />
-
-      <Tabs.Screen
-        name="advisor/work"
-        options={{
-          href: null,
-        }}
-      />
-
-      <Tabs.Screen
-        name="advisor/advisor_work_form"
-        options={{
-          href: null,
-        }}
-      />
-
-      <Tabs.Screen
-        name="advisor/approval_form"
-        options={{
-          href: null,
-        }}
-      />
-
-      {/* =====================================================
-          STORE INTERNAL ROUTES
-      ====================================================== */}
-
-      <Tabs.Screen
-        name="store/vehicle-action"
-        options={{
-          href: null,
-        }}
-      />
-
-      <Tabs.Screen
-        name="advisor/store-monitor/index"
-        options={{
-          href: null,
-        }}
-      />
-
-      <Tabs.Screen
-        name="advisor/store-monitor/vehicle-details"
-        options={{
-          href: null,
-        }}
-      />
     </Tabs>
   );
 }
 
 function TabIcon({
   focused,
+
   activeIcon,
+
   inactiveIcon,
+
   color,
 }: {
   focused: boolean;
+
   activeIcon: keyof typeof Ionicons.glyphMap;
+
   inactiveIcon: keyof typeof Ionicons.glyphMap;
+
   color: ColorValue;
 }) {
   return (
@@ -779,11 +936,21 @@ function TabIcon({
 }
 
 const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.background,
+  },
   tabIcon: {
     width: 38,
+
     height: 32,
+
     borderRadius: 10,
+
     alignItems: "center",
+
     justifyContent: "center",
   },
 

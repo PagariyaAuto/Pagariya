@@ -1,10 +1,16 @@
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useIsFocused } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,2097 +18,1076 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
 import { supabase } from "../../../../lib/supabase";
-import {
-  colors,
-  radius,
-  spacing,
-  typography,
-} from "../../../theme";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
+import { colors, radius, spacing, typography } from "../../../theme";
 
+type SupportedCode = "MI" | "NON-MI";
+type Filter = "All" | "Active" | "Inactive";
 type MIType = {
   id: string;
-  code: string;
   name: string;
+  code: string;
   is_active: boolean;
-  created_at?: string;
-  updated_at?: string;
+  created_at: string;
+  updated_at: string;
 };
+type Editor = { kind: "editor"; model: MIType | null };
+type Dialog =
+  | Editor
+  | { kind: "discard"; editor: Editor }
+  | { kind: "status"; model: MIType; activate: boolean }
+  | { kind: "notice"; title: string; body: string };
+const columns = "id, name, code, is_active, created_at, updated_at";
+const supportedCodes: SupportedCode[] = ["MI", "NON-MI"];
+const normalize = (value: string) => value.trim().toLowerCase();
 
-type FilterType = "All" | "Active" | "Inactive";
+function errorMessage(error: unknown) {
+  const code = (error as { code?: string })?.code;
+  if (code === "23505")
+    return "This code already exists. Use its existing entry, or reactivate it if it is inactive.";
+  if (code === "42501")
+    return "Your account cannot change MI types. An active CEO Admin account is required.";
+  if (code === "PGRST116")
+    return "This type changed or is no longer available to your account. Close this dialog, refresh the list and try again.";
+  if (code === "23514")
+    return "The type details did not pass database validation. Check the display name and code.";
+  return (
+    (error as { message?: string })?.message ||
+    "Unable to complete the request. Please try again."
+  );
+}
 
 export default function MITypes() {
-  const [miTypes, setMITypes] = useState<MIType[]>([]);
+  const [types, setTypes] = useState<MIType[]>([]);
+  const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
-
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
-  const [activeFilter, setActiveFilter] =
-    useState<FilterType>("All");
-
-  const [modalVisible, setModalVisible] = useState(false);
-  const [editingMIType, setEditingMIType] =
-    useState<MIType | null>(null);
-
+  const [filter, setFilter] = useState<Filter>("All");
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [modelName, setModelName] = useState("");
   const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-
+  const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const busy = useRef(false);
+  const mounted = useRef(false);
+  const requests = useRef(0);
+  const disabled = saving || loading || refreshing;
+  const isFocused = useIsFocused();
 
-  const [
-    confirmModalVisible,
-    setConfirmModalVisible,
-  ] = useState(false);
+  const loadTypes = useCallback(async (refresh = false) => {
+    if (busy.current) return;
+    const request = ++requests.current;
+    refresh ? setRefreshing(true) : setLoading(true);
+    setLoadError("");
+    try {
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      if (!auth.user)
+        throw new Error(
+          "Your session has expired. Sign in again to view MI types.",
+        );
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, is_active")
+        .eq("id", auth.user.id)
+        .single();
+      if (profileError) throw profileError;
+      if (!profile?.is_active)
+        throw new Error("An active account is required to view MI types.");
 
-  const [miTypeToDeactivate, setMITypeToDeactivate] =
-    useState<MIType | null>(null);
-
-  const [changingStatus, setChangingStatus] =
-    useState(false);
-
-  const [
-    messageModalVisible,
-    setMessageModalVisible,
-  ] = useState(false);
-
-  const [messageTitle, setMessageTitle] =
-    useState("");
-
-  const [messageText, setMessageText] =
-    useState("");
-
-  useEffect(() => {
-    loadMITypes();
+      // Fetch all pages so the list and duplicate checks are not capped by the API limit.
+      const fetched = new Map<string, MIType>();
+      const pageSize = 500;
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await supabase
+          .from("mi_types")
+          .select(columns)
+          .order("name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error) throw error;
+        if (!mounted.current || request !== requests.current) return;
+        for (const item of (data ?? []) as MIType[]) fetched.set(item.id, item);
+        if ((data ?? []).length < pageSize) break;
+      }
+      if (mounted.current && request === requests.current) {
+        setTypes([...fetched.values()]);
+        setCanManage(profile.role === "ceo_admin");
+      }
+    } catch (error) {
+      if (mounted.current && request === requests.current) {
+        setCanManage(false);
+        setLoadError(errorMessage(error));
+      }
+    } finally {
+      if (mounted.current && request === requests.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
   }, []);
 
-  /* --------------------------------------------------
-     MESSAGE POPUP
-  -------------------------------------------------- */
+  useFocusEffect(
+    useCallback(() => {
+      mounted.current = true;
+      if (!busy.current) setSaving(false);
+      void loadTypes();
+      return () => {
+        mounted.current = false;
+        requests.current += 1;
+      };
+    }, [loadTypes]),
+  );
 
-  const showMessage = (
-    title: string,
-    text: string
-  ) => {
-    setMessageTitle(title);
-    setMessageText(text);
-    setMessageModalVisible(true);
+  const closeDialog = useCallback(() => {
+    if (busy.current) return;
+    if (dialog?.kind === "editor") {
+      const originalName = dialog.model?.name || "";
+      const originalCode = dialog.model?.code || "";
+      if (modelName.trim() !== originalName.trim() || code !== originalCode) {
+        setDialog({ kind: "discard", editor: dialog });
+        return;
+      }
+    }
+    if (dialog?.kind === "discard") setDialog(dialog.editor);
+    else setDialog(null);
+    setFormError("");
+  }, [dialog, modelName, code]);
+
+  const handleBack = useCallback(() => {
+    if (busy.current) return;
+    if (dialog) closeDialog();
+    else returnToRoute("/(tabs)/master-data");
+  }, [dialog, closeDialog]);
+  useHardwareBack(handleBack);
+  // Native stack gestures/removal must respect the same dialog and saving guards.
+  usePreventRemove(isFocused && (saving || dialog !== null), closeDialog);
+
+  const openEditor = (model: MIType | null = null) => {
+    if (!canManage || disabled || busy.current) return;
+    setModelName(model?.name || "");
+    setCode(model?.code || "");
+    setFormError("");
+    setDialog({ kind: "editor", model });
   };
 
-  /* --------------------------------------------------
-     LOAD MI TYPES
-  -------------------------------------------------- */
+  const updateLocalModel = (saved: MIType) => {
+    setTypes((current) =>
+      [...current.filter((item) => item.id !== saved.id), saved].sort(
+        (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+      ),
+    );
+  };
 
-  const loadMITypes = async () => {
+  const saveModel = async () => {
+    if (!canManage || disabled || busy.current || dialog?.kind !== "editor")
+      return;
+    const name = modelName.trim();
+    if (!name || name.length > 100) {
+      setFormError("Enter a display name between 1 and 100 characters.");
+      return;
+    }
+    const editing = dialog.model;
+    const selectedCode = code.trim().toUpperCase();
+    if (
+      editing
+        ? code !== editing.code
+        : !supportedCodes.includes(selectedCode as SupportedCode)
+    ) {
+      setFormError(
+        editing
+          ? "Existing codes must be preserved. Edit the display name instead."
+          : "Select MI or NON-MI.",
+      );
+      return;
+    }
+    const duplicate = types.find(
+      (item) =>
+        item.id !== editing?.id &&
+        normalize(item.code) === normalize(selectedCode),
+    );
+    if (duplicate) {
+      setFormError(
+        `${duplicate.code} already exists${duplicate.is_active ? ". Edit its existing entry." : " and is inactive. Reactivate its existing entry instead."}`,
+      );
+      return;
+    }
+    busy.current = true;
+    setSaving(true);
+    setFormError("");
     try {
-      setLoading(true);
+      const result = editing
+        ? await supabase
+            .from("mi_types")
+            .update({ name })
+            .eq("id", editing.id)
+            .eq("updated_at", editing.updated_at)
+            .select(columns)
+            .single()
+        : await supabase
+            .from("mi_types")
+            .insert({ name, code: selectedCode, is_active: true })
+            .select(columns)
+            .single();
+      if (result.error) throw result.error;
+      if (!result.data?.id)
+        throw new Error(
+          "The saved type could not be confirmed. Refresh before trying again.",
+        );
+      if (mounted.current) {
+        updateLocalModel(result.data as MIType);
+        setDialog({
+          kind: "notice",
+          title: editing ? "Type updated" : "Type added",
+          body: `${name} (${editing?.code || selectedCode}) has been ${editing ? "updated" : "added"}.`,
+        });
+      }
+    } catch (error) {
+      if (mounted.current) setFormError(errorMessage(error));
+    } finally {
+      busy.current = false;
+      if (mounted.current) setSaving(false);
+    }
+  };
 
+  const changeStatus = async () => {
+    if (!canManage || disabled || busy.current || dialog?.kind !== "status")
+      return;
+    const { model, activate } = dialog;
+    busy.current = true;
+    setSaving(true);
+    setFormError("");
+    try {
       const { data, error } = await supabase
         .from("mi_types")
-        .select(
-          "id, code, name, is_active, created_at, updated_at"
-        )
-        .order("name", {
-          ascending: true,
+        .update({ is_active: activate })
+        .eq("id", model.id)
+        .eq("updated_at", model.updated_at)
+        .select(columns)
+        .single();
+      if (error) throw error;
+      if (!data?.id)
+        throw new Error(
+          "The status change could not be confirmed. Refresh before trying again.",
+        );
+      if (mounted.current) {
+        updateLocalModel(data as MIType);
+        setDialog({
+          kind: "notice",
+          title: activate ? "Type activated" : "Type deactivated",
+          body: `${model.name} (${model.code}) ${supportedCodes.includes(model.code.trim().toUpperCase() as SupportedCode) ? (activate ? "is now available for new Insurance Intake selections" : "will no longer be available for new Insurance Intake selections") : activate ? "has been activated. This code is not offered by the current Intake screen" : "has been deactivated"}. Saved records are retained.`,
         });
-
-      if (error) {
-        console.log(
-          "MI types load error:",
-          error.message
-        );
-
-        showMessage(
-          "Error",
-          "Unable to load MI / NON-MI types."
-        );
-
-        return;
       }
-
-      setMITypes(data || []);
+    } catch (error) {
+      if (mounted.current) setFormError(errorMessage(error));
     } finally {
-      setLoading(false);
+      busy.current = false;
+      if (mounted.current) setSaving(false);
     }
   };
 
-  /* --------------------------------------------------
-     OPEN ADD MODAL
-  -------------------------------------------------- */
-
-  const openAddModal = () => {
-    setEditingMIType(null);
-    setCode("");
-    setName("");
-    setModalVisible(true);
-  };
-
-  /* --------------------------------------------------
-     OPEN EDIT MODAL
-  -------------------------------------------------- */
-
-  const openEditModal = (miType: MIType) => {
-    setEditingMIType(miType);
-    setCode(miType.code);
-    setName(miType.name);
-    setModalVisible(true);
-  };
-
-  /* --------------------------------------------------
-     CLOSE ADD / EDIT MODAL
-  -------------------------------------------------- */
-
-  const closeModal = () => {
-    if (saving) {
-      return;
-    }
-
-    setModalVisible(false);
-    setEditingMIType(null);
-    setCode("");
-    setName("");
-  };
-
-  /* --------------------------------------------------
-     SAVE MI TYPE
-  -------------------------------------------------- */
-
-  const saveMIType = async () => {
-    if (saving) {
-      return;
-    }
-
-    const trimmedCode = code
-      .trim()
-      .toUpperCase();
-
-    const trimmedName = name.trim();
-
-    if (!trimmedCode) {
-      showMessage(
-        "Required",
-        "Please enter the MI / NON-MI type code."
-      );
-
-      return;
-    }
-
-    if (!trimmedName) {
-      showMessage(
-        "Required",
-        "Please enter the MI / NON-MI type name."
-      );
-
-      return;
-    }
-
-    if (trimmedCode.length > 20) {
-      showMessage(
-        "Invalid Code",
-        "Code cannot exceed 20 characters."
-      );
-
-      return;
-    }
-
-    if (trimmedName.length > 100) {
-      showMessage(
-        "Invalid Name",
-        "Name cannot exceed 100 characters."
-      );
-
-      return;
-    }
-
-    const duplicateCode = miTypes.find(
-      (miType) =>
-        miType.code.trim().toUpperCase() ===
-          trimmedCode &&
-        miType.id !== editingMIType?.id
-    );
-
-    if (duplicateCode) {
-      showMessage(
-        "Code Already Exists",
-        `The code "${trimmedCode}" is already in use. Please use a different code.`
-      );
-
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      if (editingMIType) {
-        const { error } = await supabase
-          .from("mi_types")
-          .update({
-            code: trimmedCode,
-            name: trimmedName,
-          })
-          .eq("id", editingMIType.id);
-
-        if (error) {
-          console.log(
-            "MI type update error:",
-            error.message
-          );
-
-          if (error.code === "23505") {
-            showMessage(
-              "Code Already Exists",
-              `The code "${trimmedCode}" is already in use.`
-            );
-          } else {
-            showMessage(
-              "Error",
-              "Unable to update the MI / NON-MI type."
-            );
-          }
-
-          return;
-        }
-
-        setModalVisible(false);
-        setEditingMIType(null);
-        setCode("");
-        setName("");
-
-        await loadMITypes();
-
-        showMessage(
-          "Updated",
-          `${trimmedName} has been updated successfully.`
-        );
-      } else {
-        const { error } = await supabase
-          .from("mi_types")
-          .insert({
-            code: trimmedCode,
-            name: trimmedName,
-            is_active: true,
-          });
-
-        if (error) {
-          console.log(
-            "MI type insert error:",
-            error.message
-          );
-
-          if (error.code === "23505") {
-            showMessage(
-              "Code Already Exists",
-              `The code "${trimmedCode}" is already in use.`
-            );
-          } else {
-            showMessage(
-              "Error",
-              "Unable to add the MI / NON-MI type."
-            );
-          }
-
-          return;
-        }
-
-        setModalVisible(false);
-        setEditingMIType(null);
-        setCode("");
-        setName("");
-
-        await loadMITypes();
-
-        showMessage(
-          "Added",
-          `${trimmedName} has been added successfully.`
-        );
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /* --------------------------------------------------
-     DEACTIVATE CONFIRMATION
-  -------------------------------------------------- */
-
-  const openDeactivateConfirmation = (
-    miType: MIType
-  ) => {
-    setMITypeToDeactivate(miType);
-    setConfirmModalVisible(true);
-  };
-
-  const closeConfirmModal = () => {
-    if (changingStatus) {
-      return;
-    }
-
-    setConfirmModalVisible(false);
-    setMITypeToDeactivate(null);
-  };
-
-  /* --------------------------------------------------
-     CONFIRM DEACTIVATE
-  -------------------------------------------------- */
-
-  const confirmDeactivate = async () => {
-    if (
-      !miTypeToDeactivate ||
-      changingStatus
-    ) {
-      return;
-    }
-
-    setChangingStatus(true);
-
-    try {
-      const { error } = await supabase
-        .from("mi_types")
-        .update({
-          is_active: false,
-        })
-        .eq("id", miTypeToDeactivate.id);
-
-      if (error) {
-        console.log(
-          "MI type deactivate error:",
-          error.message
-        );
-
-        showMessage(
-          "Error",
-          "Unable to deactivate the MI / NON-MI type."
-        );
-
-        return;
-      }
-
-      const selectedName =
-        miTypeToDeactivate.name;
-
-      const selectedCode =
-        miTypeToDeactivate.code;
-
-      setConfirmModalVisible(false);
-      setMITypeToDeactivate(null);
-
-      await loadMITypes();
-
-      showMessage(
-        "Deactivated",
-        `${selectedCode} - ${selectedName} is now inactive and will not be available for new jobs. Historical records are not affected.`
-      );
-    } finally {
-      setChangingStatus(false);
-    }
-  };
-
-  /* --------------------------------------------------
-     ACTIVATE
-  -------------------------------------------------- */
-
-  const activateMIType = async (
-    miType: MIType
-  ) => {
-    if (changingStatus) {
-      return;
-    }
-
-    setChangingStatus(true);
-
-    try {
-      const { error } = await supabase
-        .from("mi_types")
-        .update({
-          is_active: true,
-        })
-        .eq("id", miType.id);
-
-      if (error) {
-        console.log(
-          "MI type activate error:",
-          error.message
-        );
-
-        showMessage(
-          "Error",
-          "Unable to activate the MI / NON-MI type."
-        );
-
-        return;
-      }
-
-      await loadMITypes();
-
-      showMessage(
-        "Activated",
-        `${miType.code} - ${miType.name} is now active and available for new jobs.`
-      );
-    } finally {
-      setChangingStatus(false);
-    }
-  };
-
-  /* --------------------------------------------------
-     FILTERED LIST
-  -------------------------------------------------- */
-
-  const filteredMITypes = useMemo(() => {
-    const normalizedSearch = search
-      .trim()
-      .toLowerCase();
-
-    return miTypes.filter((miType) => {
-      const matchesSearch =
-        !normalizedSearch ||
-        miType.code
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        miType.name
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        (miType.is_active
-          ? "active"
-          : "inactive"
-        ).includes(normalizedSearch);
-
-      let matchesFilter = true;
-
-      if (activeFilter === "Active") {
-        matchesFilter = miType.is_active;
-      }
-
-      if (activeFilter === "Inactive") {
-        matchesFilter = !miType.is_active;
-      }
-
-      return (
-        matchesSearch &&
-        matchesFilter
-      );
-    });
-  }, [miTypes, search, activeFilter]);
-
-  /* --------------------------------------------------
-     COUNTS
-  -------------------------------------------------- */
-
-  const totalCount = miTypes.length;
-
-  const activeCount = miTypes.filter(
-    (miType) => miType.is_active
-  ).length;
-
-  const inactiveCount = miTypes.filter(
-    (miType) => !miType.is_active
-  ).length;
-
-  /* --------------------------------------------------
-     LOADING
-  -------------------------------------------------- */
-
-  if (loading) {
-    return (
-      <SafeAreaView
-        style={styles.loadingContainer}
-        edges={["top", "bottom"]}
-      >
-        <ActivityIndicator
-          size="large"
-          color={colors.primary}
-        />
-
-        <Text style={styles.loadingText}>
-          Loading MI / NON-MI types...
-        </Text>
-      </SafeAreaView>
-    );
-  }
+  const counts = useMemo(
+    () => ({
+      All: types.length,
+      Active: types.filter((item) => item.is_active).length,
+      Inactive: types.filter((item) => !item.is_active).length,
+    }),
+    [types],
+  );
+  const visible = useMemo(
+    () =>
+      types.filter((item) => {
+        const query = normalize(search);
+        const statusMatches =
+          query === "active"
+            ? item.is_active
+            : query === "inactive"
+              ? !item.is_active
+              : false;
+        const matchesSearch =
+          !query ||
+          normalize(item.name).includes(query) ||
+          normalize(item.code).includes(query) ||
+          statusMatches;
+        const matchesFilter =
+          filter === "All" ||
+          (filter === "Active" ? item.is_active : !item.is_active);
+        return matchesSearch && matchesFilter;
+      }),
+    [types, search, filter],
+  );
+  const missingCodes = supportedCodes.filter(
+    (value) => !types.some((item) => normalize(item.code) === normalize(value)),
+  );
 
   return (
     <SafeAreaView
       style={styles.container}
-      edges={["top", "bottom"]}
+      edges={["top", "bottom", "left", "right"]}
     >
+      <View style={styles.topBar}>
+        <BackButton accessibilityLabel="Back to Master Data" disabled={saving} onPress={handleBack} />
+        <BrandPill />
+      </View>
       <ScrollView
-        contentContainerStyle={
-          styles.scrollContent
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void loadTypes(true)}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+          />
         }
-        showsVerticalScrollIndicator={false}
       >
-        {/* HEADER */}
-
-        <View style={styles.header}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.backButton,
-              pressed && styles.pressed,
-            ]}
-            onPress={() =>
-              router.replace(
-                "/(tabs)/master-data"
-              )
-            }
-          >
-            <Ionicons
-              name="arrow-back-outline"
-              size={21}
-              color={colors.text}
-            />
-          </Pressable>
-
-          <View style={styles.headerText}>
-            <Text style={styles.title}>
-              MI / NON-MI
-            </Text>
-
-            <Text style={styles.subtitle}>
-              Manage MI and NON-MI categories
-            </Text>
-          </View>
+        <View style={styles.hero}>
+          <Text style={styles.eyebrow}>MASTER DATA · INSURANCE SETUP</Text>
+          <Text accessibilityRole="header" style={styles.heroTitle}>
+            MI / NON-MI
+          </Text>
+          <Text style={styles.heroText}>
+            Manage MI and NON-MI selections used for Insurance jobs during
+            Intake.
+          </Text>
         </View>
-
-        {/* SUMMARY */}
-
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryCard}>
-            <View
-              style={[
-                styles.summaryIcon,
-                styles.summaryTotalIcon,
-              ]}
-            >
-              <Ionicons
-                name="list-outline"
-                size={18}
-                color={colors.primary}
-              />
-            </View>
-
-            <Text style={styles.summaryValue}>
-              {totalCount}
-            </Text>
-
-            <Text style={styles.summaryLabel}>
-              Total
-            </Text>
+        {loading && (
+          <View style={styles.inline}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.body}>Loading MI types…</Text>
           </View>
-
-          <View style={styles.summaryCard}>
-            <View
-              style={[
-                styles.summaryIcon,
-                styles.summaryActiveIcon,
-              ]}
-            >
-              <Ionicons
-                name="checkmark-circle-outline"
-                size={18}
-                color={colors.success}
-              />
-            </View>
-
-            <Text style={styles.summaryValue}>
-              {activeCount}
-            </Text>
-
-            <Text style={styles.summaryLabel}>
-              Active
-            </Text>
-          </View>
-
-          <View style={styles.summaryCard}>
-            <View
-              style={[
-                styles.summaryIcon,
-                styles.summaryInactiveIcon,
-              ]}
-            >
-              <Ionicons
-                name="close-circle-outline"
-                size={18}
-                color={colors.textSecondary}
-              />
-            </View>
-
-            <Text style={styles.summaryValue}>
-              {inactiveCount}
-            </Text>
-
-            <Text style={styles.summaryLabel}>
-              Inactive
-            </Text>
-          </View>
-        </View>
-
-        {/* SEARCH */}
-
-        <View style={styles.searchContainer}>
-          <Ionicons
-            name="search-outline"
-            size={20}
-            color={colors.textLight}
-            style={styles.searchIcon}
-          />
-
-          <TextInput
-            style={styles.searchInput}
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search code or MI type..."
-            placeholderTextColor={
-              colors.textLight
-            }
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
-          {search.length > 0 && (
-            <Pressable
-              onPress={() => setSearch("")}
-              style={styles.clearSearch}
-            >
-              <Ionicons
-                name="close-circle"
-                size={19}
-                color={colors.textLight}
-              />
-            </Pressable>
-          )}
-        </View>
-
-        {/* FILTERS */}
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={
-            styles.filterRow
-          }
-        >
-          <Pressable
-            style={[
-              styles.filterChip,
-              activeFilter === "All" &&
-                styles.filterChipSelected,
-            ]}
-            onPress={() =>
-              setActiveFilter("All")
-            }
-          >
-            <Text
-              style={[
-                styles.filterText,
-                activeFilter === "All" &&
-                  styles.filterTextSelected,
-              ]}
-            >
-              All {totalCount}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterChip,
-              activeFilter === "Active" &&
-                styles.filterChipSelected,
-            ]}
-            onPress={() =>
-              setActiveFilter("Active")
-            }
-          >
-            <Text
-              style={[
-                styles.filterText,
-                activeFilter === "Active" &&
-                  styles.filterTextSelected,
-              ]}
-            >
-              Active {activeCount}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterChip,
-              activeFilter === "Inactive" &&
-                styles.filterChipSelectedInactive,
-            ]}
-            onPress={() =>
-              setActiveFilter("Inactive")
-            }
-          >
-            <Text
-              style={[
-                styles.filterText,
-                activeFilter === "Inactive" &&
-                  styles.filterTextSelectedInactive,
-              ]}
-            >
-              Inactive {inactiveCount}
-            </Text>
-          </Pressable>
-        </ScrollView>
-
-        {/* ADD BUTTON */}
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.addButton,
-            pressed && styles.buttonPressed,
-          ]}
-          onPress={openAddModal}
-        >
-          <View style={styles.addIcon}>
-            <Ionicons
-              name="add-outline"
-              size={22}
-              color={colors.primary}
+        )}
+        {!!loadError && (
+          <View style={styles.card}>
+            <Text style={styles.title}>Unable to refresh types</Text>
+            <Text style={styles.body}>{loadError}</Text>
+            <Button
+              title="Try again"
+              onPress={() => void loadTypes()}
+              disabled={saving || loading || refreshing}
             />
           </View>
-
-          <Text style={styles.addButtonText}>
-            Add MI / NON-MI Type
-          </Text>
-        </Pressable>
-
-        {/* LIST HEADER */}
-
-        <View style={styles.listHeader}>
-          <Text style={styles.listTitle}>
-            MI / NON-MI Types
-          </Text>
-
-          <Text style={styles.listSubtitle}>
-            Showing {filteredMITypes.length} of{" "}
-            {miTypes.length}
-          </Text>
-        </View>
-
-        {/* LIST */}
-
-        {filteredMITypes.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <View
-              style={styles.emptyIconContainer}
-            >
-              <Ionicons
-                name="list-outline"
-                size={30}
-                color={colors.primary}
-              />
-            </View>
-
-            <Text style={styles.emptyTitle}>
-              No MI / NON-MI types found
-            </Text>
-
-            <Text style={styles.emptyText}>
-              {search.trim() ||
-              activeFilter !== "All"
-                ? "Try changing your search or filter."
-                : "Add your first MI / NON-MI type using the button above."}
-            </Text>
-
-            {(search.trim() ||
-              activeFilter !== "All") && (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.clearFilterButton,
-                  pressed &&
-                    styles.buttonPressed,
-                ]}
-                onPress={() => {
-                  setSearch("");
-                  setActiveFilter("All");
-                }}
-              >
-                <Text
-                  style={styles.clearFilterText}
-                >
-                  Clear Filters
-                </Text>
-              </Pressable>
-            )}
-          </View>
-        ) : (
-          filteredMITypes.map((miType) => (
-            <View
-              key={miType.id}
-              style={[
-                styles.miCard,
-                !miType.is_active &&
-                  styles.inactiveCard,
-              ]}
-            >
-              <View style={styles.miTop}>
-                <View
-                  style={styles.miInfoRow}
-                >
-                  <View
-                    style={styles.codeContainer}
-                  >
-                    <Text
-                      style={styles.codeText}
-                    >
-                      {miType.code}
-                    </Text>
-                  </View>
-
-                  <View
-                    style={styles.miInfo}
-                  >
-                    <Text
-                      style={styles.miName}
-                    >
-                      {miType.name}
-                    </Text>
-
-                    <Text
-                      style={
-                        styles.miCodeLabel
-                      }
-                    >
-                      Code: {miType.code}
-                    </Text>
-                  </View>
-                </View>
-
-                <View
-                  style={[
-                    styles.statusBadge,
-                    miType.is_active
-                      ? styles.activeBadge
-                      : styles.inactiveBadge,
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      miType.is_active
-                        ? "checkmark-circle-outline"
-                        : "close-circle-outline"
-                    }
-                    size={14}
-                    color={
-                      miType.is_active
-                        ? colors.success
-                        : colors.textLight
-                    }
-                  />
-
-                  <Text
-                    style={[
-                      styles.statusText,
-                      miType.is_active
-                        ? styles.activeText
-                        : styles.inactiveText,
-                    ]}
-                  >
-                    {miType.is_active
-                      ? "Active"
-                      : "Inactive"}
-                  </Text>
-                </View>
-              </View>
-
-              <View
-                style={styles.cardDivider}
-              />
-
-              <View style={styles.actions}>
+        )}
+        {!loading && !loadError && (
+          <>
+            <View style={styles.metrics}>
+              {(["All", "Active", "Inactive"] as Filter[]).map((key) => (
                 <Pressable
-                  style={({ pressed }) => [
-                    styles.editButton,
-                    pressed &&
-                      styles.buttonPressed,
+                  key={key}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${key}: ${counts[key]} types`}
+                  accessibilityState={{ selected: filter === key }}
+                  onPress={() => setFilter(key)}
+                  style={[
+                    styles.metric,
+                    filter === key && styles.metricSelected,
                   ]}
-                  onPress={() =>
-                    openEditModal(miType)
-                  }
                 >
-                  <Ionicons
-                    name="create-outline"
-                    size={17}
-                    color={colors.text}
-                  />
-
-                  <Text
-                    style={
-                      styles.editButtonText
-                    }
-                  >
-                    Edit
+                  <Text style={styles.metricCount}>{counts[key]}</Text>
+                  <Text style={styles.body}>
+                    {key === "All" ? "Total" : key}
                   </Text>
                 </Pressable>
-
-                {miType.is_active ? (
+              ))}
+            </View>
+            <View style={styles.card}>
+              <View style={styles.heading}>
+                <View style={styles.grow}>
+                  <Text style={styles.title}>Insurance type directory</Text>
+                  <Text style={styles.body}>
+                    {canManage
+                      ? "Edit display names or change active status."
+                      : "View only. An active CEO Admin can manage types."}
+                  </Text>
+                </View>
+                {canManage && (
+                  <Button
+                    title="Add type"
+                    icon="add-outline"
+                    onPress={() => openEditor()}
+                    disabled={disabled || !missingCodes.length}
+                  />
+                )}
+              </View>
+              <Text style={styles.hint}>
+                Insurance Intake uses MI and NON-MI. Codes stay fixed; display
+                names and active status can be managed here. Paid jobs do not
+                use this selection.
+              </Text>
+              {canManage && !missingCodes.length && (
+                <Text style={styles.hint}>
+                  Both supported codes already exist. Use Edit details or
+                  Activate on the existing entry.
+                </Text>
+              )}
+              <View style={styles.searchBox}>
+                <Ionicons
+                  name="search-outline"
+                  size={20}
+                  color={colors.textSecondary}
+                />
+                <TextInput
+                  accessibilityLabel="Search MI types"
+                  style={styles.searchInput}
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Search name or code"
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {!!search && (
                   <Pressable
-                    style={({ pressed }) => [
-                      styles.statusButton,
-                      styles.deactivateButton,
-                      pressed &&
-                        styles.buttonPressed,
-                    ]}
-                    onPress={() =>
-                      openDeactivateConfirmation(
-                        miType
-                      )
-                    }
-                    disabled={changingStatus}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search"
+                    onPress={() => setSearch("")}
+                    style={styles.iconButton}
                   >
                     <Ionicons
-                      name="power-outline"
-                      size={17}
-                      color={colors.danger}
+                      name="close-circle-outline"
+                      size={22}
+                      color={colors.textSecondary}
                     />
-
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        styles.deactivateText,
-                      ]}
-                    >
-                      Deactivate
-                    </Text>
-                  </Pressable>
-                ) : (
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.statusButton,
-                      styles.activateButton,
-                      pressed &&
-                        styles.buttonPressed,
-                    ]}
-                    onPress={() =>
-                      activateMIType(miType)
-                    }
-                    disabled={changingStatus}
-                  >
-                    <Ionicons
-                      name="checkmark-outline"
-                      size={17}
-                      color={colors.success}
-                    />
-
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        styles.activateText,
-                      ]}
-                    >
-                      Activate
-                    </Text>
                   </Pressable>
                 )}
               </View>
+              <Text style={styles.body}>
+                {visible.length} of {types.length} types · Only active supported
+                codes are available for new Insurance Intake.
+              </Text>
             </View>
-          ))
+            {!visible.length && (
+              <View style={styles.empty}>
+                <Ionicons
+                  name="shield-checkmark-outline"
+                  size={32}
+                  color={colors.primary}
+                />
+                <Text style={styles.title}>
+                  {types.length ? "No matching types" : "No MI types yet"}
+                </Text>
+                <Text style={styles.body}>
+                  {types.length
+                    ? "Change your search or filter to see other types."
+                    : canManage
+                      ? "Add the supported MI or NON-MI entry for Insurance Intake."
+                      : "Types will appear here after CEO Admin adds them."}
+                </Text>
+                {!!types.length && (
+                  <Button
+                    secondary
+                    title="Clear search & filters"
+                    onPress={() => {
+                      setSearch("");
+                      setFilter("All");
+                    }}
+                  />
+                )}
+              </View>
+            )}
+            {visible.map((model) => (
+              <View key={model.id} style={styles.card}>
+                <View style={styles.modelHeading}>
+                  <View style={styles.modelIcon}>
+                    <Ionicons
+                      name="shield-checkmark-outline"
+                      size={24}
+                      color={colors.primary}
+                    />
+                  </View>
+                  <View style={styles.grow}>
+                    <Text style={styles.title}>{model.name}</Text>
+                    <Text style={styles.body}>{model.code}</Text>
+                    {!supportedCodes.includes(
+                      model.code.trim().toUpperCase() as SupportedCode,
+                    ) && (
+                      <Text style={styles.hint}>
+                        This code is not offered by the current Intake screen.
+                      </Text>
+                    )}
+                  </View>
+                  <View
+                    style={[
+                      styles.badge,
+                      model.is_active
+                        ? styles.activeBadge
+                        : styles.inactiveBadge,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.badgeText,
+                        {
+                          color: model.is_active
+                            ? "#217A50"
+                            : colors.textSecondary,
+                        },
+                      ]}
+                    >
+                      {model.is_active ? "Active" : "Inactive"}
+                    </Text>
+                  </View>
+                </View>
+                {canManage && (
+                  <View style={styles.actions}>
+                    <Button
+                      secondary
+                      title="Edit details"
+                      icon="create-outline"
+                      onPress={() => openEditor(model)}
+                      disabled={disabled}
+                    />
+                    <Button
+                      secondary
+                      title={model.is_active ? "Deactivate" : "Activate"}
+                      icon="power-outline"
+                      disabled={disabled}
+                      onPress={() => {
+                        setFormError("");
+                        setDialog({
+                          kind: "status",
+                          model,
+                          activate: !model.is_active,
+                        });
+                      }}
+                    />
+                  </View>
+                )}
+              </View>
+            ))}
+            <View style={styles.note}>
+              <Ionicons
+                name="information-circle-outline"
+                size={20}
+                color={colors.textSecondary}
+              />
+              <Text style={[styles.body, styles.grow]}>
+                Deactivate an unused type instead of deleting it. If a supported
+                type is inactive, reactivate its existing entry to restore it
+                for Insurance Intake.
+              </Text>
+            </View>
+          </>
         )}
       </ScrollView>
 
-      {/* ADD / EDIT MODAL */}
-
       <Modal
-        visible={modalVisible}
+        visible={!!dialog}
         transparent
         animationType="fade"
-        onRequestClose={closeModal}
+        onRequestClose={closeDialog}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <View
-                style={
-                  styles.modalIconContainer
-                }
-              >
-                <Ionicons
-                  name="list-outline"
-                  size={22}
-                  color={colors.primary}
-                />
-              </View>
-
-              <View
-                style={styles.modalHeaderText}
-              >
-                <Text
-                  style={styles.modalTitle}
-                >
-                  {editingMIType
-                    ? "Edit MI / NON-MI Type"
-                    : "Add MI / NON-MI Type"}
-                </Text>
-
-                <Text
-                  style={styles.modalSubtitle}
-                >
-                  {editingMIType
-                    ? "Update MI / NON-MI details"
-                    : "Add a new MI / NON-MI type"}
-                </Text>
-              </View>
-
-              <Pressable
-                style={
-                  styles.modalCloseButton
-                }
-                onPress={closeModal}
-                disabled={saving}
-              >
-                <Ionicons
-                  name="close-outline"
-                  size={21}
-                  color={colors.textSecondary}
-                />
-              </Pressable>
-            </View>
-
-            {/* CODE */}
-
-            <Text style={styles.fieldLabel}>
-              Code *
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              value={code}
-              onChangeText={(value) =>
-                setCode(
-                  value
-                    .toUpperCase()
-                    .replace(/\s/g, "")
-                )
-              }
-              placeholder="e.g. MI"
-              placeholderTextColor={
-                colors.textLight
-              }
-              autoCapitalize="characters"
-              autoCorrect={false}
-              maxLength={20}
-              editable={!saving}
-            />
-
-            <Text style={styles.characterCount}>
-              {code.length}/20
-            </Text>
-
-            {/* NAME */}
-
-            <Text style={styles.fieldLabel}>
-              MI / NON-MI Type Name *
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="e.g. MI"
-              placeholderTextColor={
-                colors.textLight
-              }
-              autoCapitalize="words"
-              autoCorrect={false}
-              maxLength={100}
-              editable={!saving}
-            />
-
-            <Text
-              style={[
-                styles.characterCount,
-                styles.nameCharacterCount,
-              ]}
+        <SafeAreaView
+          style={styles.overlay}
+          edges={["top", "bottom", "left", "right"]}
+        >
+          <KeyboardAvoidingView
+            style={styles.modalFrame}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+          >
+            <ScrollView
+              contentContainerStyle={styles.modalScroll}
+              keyboardShouldPersistTaps="handled"
             >
-              {name.length}/100
-            </Text>
-
-            <View
-              style={styles.modalActions}
-            >
-              <Pressable
-                style={({ pressed }) => [
-                  styles.cancelButton,
-                  pressed &&
-                    styles.buttonPressed,
-                ]}
-                onPress={closeModal}
-                disabled={saving}
-              >
-                <Text
-                  style={styles.cancelText}
-                >
-                  Cancel
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.saveButton,
-                  pressed &&
-                    styles.buttonPressed,
-                  saving &&
-                    styles.saveButtonDisabled,
-                ]}
-                onPress={saveMIType}
-                disabled={saving}
-              >
-                {saving ? (
+              <View style={styles.dialog}>
+                {dialog?.kind === "editor" && (
                   <>
-                    <ActivityIndicator
-                      size="small"
-                      color={colors.white}
+                    <View style={styles.heading}>
+                      <View style={styles.grow}>
+                        <Text style={styles.title}>
+                          {dialog.model ? "Edit MI type" : "Add MI type"}
+                        </Text>
+                        <Text style={styles.body}>
+                          {dialog.model
+                            ? "Edit the display name while keeping the existing code."
+                            : "Choose a missing supported code and enter its display name."}
+                        </Text>
+                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Close type editor"
+                        disabled={saving}
+                        onPress={closeDialog}
+                        style={styles.iconButton}
+                      >
+                        <Ionicons
+                          name="close-outline"
+                          size={24}
+                          color={colors.textSecondary}
+                        />
+                      </Pressable>
+                    </View>
+                    <Text style={styles.label}>Display name *</Text>
+                    <TextInput
+                      accessibilityLabel="Display name"
+                      value={modelName}
+                      onChangeText={(value) => {
+                        setModelName(value);
+                        setFormError("");
+                      }}
+                      placeholder="Enter display name"
+                      placeholderTextColor={colors.textSecondary}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      maxLength={100}
+                      editable={!saving}
+                      style={styles.input}
                     />
-
-                    <Text
-                      style={styles.saveText}
-                    >
-                      Saving...
+                    <Text style={styles.hint}>
+                      {modelName.length} / 100 characters
                     </Text>
-                  </>
-                ) : (
-                  <>
-                    <Ionicons
-                      name={
-                        editingMIType
-                          ? "checkmark-outline"
-                          : "add-outline"
-                      }
-                      size={19}
-                      color={colors.white}
-                    />
-
-                    <Text
-                      style={styles.saveText}
-                    >
-                      {editingMIType
-                        ? "Update"
-                        : "Add"}
-                    </Text>
+                    <Text style={styles.label}>Code *</Text>
+                    {dialog.model ? (
+                      <View style={styles.modelPreview}>
+                        <Text style={styles.label}>{dialog.model.code}</Text>
+                        <Text style={styles.hint}>
+                          Code is fixed to preserve Intake selections and saved
+                          references.
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.actions}>
+                        {supportedCodes.map((value) => {
+                          const existing = types.find(
+                            (item) => normalize(item.code) === normalize(value),
+                          );
+                          const unavailable = saving || !!existing;
+                          return (
+                            <Pressable
+                              key={value}
+                              accessibilityRole="radio"
+                              accessibilityState={{
+                                checked: code === value,
+                                disabled: unavailable,
+                              }}
+                              disabled={unavailable}
+                              onPress={() => {
+                                setCode(value);
+                                setFormError("");
+                              }}
+                              style={[
+                                styles.option,
+                                code === value && styles.optionSelected,
+                                unavailable && styles.disabled,
+                              ]}
+                            >
+                              <Text style={styles.optionText}>
+                                {value}
+                                {existing ? " · Exists" : ""}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    )}
+                    {dialog.model && (
+                      <Text style={styles.hint}>
+                        Saved references are retained. Screens that read the
+                        master name may show its updated label.
+                      </Text>
+                    )}
+                    {!!formError && (
+                      <Text accessibilityRole="alert" style={styles.error}>
+                        {formError}
+                      </Text>
+                    )}
+                    <View style={styles.actions}>
+                      <Button
+                        secondary
+                        title="Cancel"
+                        onPress={closeDialog}
+                        disabled={saving}
+                      />
+                      <Button
+                        title={
+                          saving
+                            ? "Saving…"
+                            : dialog.model
+                              ? "Save changes"
+                              : "Add type"
+                        }
+                        onPress={() => void saveModel()}
+                        disabled={disabled}
+                        busy={saving}
+                      />
+                    </View>
                   </>
                 )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* DEACTIVATE CONFIRMATION */}
-
-      <Modal
-        visible={confirmModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={
-          closeConfirmModal
-        }
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.confirmCard}>
-            <View
-              style={
-                styles.confirmIconContainer
-              }
-            >
-              <Ionicons
-                name="power-outline"
-                size={28}
-                color={colors.danger}
-              />
-            </View>
-
-            <Text
-              style={styles.confirmTitle}
-            >
-              Deactivate MI / NON-MI Type?
-            </Text>
-
-            {miTypeToDeactivate && (
-              <View
-                style={styles.miPreview}
-              >
-                <View
-                  style={styles.previewCode}
-                >
-                  <Text
-                    style={
-                      styles.previewCodeText
-                    }
-                  >
-                    {miTypeToDeactivate.code}
-                  </Text>
-                </View>
-
-                <View
-                  style={styles.miPreviewText}
-                >
-                  <Text
-                    style={styles.miPreviewName}
-                  >
-                    {miTypeToDeactivate.name}
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.miPreviewCategory
-                    }
-                  >
-                    Code:{" "}
-                    {miTypeToDeactivate.code}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            <Text style={styles.confirmText}>
-              This MI / NON-MI type will no
-              longer be available for new jobs.
-            </Text>
-
-            <Text style={styles.confirmNote}>
-              Historical records will not be
-              affected.
-            </Text>
-
-            <View
-              style={styles.confirmActions}
-            >
-              <Pressable
-                style={({ pressed }) => [
-                  styles.confirmCancelButton,
-                  pressed &&
-                    styles.buttonPressed,
-                ]}
-                onPress={closeConfirmModal}
-                disabled={changingStatus}
-              >
-                <Text
-                  style={
-                    styles.confirmCancelText
-                  }
-                >
-                  Cancel
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.confirmDeactivateButton,
-                  pressed &&
-                    styles.buttonPressed,
-                  changingStatus &&
-                    styles.saveButtonDisabled,
-                ]}
-                onPress={confirmDeactivate}
-                disabled={changingStatus}
-              >
-                {changingStatus ? (
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.white}
-                  />
-                ) : (
+                {dialog?.kind === "status" && (
                   <>
                     <Ionicons
                       name="power-outline"
-                      size={18}
-                      color={colors.white}
+                      size={30}
+                      color={colors.primary}
                     />
-
-                    <Text
-                      style={
-                        styles.confirmDeactivateText
-                      }
-                    >
-                      Deactivate
+                    <Text style={styles.title}>
+                      {dialog.activate ? "Activate" : "Deactivate"} type?
                     </Text>
+                    <Text style={styles.modelPreview}>
+                      {dialog.model.name} · {dialog.model.code}
+                    </Text>
+                    <Text style={styles.body}>
+                      {supportedCodes.includes(
+                        dialog.model.code.trim().toUpperCase() as SupportedCode,
+                      )
+                        ? dialog.activate
+                          ? "This type will become available for new Insurance Intake selections."
+                          : "This type will be unavailable for new Insurance Intake selections. Saved records and type references are retained."
+                        : "This changes the master active status. This code is not offered by the current Intake screen. Saved references are retained."}
+                    </Text>
+                    {!!formError && (
+                      <Text accessibilityRole="alert" style={styles.error}>
+                        {formError}
+                      </Text>
+                    )}
+                    <View style={styles.actions}>
+                      <Button
+                        secondary
+                        title="Cancel"
+                        onPress={closeDialog}
+                        disabled={saving}
+                      />
+                      <Button
+                        title={
+                          saving
+                            ? "Updating…"
+                            : dialog.activate
+                              ? "Activate type"
+                              : "Deactivate type"
+                        }
+                        onPress={() => void changeStatus()}
+                        disabled={disabled}
+                        busy={saving}
+                      />
+                    </View>
                   </>
                 )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* MESSAGE POPUP */}
-
-      <Modal
-        visible={messageModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() =>
-          setMessageModalVisible(false)
-        }
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.messageCard}>
-            <View
-              style={
-                styles.messageIconContainer
-              }
-            >
-              <Ionicons
-                name="information-circle-outline"
-                size={28}
-                color={colors.primary}
-              />
-            </View>
-
-            <Text
-              style={styles.messageTitle}
-            >
-              {messageTitle}
-            </Text>
-
-            <Text
-              style={styles.messageText}
-            >
-              {messageText}
-            </Text>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.messageButton,
-                pressed &&
-                  styles.buttonPressed,
-              ]}
-              onPress={() =>
-                setMessageModalVisible(false)
-              }
-            >
-              <Text
-                style={
-                  styles.messageButtonText
-                }
-              >
-                OK
-              </Text>
-            </Pressable>
-          </View>
-        </View>
+                {dialog?.kind === "discard" && (
+                  <>
+                    <Ionicons
+                      name="create-outline"
+                      size={30}
+                      color={colors.primary}
+                    />
+                    <Text style={styles.title}>Discard unsaved changes?</Text>
+                    <Text style={styles.body}>
+                      The changes in this form have not been saved.
+                    </Text>
+                    <Button
+                      title="Keep editing"
+                      onPress={() => setDialog(dialog.editor)}
+                    />
+                    <Button
+                      secondary
+                      title="Discard changes"
+                      onPress={() => {
+                        setDialog(null);
+                        setFormError("");
+                      }}
+                    />
+                  </>
+                )}
+                {dialog?.kind === "notice" && (
+                  <>
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={32}
+                      color={colors.success}
+                    />
+                    <Text style={styles.title}>{dialog.title}</Text>
+                    <Text style={styles.body}>{dialog.body}</Text>
+                    <Button title="OK" onPress={closeDialog} />
+                  </>
+                )}
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
 }
 
+function Button({
+  title,
+  onPress,
+  secondary = false,
+  disabled = false,
+  busy = false,
+  icon,
+}: {
+  title: string;
+  onPress: () => void;
+  secondary?: boolean;
+  disabled?: boolean;
+  busy?: boolean;
+  icon?: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.button,
+        secondary && styles.secondaryButton,
+        disabled && styles.disabled,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      {busy ? (
+        <ActivityIndicator
+          size="small"
+          color={secondary ? colors.primaryDark : colors.white}
+        />
+      ) : (
+        icon && (
+          <Ionicons
+            name={icon}
+            size={18}
+            color={secondary ? colors.primaryDark : colors.white}
+          />
+        )
+      )}
+      <Text style={[styles.buttonText, secondary && styles.secondaryText]}>
+        {title}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: colors.background,
-  },
-
-  loadingText: {
-    marginTop: spacing.md,
-    ...typography.body,
-    color: colors.textSecondary,
-  },
-
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
-  scrollContent: {
+  container: { flex: 1, backgroundColor: colors.background },
+  topBar: {
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.xxl,
-  },
-
-  header: {
+    paddingVertical: spacing.xs,
     flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.lg,
-  },
-
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.md,
-  },
-
-  pressed: {
-    opacity: 0.7,
-  },
-
-  headerText: {
-    flex: 1,
-  },
-
-  title: {
-    ...typography.title,
-    color: colors.text,
-  },
-
-  subtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
-
-  summaryRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-
-  summaryCard: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    alignItems: "center",
-  },
-
-  summaryIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.round,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-
-  summaryTotalIcon: {
-    backgroundColor: colors.primaryLight,
-  },
-
-  summaryActiveIcon: {
-    backgroundColor: colors.successLight,
-  },
-
-  summaryInactiveIcon: {
-    backgroundColor: colors.border,
-  },
-
-  summaryValue: {
-    ...typography.subheading,
-    color: colors.text,
-    fontSize: 19,
-  },
-
-  summaryLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-
-  searchContainer: {
-    height: 50,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    marginBottom: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  searchIcon: {
-    marginLeft: spacing.md,
-  },
-
-  searchInput: {
-    flex: 1,
-    height: 50,
-    paddingHorizontal: spacing.sm,
-    fontSize: 14,
-    color: colors.text,
-  },
-
-  clearSearch: {
-    paddingHorizontal: spacing.md,
-  },
-
-  filterRow: {
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingRight: spacing.md,
-    marginBottom: spacing.md,
-  },
-
-  filterChip: {
-    height: 36,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.round,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  filterChipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-
-  filterChipSelectedInactive: {
-    backgroundColor: colors.textSecondary,
-    borderColor: colors.textSecondary,
-  },
-
-  filterText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textSecondary,
-  },
-
-  filterTextSelected: {
-    color: colors.white,
-  },
-
-  filterTextSelectedInactive: {
-    color: colors.white,
-  },
-
-  addButton: {
-    minHeight: 54,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: spacing.xl,
-    flexDirection: "row",
-    paddingHorizontal: spacing.lg,
-  },
-
-  addIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.round,
-    backgroundColor: colors.white,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.sm,
-  },
-
-  addButtonText: {
-    ...typography.button,
-    color: colors.white,
-  },
-
-  buttonPressed: {
-    opacity: 0.75,
-  },
-
-  listHeader: {
-    marginBottom: spacing.md,
-  },
-
-  listTitle: {
-    ...typography.subheading,
-    color: colors.text,
-  },
-
-  listSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  miCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-  },
-
-  inactiveCard: {
-    opacity: 0.72,
-  },
-
-  miTop: {
-    flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: spacing.xs,
   },
-
-  miInfoRow: {
+  back: {
+    minHeight: 48,
     flexDirection: "row",
     alignItems: "center",
-    flex: 1,
-    marginRight: spacing.sm,
+    paddingRight: spacing.sm,
   },
-
-  codeContainer: {
-    minWidth: 58,
-    height: 46,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.md,
-  },
-
-  codeText: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: colors.primary,
-  },
-
-  miInfo: {
-    flex: 1,
-  },
-
-  miName: {
-    ...typography.bodyMedium,
-    color: colors.text,
-    fontSize: 16,
-  },
-
-  miCodeLabel: {
+  backText: {
     ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
-
-  statusBadge: {
-    borderRadius: radius.round,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  activeBadge: {
-    backgroundColor: colors.successLight,
-  },
-
-  inactiveBadge: {
-    backgroundColor: colors.border,
-  },
-
-  statusText: {
-    fontSize: 12,
-    fontWeight: "600",
-    marginLeft: 4,
-  },
-
-  activeText: {
-    color: colors.success,
-  },
-
-  inactiveText: {
+    fontWeight: "700",
     color: colors.textSecondary,
   },
-
-  cardDivider: {
-    height: 1,
-    backgroundColor: colors.divider,
-    marginVertical: spacing.md,
-  },
-
-  actions: {
+  brand: {
     flexDirection: "row",
-    gap: spacing.sm,
-  },
-
-  editButton: {
-    flex: 1,
-    height: 42,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    justifyContent: "center",
     alignItems: "center",
-    flexDirection: "row",
-  },
-
-  editButtonText: {
-    ...typography.caption,
-    fontWeight: "600",
-    color: colors.text,
-    marginLeft: 5,
-  },
-
-  statusButton: {
-    flex: 1,
-    height: 42,
-    borderRadius: radius.sm,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-  },
-
-  deactivateButton: {
-    backgroundColor: colors.dangerLight,
-  },
-
-  activateButton: {
-    backgroundColor: colors.successLight,
-  },
-
-  statusButtonText: {
-    ...typography.caption,
-    fontWeight: "600",
-    marginLeft: 5,
-  },
-
-  deactivateText: {
-    color: colors.danger,
-  },
-
-  activateText: {
-    color: colors.success,
-  },
-
-  emptyCard: {
+    gap: 6,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    alignItems: "center",
+    borderRadius: 999,
+    padding: 10,
   },
-
-  emptyIconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: radius.lg,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: spacing.md,
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
   },
-
-  emptyTitle: {
-    ...typography.bodyMedium,
+  brandText: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
     color: colors.text,
-    textAlign: "center",
   },
-
-  emptyText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textAlign: "center",
-    marginTop: spacing.xs,
-    lineHeight: 19,
+  content: {
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.lg,
   },
-
-  clearFilterButton: {
-    height: 40,
-    paddingHorizontal: spacing.lg,
-    backgroundColor: colors.primaryLight,
-    borderRadius: radius.md,
-    justifyContent: "center",
+  hero: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  eyebrow: {
+    fontSize: 10,
+    letterSpacing: 0.7,
+    fontWeight: "800",
+    color: colors.white,
+  },
+  heroTitle: { ...typography.title, fontSize: 27, color: colors.white },
+  heroText: { ...typography.caption, color: colors.white, lineHeight: 21 },
+  inline: {
+    flexDirection: "row",
     alignItems: "center",
-    marginTop: spacing.lg,
-  },
-
-  clearFilterText: {
-    ...typography.caption,
-    fontWeight: "600",
-    color: colors.primary,
-  },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "center",
-    alignItems: "center",
+    gap: spacing.sm,
     padding: spacing.lg,
   },
-
-  modalCard: {
-    width: "100%",
-    maxWidth: 430,
+  card: {
+    padding: spacing.lg,
     backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.md,
   },
-
-  modalHeader: {
+  heading: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
-    marginBottom: spacing.xl,
+    gap: spacing.md,
   },
-
-  modalIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.md,
-  },
-
-  modalHeaderText: {
+  grow: { flex: 1, minWidth: 0 },
+  title: { ...typography.subheading, color: colors.text },
+  body: { ...typography.caption, lineHeight: 20, color: colors.textSecondary },
+  metrics: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  metric: {
     flex: 1,
-  },
-
-  modalTitle: {
-    ...typography.subheading,
-    fontSize: 18,
-    color: colors.text,
-  },
-
-  modalSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  modalCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.round,
-    backgroundColor: colors.background,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  fieldLabel: {
-    ...typography.caption,
-    fontWeight: "600",
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-
-  input: {
-    height: 50,
+    minWidth: 88,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    fontSize: 14,
-    color: colors.text,
+    gap: spacing.xs,
+  },
+  metricSelected: { borderColor: colors.primary },
+  metricCount: { fontSize: 25, fontWeight: "800", color: colors.text },
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingLeft: spacing.md,
     backgroundColor: colors.background,
   },
-
-  characterCount: {
-    ...typography.caption,
-    color: colors.textLight,
-    textAlign: "right",
-    marginBottom: spacing.lg,
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 48,
+    paddingHorizontal: spacing.sm,
+    color: colors.text,
+    fontSize: 14,
   },
-
-  nameCharacterCount: {
-    marginBottom: spacing.xl,
+  iconButton: {
+    width: 48,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
   },
-
-  modalActions: {
+  empty: {
+    padding: spacing.xl,
+    alignItems: "center",
+    gap: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+  },
+  modelHeading: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  modelIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badge: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.sm },
+  activeBadge: { backgroundColor: "#E8F5EE" },
+  inactiveBadge: { backgroundColor: colors.background },
+  badgeText: { fontSize: 12, fontWeight: "700" },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  button: {
+    minHeight: 48,
+    backgroundColor: colors.primaryDark,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: spacing.sm,
   },
-
-  cancelButton: {
-    flex: 1,
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  cancelText: {
-    ...typography.button,
-    color: colors.text,
-  },
-
-  saveButton: {
-    flex: 1,
-    height: 48,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-  },
-
-  saveButtonDisabled: {
-    opacity: 0.7,
-  },
-
-  saveText: {
+  buttonText: {
     ...typography.button,
     color: colors.white,
-    marginLeft: 5,
-  },
-
-  confirmCard: {
-    width: "100%",
-    maxWidth: 400,
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    alignItems: "center",
-  },
-
-  confirmIconContainer: {
-    width: 58,
-    height: 58,
-    borderRadius: radius.lg,
-    backgroundColor: colors.dangerLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: spacing.md,
-  },
-
-  confirmTitle: {
-    ...typography.subheading,
-    fontSize: 19,
-    color: colors.text,
     textAlign: "center",
-    marginBottom: spacing.lg,
+    flexShrink: 1,
   },
-
-  miPreview: {
-    width: "100%",
+  secondaryButton: { backgroundColor: colors.primaryLight },
+  secondaryText: { color: colors.primaryDark },
+  disabled: { opacity: 0.5 },
+  pressed: { opacity: 0.75 },
+  note: {
     flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.background,
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.sm,
+  },
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.48)" },
+  modalFrame: { flex: 1 },
+  modalScroll: { flexGrow: 1, justifyContent: "center", padding: spacing.lg },
+  dialog: {
+    width: "100%",
+    maxWidth: 520,
+    alignSelf: "center",
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    gap: spacing.md,
+  },
+  label: { ...typography.bodyMedium, color: colors.text },
+  input: {
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
+    minHeight: 48,
     padding: spacing.md,
-    marginBottom: spacing.lg,
+    color: colors.text,
+    fontSize: 15,
+    backgroundColor: colors.background,
   },
-
-  previewCode: {
-    minWidth: 56,
-    height: 42,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm,
-    backgroundColor: colors.primaryLight,
+  hint: { ...typography.caption, color: colors.textSecondary, lineHeight: 19 },
+  option: {
+    flex: 1,
+    minHeight: 48,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
+    gap: spacing.sm,
   },
-
-  previewCodeText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: colors.primary,
+  optionSelected: {
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primary,
   },
-
-  miPreviewText: {
-    marginLeft: spacing.sm,
-    flex: 1,
-  },
-
-  miPreviewName: {
+  optionText: { ...typography.bodyMedium, color: colors.primaryDark },
+  error: { ...typography.caption, color: colors.error, lineHeight: 20 },
+  modelPreview: {
     ...typography.bodyMedium,
     color: colors.text,
-  },
-
-  miPreviewCategory: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  confirmText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: "center",
-    lineHeight: 21,
-  },
-
-  confirmNote: {
-    ...typography.caption,
-    color: colors.textLight,
-    textAlign: "center",
-    marginTop: spacing.sm,
-    marginBottom: spacing.xl,
-  },
-
-  confirmActions: {
-    width: "100%",
-    flexDirection: "row",
-    gap: spacing.sm,
-  },
-
-  confirmCancelButton: {
-    flex: 1,
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.border,
+    padding: spacing.md,
+    backgroundColor: colors.background,
     borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  confirmCancelText: {
-    ...typography.button,
-    color: colors.text,
-  },
-
-  confirmDeactivateButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: radius.md,
-    backgroundColor: colors.danger,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-  },
-
-  confirmDeactivateText: {
-    ...typography.button,
-    color: colors.white,
-    marginLeft: 5,
-  },
-
-  messageCard: {
-    width: "100%",
-    maxWidth: 380,
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    alignItems: "center",
-  },
-
-  messageIconContainer: {
-    width: 54,
-    height: 54,
-    borderRadius: radius.lg,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: spacing.md,
-  },
-
-  messageTitle: {
-    ...typography.subheading,
-    fontSize: 19,
-    color: colors.text,
-    marginBottom: spacing.sm,
-    textAlign: "center",
-  },
-
-  messageText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    lineHeight: 21,
-    marginBottom: spacing.lg,
-    textAlign: "center",
-  },
-
-  messageButton: {
-    width: "100%",
-    height: 46,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  messageButtonText: {
-    ...typography.button,
-    color: colors.white,
   },
 });

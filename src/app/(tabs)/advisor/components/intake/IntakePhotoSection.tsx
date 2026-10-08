@@ -1,3 +1,4 @@
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import {
@@ -477,6 +478,7 @@ export function IntakePhotoSection({
           closePhoto
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             localStyles.viewerContainer
@@ -574,6 +576,7 @@ export function IntakePhotoSection({
               )}
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* Custom remove confirmation */}
@@ -587,6 +590,7 @@ export function IntakePhotoSection({
           closeRemoveConfirmation
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             localStyles.confirmOverlay
@@ -707,6 +711,7 @@ export function IntakePhotoSection({
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </>
   );

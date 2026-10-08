@@ -1,3 +1,4 @@
+import BackButton from "../../components/navigation/BackButton";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import {
@@ -15,14 +16,7 @@ export default function GateOutScreen() {
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <Ionicons name="arrow-back-outline" size={22} color={colors.text} />
-        </Pressable>
+        <BackButton accessibilityLabel="Go back" onPress={() => router.back()} />
         <View style={styles.headerText}>
           <Text style={styles.title}>Gate Out</Text>
           <Text style={styles.subtitle}>Record vehicle departure</Text>

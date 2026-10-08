@@ -1,7 +1,9 @@
+import BackButton from "../../../components/navigation/BackButton";
+import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -19,6 +21,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
+import { checkWorkflowReadiness } from "../../../lib/workflow-readiness";
 import { colors } from "../../../theme/colors";
 
 const PHOTO_BUCKET = "vehicle-photos";
@@ -51,6 +54,11 @@ type VehicleIntake = {
   job_card_no: string | null;
 };
 
+type InsuranceCompany = {
+  id: string;
+  name: string;
+};
+
 type Survey = {
   id: string;
   survey_no: number;
@@ -59,6 +67,13 @@ type Survey = {
   paid_amount: number | null;
   receipt_reference_no: string | null;
   remarks: string | null;
+};
+
+type WorkType = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
 };
 
 type Visit = {
@@ -138,6 +153,20 @@ function getDecisionDescription(decision: Decision) {
 }
 
 export default function ApprovalFormScreen() {
+  const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
+  const handleNavigationBack = () => {
+    if (saving) return;
+    const origin = singleParam(navigationParams.returnTo);
+    if (origin === "vehicle-detail" && vehicleId && singleParam(params.vehicleId)) {
+      returnToRoute({ pathname: "/(tabs)/vehicle-detail", params: { vehicleId } });
+    } else if (origin === "vehicles") {
+      returnToRoute("/(tabs)/vehicles");
+    } else {
+      returnToRoute("/(tabs)/advisor/approval_vehicles");
+    }
+  };
+  useHardwareBack(handleNavigationBack);
+
   const params = useLocalSearchParams<{
     visitId?: string;
     vehicleId?: string;
@@ -152,12 +181,27 @@ export default function ApprovalFormScreen() {
     : params.vehicleId;
 
   const [loading, setLoading] = useState(true);
+
   const [saving, setSaving] = useState(false);
 
+  const submittingRef = useRef(false);
+
+  const [readinessError, setReadinessError] = useState("");
+
   const [visit, setVisit] = useState<Visit | null>(null);
+
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
+
   const [intake, setIntake] = useState<VehicleIntake | null>(null);
+
+  const [insuranceCompany, setInsuranceCompany] =
+    useState<InsuranceCompany | null>(null);
+
   const [survey, setSurvey] = useState<Survey | null>(null);
+
+  const [workTypes, setWorkTypes] = useState<WorkType[]>([]);
+
+  const [selectedWorkTypeIds, setSelectedWorkTypeIds] = useState<string[]>([]);
 
   const [decision, setDecision] = useState<Decision>("APPROVED");
 
@@ -166,9 +210,11 @@ export default function ApprovalFormScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
 
   const [remarks, setRemarks] = useState("");
+
   const [holdRemark, setHoldRemark] = useState("");
 
   const [remarksFocused, setRemarksFocused] = useState(false);
+
   const [holdRemarkFocused, setHoldRemarkFocused] = useState(false);
 
   const [selectedPhoto, setSelectedPhoto] =
@@ -181,6 +227,7 @@ export default function ApprovalFormScreen() {
   const [photoUri, setPhotoUri] = useState<string | null>(null);
 
   const [showPhotoOptions, setShowPhotoOptions] = useState(false);
+
   const [showConfirmation, setShowConfirmation] = useState(false);
 
   const [popup, setPopup] = useState<PopupState>({
@@ -224,45 +271,59 @@ export default function ApprovalFormScreen() {
 
     try {
       setLoading(true);
+      setReadinessError("");
 
-      const [visitResult, vehicleResult, intakeResult, surveyResult] =
-        await Promise.all([
-          supabase
-            .from("workshop_visits")
-            .select(
-              "id,vehicle_id,current_stage,current_status,current_assigned_to,stage_started_at",
-            )
-            .eq("id", visitId)
-            .single(),
+      await checkWorkflowReadiness(visitId, vehicleId, "PENDING_APPROVAL");
 
-          supabase
-            .from("vehicles")
-            .select(
-              "id,vehicle_no,customer_name,model,arena_nexa,vehicle_type,jc_no",
-            )
-            .eq("id", vehicleId)
-            .single(),
+      const [
+        visitResult,
+        vehicleResult,
+        intakeResult,
+        surveyResult,
+        workTypesResult,
+      ] = await Promise.all([
+        supabase
+          .from("workshop_visits")
+          .select(
+            "id,vehicle_id,current_stage,current_status,current_assigned_to,stage_started_at",
+          )
+          .eq("id", visitId)
+          .single(),
 
-          supabase
-            .from("vehicle_intake")
-            .select(
-              "insurance_type,mi_type_id,insurance_company_id,job_card_no",
-            )
-            .eq("visit_id", visitId)
-            .maybeSingle(),
+        supabase
+          .from("vehicles")
+          .select(
+            "id,vehicle_no,customer_name,model,arena_nexa,vehicle_type,jc_no",
+          )
+          .eq("id", vehicleId)
+          .single(),
 
-          supabase
-            .from("surveys")
-            .select(
-              "id,survey_no,survey_type,completed_at,paid_amount,receipt_reference_no,remarks",
-            )
-            .eq("visit_id", visitId)
-            .order("survey_no", {
-              ascending: false,
-            })
-            .limit(1)
-            .maybeSingle(),
-        ]);
+        supabase
+          .from("vehicle_intake")
+          .select("insurance_type,mi_type_id,insurance_company_id,job_card_no")
+          .eq("visit_id", visitId)
+          .maybeSingle(),
+
+        supabase
+          .from("surveys")
+          .select(
+            "id,survey_no,survey_type,completed_at,paid_amount,receipt_reference_no,remarks",
+          )
+          .eq("visit_id", visitId)
+          .order("survey_no", {
+            ascending: false,
+          })
+          .limit(1)
+          .maybeSingle(),
+
+        supabase
+          .from("work_type_master")
+          .select("id,code,name,description")
+          .eq("is_active", true)
+          .order("name", {
+            ascending: true,
+          }),
+      ]);
 
       if (visitResult.error) {
         throw visitResult.error;
@@ -280,12 +341,78 @@ export default function ApprovalFormScreen() {
         throw surveyResult.error;
       }
 
+      if (workTypesResult.error) {
+        throw workTypesResult.error;
+      }
+
+      const loadedIntake = intakeResult.data as VehicleIntake | null;
+
+      let loadedInsuranceCompany: InsuranceCompany | null = null;
+
+      if (
+        loadedIntake?.insurance_type?.toUpperCase() === "INSURANCE" &&
+        loadedIntake.insurance_company_id
+      ) {
+        const { data: companyData, error: companyError } = await supabase
+          .from("insurance_companies")
+          .select("id,name")
+          .eq("id", loadedIntake.insurance_company_id)
+          .maybeSingle();
+
+        if (companyError) {
+          throw companyError;
+        }
+
+        if (companyData) {
+          loadedInsuranceCompany = companyData as InsuranceCompany;
+        }
+      }
+
       setVisit(visitResult.data as Visit);
+
       setVehicle(vehicleResult.data as Vehicle);
-      setIntake(intakeResult.data as VehicleIntake | null);
+
+      setIntake(loadedIntake);
+
+      setInsuranceCompany(loadedInsuranceCompany);
+
       setSurvey(surveyResult.data as Survey | null);
+
+      const availableWorkTypes = (
+        (workTypesResult.data || []) as WorkType[]
+      ).filter(
+        (item) =>
+          !["FINAL_INSPECTION", "FINAL_INSPECTION_REWORK"].includes(item.code),
+      );
+
+      setWorkTypes(availableWorkTypes);
+
+      const stripping = availableWorkTypes.find(
+        (item) => item.code === "STRIPPING",
+      );
+
+      setSelectedWorkTypeIds((current) => {
+        const validCurrent = current.filter((id) =>
+          availableWorkTypes.some((item) => item.id === id),
+        );
+
+        if (
+          loadedIntake?.insurance_type?.trim().toUpperCase() !== "INSURANCE" ||
+          !stripping
+        ) {
+          return validCurrent;
+        }
+
+        return validCurrent.includes(stripping.id)
+          ? validCurrent
+          : [stripping.id, ...validCurrent];
+      });
     } catch (error: any) {
       console.error("Approval form load error:", error);
+
+      setReadinessError(
+        error?.message || "Unable to verify this vehicle. Please refresh.",
+      );
 
       showPopup(
         "error",
@@ -439,9 +566,11 @@ export default function ApprovalFormScreen() {
       .toString(36)
       .slice(2, 8)}.${extension}`;
 
-    const storagePath = `vehicles/${vehicleId}/APPROVAL/${kind}/${fileName}`;
+    const storagePath =
+      `vehicles/${vehicleId}/APPROVAL/` + `${kind}/${fileName}`;
 
     const response = await fetch(photo.uri);
+
     const blob = await response.blob();
 
     const { error: uploadError } = await supabase.storage
@@ -518,6 +647,57 @@ export default function ApprovalFormScreen() {
       return false;
     }
 
+    if (decisionAt.getTime() > Date.now()) {
+      showPopup(
+        "warning",
+        "Invalid Decision Time",
+        "Approval decision date and time cannot be in the future.",
+      );
+
+      return false;
+    }
+
+    if (decision === "APPROVED") {
+      if (
+        !selectedWorkTypeIds.length ||
+        selectedWorkTypeIds.some(
+          (id) => !workTypes.some((work) => work.id === id),
+        )
+      ) {
+        showPopup(
+          "warning",
+          "Floor Work Scope Required",
+          "Select at least one available approved repair work type.",
+        );
+        return false;
+      }
+      const stripping = workTypes.find((item) => item.code === "STRIPPING");
+
+      if (isInsuranceJob && !stripping) {
+        showPopup(
+          "error",
+          "Stripping Work Type Missing",
+          "Active Stripping work type is required before an approval can be completed.",
+        );
+
+        return false;
+      }
+
+      if (
+        isInsuranceJob &&
+        stripping &&
+        !selectedWorkTypeIds.includes(stripping.id)
+      ) {
+        showPopup(
+          "warning",
+          "Floor Work Scope Required",
+          "Stripping must be included in the approved Floor work scope.",
+        );
+
+        return false;
+      }
+    }
+
     if (decision === "APPROVED" || decision === "APPROVAL_HOLD") {
       if (!selectedPhoto) {
         showPopup(
@@ -546,6 +726,10 @@ export default function ApprovalFormScreen() {
   };
 
   const openConfirmation = () => {
+    if (loading || saving || readinessError || submittingRef.current) {
+      return;
+    }
+
     if (!validateBeforeSubmit()) {
       return;
     }
@@ -558,17 +742,33 @@ export default function ApprovalFormScreen() {
    */
 
   const submitApproval = async () => {
+    if (submittingRef.current || loading || readinessError) {
+      return;
+    }
+
     setShowConfirmation(false);
 
-    if (!visitId) {
+    if (!visitId || !vehicleId || !validateBeforeSubmit()) {
       return;
     }
 
     let uploadedPhotoId: string | null = null;
+
     let uploadedStoragePath: string | null = null;
 
     try {
       setSaving(true);
+      submittingRef.current = true;
+
+      try {
+        await checkWorkflowReadiness(visitId, vehicleId, "PENDING_APPROVAL");
+      } catch (error: any) {
+        setReadinessError(
+          error?.message || "Unable to verify this vehicle. Please refresh.",
+        );
+
+        throw error;
+      }
 
       let photoReference: string | null = null;
 
@@ -582,12 +782,14 @@ export default function ApprovalFormScreen() {
         );
 
         uploadedPhotoId = uploaded.id;
+
         uploadedStoragePath = uploaded.storagePath;
 
         photoReference = uploaded.storagePath;
       }
 
       const cleanRemarks = remarks.trim() || null;
+
       const cleanHoldRemark = holdRemark.trim() || null;
 
       const { data, error } = await supabase.rpc(
@@ -599,6 +801,7 @@ export default function ApprovalFormScreen() {
           p_remarks: cleanRemarks,
           p_hold_remark: cleanHoldRemark,
           p_photo_reference: photoReference,
+          p_work_type_ids: decision === "APPROVED" ? selectedWorkTypeIds : [],
         },
       );
 
@@ -629,6 +832,9 @@ export default function ApprovalFormScreen() {
         "Unable to Save",
         error?.message || "Unable to process the approval.",
       );
+    } finally {
+      submittingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -640,6 +846,18 @@ export default function ApprovalFormScreen() {
     if (wasSuccess) {
       router.replace("/(tabs)/advisor/approval_vehicles");
     }
+  };
+
+  const toggleWorkType = (workType: WorkType) => {
+    if (saving || (isInsuranceJob && workType.code === "STRIPPING")) {
+      return;
+    }
+
+    setSelectedWorkTypeIds((current) =>
+      current.includes(workType.id)
+        ? current.filter((id) => id !== workType.id)
+        : [...current, workType.id],
+    );
   };
 
   const handleDecisionChange = (item: Decision) => {
@@ -679,7 +897,7 @@ export default function ApprovalFormScreen() {
     );
   }
 
-  if (!vehicle || !visit) {
+  if (!vehicle || !visit || readinessError) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
         <StatusBar
@@ -691,12 +909,20 @@ export default function ApprovalFormScreen() {
           <Text style={styles.errorTitle}>Approval details unavailable</Text>
 
           <Text style={styles.errorMessage}>
-            The vehicle or visit could not be loaded.
+            {readinessError || "The vehicle or visit could not be loaded."}
           </Text>
 
-          <Pressable style={styles.primaryButton} onPress={() => router.back()}>
-            <Text style={styles.primaryButtonText}>Go Back</Text>
+          <Pressable
+            style={styles.primaryButton}
+            onPress={() => {
+              closePopup();
+              void loadData();
+            }}
+          >
+            <Text style={styles.primaryButtonText}>Refresh</Text>
           </Pressable>
+
+          <BackButton onPress={() => router.replace("/(tabs)/advisor/approval_vehicles")} />
         </View>
       </SafeAreaView>
     );
@@ -713,6 +939,12 @@ export default function ApprovalFormScreen() {
     decision === "APPROVAL_HOLD"
       ? "Upload the assignment sheet received for this approval hold."
       : "Upload the approval assessment or approval document.";
+
+  const insuranceType = intake?.insurance_type?.trim().toUpperCase() || "";
+
+  const isInsuranceJob = insuranceType === "INSURANCE";
+
+  const isPaidJob = insuranceType === "PAID";
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -731,9 +963,7 @@ export default function ApprovalFormScreen() {
           {/* HEADER */}
 
           <View style={styles.header}>
-            <Pressable onPress={() => router.back()} style={styles.backButton}>
-              <Text style={styles.backButtonText}>‹</Text>
-            </Pressable>
+            <BackButton onPress={handleNavigationBack} />
 
             <View style={styles.headerTextContainer}>
               <Text style={styles.headerTitle}>Approval</Text>
@@ -818,14 +1048,20 @@ export default function ApprovalFormScreen() {
             </View>
 
             <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Insurance Type</Text>
+              <Text style={styles.detailLabel}>
+                {isInsuranceJob ? "Insurance Company" : "Job Type"}
+              </Text>
 
               <Text style={styles.detailValue}>
-                {intake?.insurance_type || "—"}
+                {isInsuranceJob
+                  ? insuranceCompany?.name || "Insurance company not recorded"
+                  : isPaidJob
+                    ? "Paid Job"
+                    : intake?.insurance_type || "—"}
               </Text>
             </View>
 
-            {intake?.insurance_type === "PAID" && (
+            {isPaidJob && (
               <>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Paid Amount</Text>
@@ -932,6 +1168,105 @@ export default function ApprovalFormScreen() {
               })}
             </View>
           </View>
+
+          {decision === "APPROVED" && (
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeaderRow}>
+                <View style={styles.sectionHeaderTextContainer}>
+                  <Text style={styles.sectionTitle}>Approved Floor Work</Text>
+
+                  <Text style={styles.sectionDescription}>
+                    Select at least one repair work type approved for this
+                    vehicle.{" "}
+                    {isPaidJob
+                      ? "Stripping is optional for Paid jobs."
+                      : "Stripping is required for Insurance jobs."}{" "}
+                    Final Inspection is mandatory after Floor work and is
+                    included in the workflow automatically.
+                  </Text>
+                </View>
+
+                <View style={styles.requiredBadge}>
+                  <Text style={styles.requiredBadgeText}>Required</Text>
+                </View>
+              </View>
+
+              <View style={styles.workScopeGrid}>
+                {workTypes.map((workType) => {
+                  const selected = selectedWorkTypeIds.includes(workType.id);
+
+                  const mandatory =
+                    isInsuranceJob && workType.code === "STRIPPING";
+
+                  return (
+                    <Pressable
+                      key={workType.id}
+                      onPress={() => toggleWorkType(workType)}
+                      disabled={saving || mandatory}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel={workType.name}
+                      accessibilityState={{
+                        checked: selected,
+                        disabled: saving || mandatory,
+                      }}
+                      style={[
+                        styles.workScopeOption,
+                        selected && styles.workScopeOptionSelected,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.workScopeCheck,
+                          selected && styles.workScopeCheckSelected,
+                        ]}
+                      >
+                        {selected ? (
+                          <Text style={styles.workScopeCheckText}>✓</Text>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.workScopeText}>
+                        <View style={styles.workScopeTitleRow}>
+                          <Text
+                            style={[
+                              styles.workScopeTitle,
+                              selected && styles.workScopeTitleSelected,
+                            ]}
+                          >
+                            {workType.name}
+                          </Text>
+
+                          {mandatory ? (
+                            <View style={styles.mandatoryWorkBadge}>
+                              <Text style={styles.mandatoryWorkBadgeText}>
+                                Always required
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
+
+                        <Text style={styles.workScopeDescription}>
+                          {workType.description ||
+                            (mandatory
+                              ? "Initial stripping and supplementary discovery."
+                              : "Include only when this repair work is approved for the vehicle.")}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <View style={styles.scopeSummary}>
+                <Text style={styles.scopeSummaryLabel}>Floor checklist</Text>
+
+                <Text style={styles.scopeSummaryValue}>
+                  {selectedWorkTypeIds.length} work{" "}
+                  {selectedWorkTypeIds.length === 1 ? "item" : "items"} selected
+                </Text>
+              </View>
+            </View>
+          )}
 
           {/* DATE / TIME */}
 
@@ -1074,7 +1409,8 @@ export default function ApprovalFormScreen() {
                 </Text>
 
                 <Text style={styles.characterCount}>
-                  {holdRemark.length}/500
+                  {holdRemark.length}
+                  /500
                 </Text>
               </View>
             </View>
@@ -1119,7 +1455,7 @@ export default function ApprovalFormScreen() {
           <Pressable
             style={[styles.submitButton, saving && styles.submitButtonDisabled]}
             onPress={openConfirmation}
-            disabled={saving}
+            disabled={saving || loading || !!readinessError}
           >
             {saving ? (
               <>
@@ -1148,6 +1484,7 @@ export default function ApprovalFormScreen() {
         animationType="fade"
         onRequestClose={() => setShowPhotoOptions(false)}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <Pressable
           style={styles.modalBackdrop}
           onPress={() => setShowPhotoOptions(false)}
@@ -1210,6 +1547,7 @@ export default function ApprovalFormScreen() {
             </Pressable>
           </Pressable>
         </Pressable>
+        </SafeAreaView>
       </Modal>
 
       {/* CONFIRMATION */}
@@ -1220,6 +1558,7 @@ export default function ApprovalFormScreen() {
         animationType="fade"
         onRequestClose={() => setShowConfirmation(false)}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalBackdrop}>
           <View style={styles.confirmationModal}>
             <View style={styles.confirmationIcon}>
@@ -1260,6 +1599,31 @@ export default function ApprovalFormScreen() {
                   {formatDateTime(decisionAt)}
                 </Text>
               </View>
+
+              {isInsuranceJob && (
+                <View style={styles.confirmationRow}>
+                  <Text style={styles.confirmationLabel}>Insurance</Text>
+
+                  <Text style={styles.confirmationValue}>
+                    {insuranceCompany?.name || "Not recorded"}
+                  </Text>
+                </View>
+              )}
+
+              {decision === "APPROVED" ? (
+                <View style={styles.confirmationRow}>
+                  <Text style={styles.confirmationLabel}>Floor Work</Text>
+
+                  <Text style={styles.confirmationValue}>
+                    {workTypes
+                      .filter((workType) =>
+                        selectedWorkTypeIds.includes(workType.id),
+                      )
+                      .map((workType) => workType.name)
+                      .join(", ")}
+                  </Text>
+                </View>
+              ) : null}
             </View>
 
             <View style={styles.modalButtonRow}>
@@ -1276,6 +1640,7 @@ export default function ApprovalFormScreen() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* POPUP */}
@@ -1286,6 +1651,7 @@ export default function ApprovalFormScreen() {
         animationType="fade"
         onRequestClose={handleSuccessPopupClose}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalBackdrop}>
           <View style={styles.popupModal}>
             <View
@@ -1320,6 +1686,7 @@ export default function ApprovalFormScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -1653,6 +2020,115 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
     color: colors.textSecondary,
+  },
+
+  workScopeGrid: {
+    gap: 10,
+  },
+
+  workScopeOption: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    padding: 13,
+    backgroundColor: colors.background,
+  },
+
+  workScopeOptionSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryLight,
+  },
+
+  workScopeCheck: {
+    width: 23,
+    height: 23,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 11,
+    marginTop: 1,
+  },
+
+  workScopeCheckSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+
+  workScopeCheckText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+
+  workScopeText: {
+    flex: 1,
+  },
+
+  workScopeTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+
+  workScopeTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "800",
+    color: colors.text,
+  },
+
+  workScopeTitleSelected: {
+    color: colors.primary,
+  },
+
+  workScopeDescription: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textSecondary,
+  },
+
+  mandatoryWorkBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 7,
+    backgroundColor: colors.primary,
+  },
+
+  mandatoryWorkBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "800",
+  },
+
+  scopeSummary: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  scopeSummaryLabel: {
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+
+  scopeSummaryValue: {
+    flex: 1,
+    textAlign: "right",
+    fontSize: 12,
+    fontWeight: "800",
+    color: colors.text,
   },
 
   dateTimeButton: {

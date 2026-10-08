@@ -1,3 +1,6 @@
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
+import { returnToRoute, useHardwareBack, singleParam } from "../../../lib/back-navigation";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import {
@@ -94,6 +97,20 @@ function showPopup(
 }
 
 export default function AdvisorIntakeFormScreen() {
+  const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
+  const handleNavigationBack = () => {
+    if (saving) return;
+    const origin = singleParam(navigationParams.returnTo);
+    if (origin === "vehicle-detail" && vehicleId && singleParam(params.vehicleId)) {
+      returnToRoute({ pathname: "/(tabs)/vehicle-detail", params: { vehicleId } });
+    } else if (origin === "vehicles") {
+      returnToRoute("/(tabs)/vehicles");
+    } else {
+      returnToRoute("/(tabs)/advisor/intake");
+    }
+  };
+  useHardwareBack(handleNavigationBack);
+
   const params =
     useLocalSearchParams<{
       visitId?: string | string[];
@@ -1227,24 +1244,7 @@ export default function AdvisorIntakeFormScreen() {
             loaded.
           </Text>
 
-          <Pressable
-            onPress={() =>
-              router.back()
-            }
-            style={({ pressed }) => [
-              styles.primaryButton,
-              pressed &&
-                styles.pressed,
-            ]}
-          >
-            <Text
-              style={
-                styles.primaryButtonText
-              }
-            >
-              Go Back
-            </Text>
-          </Pressable>
+          <BackButton onPress={handleNavigationBack} />
         </View>
 
         <PopupModal
@@ -1288,50 +1288,9 @@ export default function AdvisorIntakeFormScreen() {
           <View
             style={styles.topBar}
           >
-            <Pressable
-              onPress={() =>
-                router.back()
-              }
-              style={({ pressed }) => [
-                styles.backButton,
-                pressed &&
-                  styles.pressed,
-              ]}
-            >
-              <Text
-                style={
-                  styles.backArrow
-                }
-              >
-                ‹
-              </Text>
+            <BackButton onPress={handleNavigationBack} />
 
-              <Text
-                style={
-                  styles.backText
-                }
-              >
-                Back
-              </Text>
-            </Pressable>
-
-            <View
-              style={
-                styles.brandBadge
-              }
-            >
-              <View
-                style={styles.brandDot}
-              />
-
-              <Text
-                style={
-                  styles.brandText
-                }
-              >
-                PAGARIYA
-              </Text>
-            </View>
+            <BrandPill />
           </View>
 
           <View

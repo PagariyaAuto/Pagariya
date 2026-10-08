@@ -473,6 +473,7 @@ export default function ResetPassword() {
             setPopupVisible(false)
           }
         >
+          <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
           <View style={styles.popupOverlay}>
             <View style={styles.popupContainer}>
               <View
@@ -536,6 +537,7 @@ export default function ResetPassword() {
               </Pressable>
             </View>
           </View>
+          </SafeAreaView>
         </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>

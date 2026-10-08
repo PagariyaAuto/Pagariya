@@ -1,3 +1,4 @@
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useRef } from "react";
 import {
@@ -56,6 +57,7 @@ export default function PhotoViewer({
       animationType="fade"
       onRequestClose={onClose}
     >
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View style={styles.container}>
         {/* Close button */}
         <TouchableOpacity
@@ -105,6 +107,7 @@ export default function PhotoViewer({
           }}
         />
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }

@@ -1,10 +1,16 @@
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useIsFocused } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,2115 +18,1085 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
 import { supabase } from "../../../../lib/supabase";
-import {
-  colors,
-  radius,
-  spacing,
-  typography,
-} from "../../../theme";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
+import { colors, radius, spacing, typography } from "../../../theme";
 
+type Category = "Arena" | "Nexa";
+type Filter = "All" | "Active" | "Arena" | "Nexa" | "Inactive";
 type VehicleModel = {
   id: string;
   name: string;
   arena_nexa: string;
   is_active: boolean;
-  created_at?: string;
-  updated_at?: string;
+  created_at: string;
+  updated_at: string;
 };
+type Editor = { kind: "editor"; model: VehicleModel | null };
+type Dialog =
+  | Editor
+  | { kind: "discard"; editor: Editor }
+  | { kind: "status"; model: VehicleModel; activate: boolean }
+  | { kind: "notice"; title: string; body: string };
+const columns = "id, name, arena_nexa, is_active, created_at, updated_at";
+const filters: Filter[] = ["All", "Active", "Arena", "Nexa", "Inactive"];
+const normalize = (value: string) => value.trim().toLowerCase();
 
-type FilterType =
-  | "All"
-  | "Arena"
-  | "Nexa"
-  | "Inactive";
+function errorMessage(error: unknown) {
+  const code = (error as { code?: string })?.code;
+  if (code === "23505")
+    return "This model already exists in the selected category. Use its existing entry, or reactivate it if it is inactive.";
+  if (code === "42501")
+    return "Your account cannot change vehicle models. An active CEO Admin account is required.";
+  if (code === "PGRST116")
+    return "This model changed or is no longer available to your account. Close this dialog, refresh the list and try again.";
+  if (code === "23514")
+    return "The model details did not pass database validation. Check the name and category.";
+  return (
+    (error as { message?: string })?.message ||
+    "Unable to complete the request. Please try again."
+  );
+}
 
 export default function VehicleModels() {
   const [models, setModels] = useState<VehicleModel[]>([]);
+  const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
-
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
-  const [activeFilter, setActiveFilter] =
-    useState<FilterType>("All");
-
-  const [modalVisible, setModalVisible] = useState(false);
-
-  const [editingModel, setEditingModel] =
-    useState<VehicleModel | null>(null);
-
+  const [filter, setFilter] = useState<Filter>("All");
+  const [dialog, setDialog] = useState<Dialog | null>(null);
   const [modelName, setModelName] = useState("");
-  const [arenaNexa, setArenaNexa] = useState("");
-
+  const [category, setCategory] = useState<Category | "">("");
+  const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const busy = useRef(false);
+  const mounted = useRef(false);
+  const requests = useRef(0);
+  const disabled = saving || loading || refreshing;
+  const isFocused = useIsFocused();
 
-  const [confirmModalVisible, setConfirmModalVisible] =
-    useState(false);
+  const loadModels = useCallback(async (refresh = false) => {
+    if (busy.current) return;
+    const request = ++requests.current;
+    refresh ? setRefreshing(true) : setLoading(true);
+    setLoadError("");
+    try {
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      if (!auth.user)
+        throw new Error(
+          "Your session has expired. Sign in again to view vehicle models.",
+        );
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, is_active")
+        .eq("id", auth.user.id)
+        .single();
+      if (profileError) throw profileError;
+      if (!profile?.is_active)
+        throw new Error(
+          "An active account is required to view vehicle models.",
+        );
 
-  const [modelToDeactivate, setModelToDeactivate] =
-    useState<VehicleModel | null>(null);
-
-  const [changingStatus, setChangingStatus] =
-    useState(false);
-
-  const [messageModalVisible, setMessageModalVisible] =
-    useState(false);
-
-  const [messageTitle, setMessageTitle] = useState("");
-  const [messageText, setMessageText] = useState("");
-
-  useEffect(() => {
-    loadModels();
+      // Fetch all pages so the list and duplicate checks are not capped by the API limit.
+      const fetched = new Map<string, VehicleModel>();
+      const pageSize = 500;
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await supabase
+          .from("vehicle_models")
+          .select(columns)
+          .order("name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error) throw error;
+        if (!mounted.current || request !== requests.current) return;
+        for (const item of (data ?? []) as VehicleModel[])
+          fetched.set(item.id, item);
+        if ((data ?? []).length < pageSize) break;
+      }
+      if (mounted.current && request === requests.current) {
+        setModels([...fetched.values()]);
+        setCanManage(profile.role === "ceo_admin");
+      }
+    } catch (error) {
+      if (mounted.current && request === requests.current) {
+        setCanManage(false);
+        setLoadError(errorMessage(error));
+      }
+    } finally {
+      if (mounted.current && request === requests.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
   }, []);
 
-  /* --------------------------------------------------
-     LOAD MODELS
-  -------------------------------------------------- */
+  useFocusEffect(
+    useCallback(() => {
+      mounted.current = true;
+      if (!busy.current) setSaving(false);
+      void loadModels();
+      return () => {
+        mounted.current = false;
+        requests.current += 1;
+      };
+    }, [loadModels]),
+  );
 
-  const loadModels = async () => {
-    try {
-      setLoading(true);
-
-      const { data, error } = await supabase
-        .from("vehicle_models")
-        .select(
-          "id, name, arena_nexa, is_active, created_at, updated_at"
-        )
-        .order("name", { ascending: true });
-
-      if (error) {
-        console.log(
-          "Vehicle models error:",
-          error.message
-        );
-
-        showMessage(
-          "Error",
-          "Unable to load vehicle models."
-        );
-
+  const closeDialog = useCallback(() => {
+    if (busy.current) return;
+    if (dialog?.kind === "editor") {
+      const originalName = dialog.model?.name || "";
+      const originalCategory = dialog.model?.arena_nexa || "";
+      if (
+        modelName.trim() !== originalName.trim() ||
+        category !== originalCategory
+      ) {
+        setDialog({ kind: "discard", editor: dialog });
         return;
       }
-
-      setModels(data || []);
-    } finally {
-      setLoading(false);
     }
+    if (dialog?.kind === "discard") setDialog(dialog.editor);
+    else setDialog(null);
+    setFormError("");
+  }, [dialog, modelName, category]);
+
+  const handleBack = useCallback(() => {
+    if (busy.current) return;
+    if (dialog) closeDialog();
+    else returnToRoute("/(tabs)/master-data");
+  }, [dialog, closeDialog]);
+  useHardwareBack(handleBack);
+  // Native stack gestures/removal must respect the same dialog and saving guards.
+  usePreventRemove(isFocused && (saving || dialog !== null), closeDialog);
+
+  const openEditor = (model: VehicleModel | null = null) => {
+    if (!canManage || disabled || busy.current) return;
+    setModelName(model?.name || "");
+    setCategory(
+      model?.arena_nexa === "Arena" || model?.arena_nexa === "Nexa"
+        ? model.arena_nexa
+        : "",
+    );
+    setFormError("");
+    setDialog({ kind: "editor", model });
   };
 
-  /* --------------------------------------------------
-     MESSAGE POPUP
-  -------------------------------------------------- */
-
-  const showMessage = (
-    title: string,
-    text: string
-  ) => {
-    setMessageTitle(title);
-    setMessageText(text);
-    setMessageModalVisible(true);
+  const updateLocalModel = (saved: VehicleModel) => {
+    setModels((current) =>
+      [...current.filter((item) => item.id !== saved.id), saved].sort(
+        (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+      ),
+    );
   };
-
-  /* --------------------------------------------------
-     OPEN ADD MODAL
-  -------------------------------------------------- */
-
-  const openAddModal = () => {
-    setEditingModel(null);
-    setModelName("");
-    setArenaNexa("");
-    setModalVisible(true);
-  };
-
-  /* --------------------------------------------------
-     OPEN EDIT MODAL
-  -------------------------------------------------- */
-
-  const openEditModal = (
-    model: VehicleModel
-  ) => {
-    setEditingModel(model);
-    setModelName(model.name);
-    setArenaNexa(model.arena_nexa);
-    setModalVisible(true);
-  };
-
-  /* --------------------------------------------------
-     CLOSE ADD / EDIT MODAL
-  -------------------------------------------------- */
-
-  const closeModal = () => {
-    if (saving) {
-      return;
-    }
-
-    setModalVisible(false);
-    setEditingModel(null);
-    setModelName("");
-    setArenaNexa("");
-  };
-
-  /* --------------------------------------------------
-     SAVE MODEL
-     
-     UNIQUE COMBINATION:
-     name + arena_nexa
-  -------------------------------------------------- */
 
   const saveModel = async () => {
-    if (saving) {
+    if (!canManage || disabled || busy.current || dialog?.kind !== "editor")
+      return;
+    const name = modelName.trim();
+    if (!name || name.length > 100) {
+      setFormError("Enter a model name between 1 and 100 characters.");
       return;
     }
-
-    const trimmedName = modelName.trim();
-
-    if (!trimmedName) {
-      showMessage(
-        "Required",
-        "Please enter the vehicle model name."
-      );
-
+    if (category !== "Arena" && category !== "Nexa") {
+      setFormError("Select Arena or Nexa.");
       return;
     }
-
-    if (trimmedName.length > 100) {
-      showMessage(
-        "Invalid Name",
-        "Vehicle model name cannot exceed 100 characters."
-      );
-
-      return;
-    }
-
-    if (!arenaNexa) {
-      showMessage(
-        "Required",
-        "Please select Arena or Nexa."
-      );
-
-      return;
-    }
-
-    if (
-      arenaNexa !== "Arena" &&
-      arenaNexa !== "Nexa"
-    ) {
-      showMessage(
-        "Invalid Type",
-        "Please select either Arena or Nexa."
-      );
-
-      return;
-    }
-
-    /*
-     * IMPORTANT:
-     * Same model name is allowed in Arena and Nexa.
-     *
-     * Example:
-     * Baleno + Arena = allowed
-     * Baleno + Nexa  = allowed
-     *
-     * But:
-     * Baleno + Nexa + again = duplicate
-     */
-
-    const duplicateModel = models.find(
-      (model) =>
-        model.name.trim().toLowerCase() ===
-          trimmedName.toLowerCase() &&
-        model.arena_nexa.toLowerCase() ===
-          arenaNexa.toLowerCase() &&
-        model.id !== editingModel?.id
+    const editing = dialog.model;
+    const duplicate = models.find(
+      (item) =>
+        item.id !== editing?.id &&
+        normalize(item.name) === normalize(name) &&
+        normalize(item.arena_nexa) === normalize(category),
     );
-
-    if (duplicateModel) {
-      showMessage(
-        "Already Exists",
-        `${trimmedName} is already available under ${arenaNexa}. Please use a different model name or select the other Arena/Nexa type.`
+    if (duplicate) {
+      setFormError(
+        `${duplicate.name} already exists under ${duplicate.arena_nexa}${duplicate.is_active ? "." : " and is inactive. Reactivate its existing entry instead."}`,
       );
-
       return;
     }
-
+    busy.current = true;
     setSaving(true);
-
+    setFormError("");
     try {
-      if (editingModel) {
-        const { error } = await supabase
-          .from("vehicle_models")
-          .update({
-            name: trimmedName,
-            arena_nexa: arenaNexa,
-          })
-          .eq("id", editingModel.id);
-
-        if (error) {
-          console.log(
-            "Update model error:",
-            error.message
-          );
-
-          /*
-           * PostgreSQL unique constraint:
-           * name + arena_nexa
-           */
-          if (error.code === "23505") {
-            showMessage(
-              "Already Exists",
-              `${trimmedName} is already available under ${arenaNexa}.`
-            );
-          } else {
-            showMessage(
-              "Error",
-              "Unable to update the vehicle model."
-            );
-          }
-
-          return;
-        }
-
-        setModalVisible(false);
-        setEditingModel(null);
-        setModelName("");
-        setArenaNexa("");
-
-        await loadModels();
-
-        showMessage(
-          "Updated",
-          "Vehicle model updated successfully."
+      const result = editing
+        ? await supabase
+            .from("vehicle_models")
+            .update({ name, arena_nexa: category })
+            .eq("id", editing.id)
+            .eq("updated_at", editing.updated_at)
+            .select(columns)
+            .single()
+        : await supabase
+            .from("vehicle_models")
+            .insert({ name, arena_nexa: category, is_active: true })
+            .select(columns)
+            .single();
+      if (result.error) throw result.error;
+      if (!result.data?.id)
+        throw new Error(
+          "The saved model could not be confirmed. Refresh before trying again.",
         );
-      } else {
-        const { error } = await supabase
-          .from("vehicle_models")
-          .insert({
-            name: trimmedName,
-            arena_nexa: arenaNexa,
-            is_active: true,
-          });
-
-        if (error) {
-          console.log(
-            "Insert model error:",
-            error.message
-          );
-
-          /*
-           * PostgreSQL unique constraint:
-           * name + arena_nexa
-           */
-          if (error.code === "23505") {
-            showMessage(
-              "Already Exists",
-              `${trimmedName} is already available under ${arenaNexa}.`
-            );
-          } else {
-            showMessage(
-              "Error",
-              "Unable to add the vehicle model."
-            );
-          }
-
-          return;
-        }
-
-        setModalVisible(false);
-        setEditingModel(null);
-        setModelName("");
-        setArenaNexa("");
-
-        await loadModels();
-
-        showMessage(
-          "Added",
-          `${trimmedName} has been added under ${arenaNexa}.`
-        );
+      if (mounted.current) {
+        updateLocalModel(result.data as VehicleModel);
+        setDialog({
+          kind: "notice",
+          title: editing ? "Model updated" : "Model added",
+          body: `${name} (${category}) has been ${editing ? "updated" : "added"}.`,
+        });
       }
+    } catch (error) {
+      if (mounted.current) setFormError(errorMessage(error));
     } finally {
-      setSaving(false);
+      busy.current = false;
+      if (mounted.current) setSaving(false);
     }
   };
 
-  /* --------------------------------------------------
-     OPEN DEACTIVATE CONFIRMATION
-  -------------------------------------------------- */
-
-  const openDeactivateConfirmation = (
-    model: VehicleModel
-  ) => {
-    setModelToDeactivate(model);
-    setConfirmModalVisible(true);
-  };
-
-  /* --------------------------------------------------
-     CLOSE CONFIRMATION
-  -------------------------------------------------- */
-
-  const closeConfirmModal = () => {
-    if (changingStatus) {
+  const changeStatus = async () => {
+    if (!canManage || disabled || busy.current || dialog?.kind !== "status")
       return;
-    }
-
-    setConfirmModalVisible(false);
-    setModelToDeactivate(null);
-  };
-
-  /* --------------------------------------------------
-     CONFIRM DEACTIVATE
-  -------------------------------------------------- */
-
-  const confirmDeactivate = async () => {
-    if (!modelToDeactivate || changingStatus) {
-      return;
-    }
-
-    setChangingStatus(true);
-
+    const { model, activate } = dialog;
+    busy.current = true;
+    setSaving(true);
+    setFormError("");
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("vehicle_models")
-        .update({
-          is_active: false,
-        })
-        .eq("id", modelToDeactivate.id);
-
-      if (error) {
-        console.log(
-          "Deactivate model error:",
-          error.message
+        .update({ is_active: activate })
+        .eq("id", model.id)
+        .eq("updated_at", model.updated_at)
+        .select(columns)
+        .single();
+      if (error) throw error;
+      if (!data?.id)
+        throw new Error(
+          "The status change could not be confirmed. Refresh before trying again.",
         );
-
-        showMessage(
-          "Error",
-          "Unable to deactivate the vehicle model."
-        );
-
-        return;
+      if (mounted.current) {
+        updateLocalModel(data as VehicleModel);
+        setDialog({
+          kind: "notice",
+          title: activate ? "Model activated" : "Model deactivated",
+          body: `${model.name} (${model.arena_nexa}) ${activate ? "is now available for new Intake selections" : "will no longer be available for new Intake selections"}. Saved records are retained.`,
+        });
       }
-
-      const modelName = modelToDeactivate.name;
-      const modelType =
-        modelToDeactivate.arena_nexa;
-
-      setConfirmModalVisible(false);
-      setModelToDeactivate(null);
-
-      await loadModels();
-
-      showMessage(
-        "Model Deactivated",
-        `${modelName} (${modelType}) is now inactive and will not be available for new vehicle entries. Historical records are not affected.`
-      );
+    } catch (error) {
+      if (mounted.current) setFormError(errorMessage(error));
     } finally {
-      setChangingStatus(false);
+      busy.current = false;
+      if (mounted.current) setSaving(false);
     }
   };
 
-  /* --------------------------------------------------
-     ACTIVATE MODEL
-  -------------------------------------------------- */
-
-  const activateModel = async (
-    model: VehicleModel
-  ) => {
-    if (changingStatus) {
-      return;
-    }
-
-    setChangingStatus(true);
-
-    try {
-      const { error } = await supabase
-        .from("vehicle_models")
-        .update({
-          is_active: true,
-        })
-        .eq("id", model.id);
-
-      if (error) {
-        console.log(
-          "Activate model error:",
-          error.message
-        );
-
-        showMessage(
-          "Error",
-          "Unable to activate the vehicle model."
-        );
-
-        return;
-      }
-
-      await loadModels();
-
-      showMessage(
-        "Model Activated",
-        `${model.name} (${model.arena_nexa}) is now active and can be selected for new vehicle entries.`
-      );
-    } finally {
-      setChangingStatus(false);
-    }
-  };
-
-  /* --------------------------------------------------
-     FILTERED MODELS
-  -------------------------------------------------- */
-
-  const filteredModels = useMemo(() => {
-    const normalizedSearch = search
-      .trim()
-      .toLowerCase();
-
-    return models.filter((model) => {
-      const matchesSearch =
-        !normalizedSearch ||
-        model.name
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        model.arena_nexa
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        (model.is_active
-          ? "active"
-          : "inactive"
-        ).includes(normalizedSearch);
-
-      let matchesFilter = true;
-
-      if (activeFilter === "Arena") {
-        matchesFilter =
-          model.arena_nexa === "Arena";
-      }
-
-      if (activeFilter === "Nexa") {
-        matchesFilter =
-          model.arena_nexa === "Nexa";
-      }
-
-      if (activeFilter === "Inactive") {
-        matchesFilter = !model.is_active;
-      }
-
-      return matchesSearch && matchesFilter;
-    });
-  }, [models, search, activeFilter]);
-
-  /* --------------------------------------------------
-     SUMMARY COUNTS
-  -------------------------------------------------- */
-
-  const totalCount = models.length;
-
-  const activeCount = models.filter(
-    (model) => model.is_active
-  ).length;
-
-  const inactiveCount = models.filter(
-    (model) => !model.is_active
-  ).length;
-
-  const arenaCount = models.filter(
-    (model) => model.arena_nexa === "Arena"
-  ).length;
-
-  const nexaCount = models.filter(
-    (model) => model.arena_nexa === "Nexa"
-  ).length;
-
-  /* --------------------------------------------------
-     LOADING
-  -------------------------------------------------- */
-
-  if (loading) {
-    return (
-      <SafeAreaView
-        style={styles.loadingContainer}
-        edges={["top", "bottom"]}
-      >
-        <ActivityIndicator
-          size="large"
-          color={colors.primary}
-        />
-
-        <Text style={styles.loadingText}>
-          Loading vehicle models...
-        </Text>
-      </SafeAreaView>
-    );
-  }
+  const counts = useMemo(
+    () => ({
+      All: models.length,
+      Active: models.filter((item) => item.is_active).length,
+      Inactive: models.filter((item) => !item.is_active).length,
+      Arena: models.filter((item) => item.arena_nexa === "Arena").length,
+      Nexa: models.filter((item) => item.arena_nexa === "Nexa").length,
+    }),
+    [models],
+  );
+  const visible = useMemo(
+    () =>
+      models.filter((item) => {
+        const query = normalize(search);
+        const statusMatches =
+          query === "active"
+            ? item.is_active
+            : query === "inactive"
+              ? !item.is_active
+              : false;
+        const matchesSearch =
+          !query ||
+          normalize(item.name).includes(query) ||
+          normalize(item.arena_nexa).includes(query) ||
+          statusMatches;
+        const matchesFilter =
+          filter === "All" ||
+          (filter === "Active"
+            ? item.is_active
+            : filter === "Inactive"
+              ? !item.is_active
+              : item.arena_nexa === filter);
+        return matchesSearch && matchesFilter;
+      }),
+    [models, search, filter],
+  );
 
   return (
     <SafeAreaView
       style={styles.container}
-      edges={["top", "bottom"]}
+      edges={["top", "bottom", "left", "right"]}
     >
+      <View style={styles.topBar}>
+        <BackButton accessibilityLabel="Back to Master Data" disabled={saving} onPress={handleBack} />
+        <BrandPill />
+      </View>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void loadModels(true)}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+          />
+        }
       >
-        {/* HEADER */}
-
-        <View style={styles.header}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.backButton,
-              pressed && styles.pressed,
-            ]}
-            onPress={() => router.back()}
-          >
-            <Ionicons
-              name="arrow-back-outline"
-              size={21}
-              color={colors.text}
-            />
-          </Pressable>
-
-          <View style={styles.headerText}>
-            <Text style={styles.title}>
-              Vehicle Models
-            </Text>
-
-            <Text style={styles.subtitle}>
-              Manage vehicle models and Arena / Nexa
-            </Text>
-          </View>
-        </View>
-
-        {/* SUMMARY */}
-
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryCard}>
-            <View
-              style={[
-                styles.summaryIcon,
-                styles.summaryTotalIcon,
-              ]}
-            >
-              <Ionicons
-                name="car-outline"
-                size={18}
-                color={colors.primary}
-              />
-            </View>
-
-            <Text style={styles.summaryValue}>
-              {totalCount}
-            </Text>
-
-            <Text style={styles.summaryLabel}>
-              Total
-            </Text>
-          </View>
-
-          <View style={styles.summaryCard}>
-            <View
-              style={[
-                styles.summaryIcon,
-                styles.summaryActiveIcon,
-              ]}
-            >
-              <Ionicons
-                name="checkmark-circle-outline"
-                size={18}
-                color={colors.success}
-              />
-            </View>
-
-            <Text style={styles.summaryValue}>
-              {activeCount}
-            </Text>
-
-            <Text style={styles.summaryLabel}>
-              Active
-            </Text>
-          </View>
-
-          <View style={styles.summaryCard}>
-            <View
-              style={[
-                styles.summaryIcon,
-                styles.summaryInactiveIcon,
-              ]}
-            >
-              <Ionicons
-                name="close-circle-outline"
-                size={18}
-                color={colors.textSecondary}
-              />
-            </View>
-
-            <Text style={styles.summaryValue}>
-              {inactiveCount}
-            </Text>
-
-            <Text style={styles.summaryLabel}>
-              Inactive
-            </Text>
-          </View>
-        </View>
-
-        {/* SEARCH */}
-
-        <View style={styles.searchContainer}>
-          <Ionicons
-            name="search-outline"
-            size={20}
-            color={colors.textLight}
-            style={styles.searchIcon}
-          />
-
-          <TextInput
-            style={styles.searchInput}
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search model, Arena, Nexa..."
-            placeholderTextColor={colors.textLight}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
-          {search.length > 0 && (
-            <Pressable
-              onPress={() => setSearch("")}
-              style={styles.clearSearch}
-            >
-              <Ionicons
-                name="close-circle"
-                size={19}
-                color={colors.textLight}
-              />
-            </Pressable>
-          )}
-        </View>
-
-        {/* FILTER CHIPS */}
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRow}
-        >
-          <Pressable
-            style={[
-              styles.filterChip,
-              activeFilter === "All" &&
-                styles.filterChipSelected,
-            ]}
-            onPress={() => setActiveFilter("All")}
-          >
-            <Text
-              style={[
-                styles.filterText,
-                activeFilter === "All" &&
-                  styles.filterTextSelected,
-              ]}
-            >
-              All {totalCount}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterChip,
-              activeFilter === "Arena" &&
-                styles.filterChipSelected,
-            ]}
-            onPress={() =>
-              setActiveFilter("Arena")
-            }
-          >
-            <Text
-              style={[
-                styles.filterText,
-                activeFilter === "Arena" &&
-                  styles.filterTextSelected,
-              ]}
-            >
-              Arena {arenaCount}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterChip,
-              activeFilter === "Nexa" &&
-                styles.filterChipSelected,
-            ]}
-            onPress={() =>
-              setActiveFilter("Nexa")
-            }
-          >
-            <Text
-              style={[
-                styles.filterText,
-                activeFilter === "Nexa" &&
-                  styles.filterTextSelected,
-              ]}
-            >
-              Nexa {nexaCount}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.filterChip,
-              activeFilter === "Inactive" &&
-                styles.filterChipSelectedInactive,
-            ]}
-            onPress={() =>
-              setActiveFilter("Inactive")
-            }
-          >
-            <Text
-              style={[
-                styles.filterText,
-                activeFilter === "Inactive" &&
-                  styles.filterTextSelectedInactive,
-              ]}
-            >
-              Inactive {inactiveCount}
-            </Text>
-          </Pressable>
-        </ScrollView>
-
-        {/* ADD BUTTON */}
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.addButton,
-            pressed && styles.buttonPressed,
-          ]}
-          onPress={openAddModal}
-        >
-          <View style={styles.addIcon}>
-            <Ionicons
-              name="add-outline"
-              size={22}
-              color={colors.primary}
-            />
-          </View>
-
-          <Text style={styles.addButtonText}>
-            Add Vehicle Model
+        <View style={styles.hero}>
+          <Text style={styles.eyebrow}>MASTER DATA · VEHICLE SETUP</Text>
+          <Text accessibilityRole="header" style={styles.heroTitle}>
+            Vehicle Models
           </Text>
-        </Pressable>
-
-        {/* LIST HEADER */}
-
-        <View style={styles.listHeader}>
-          <View>
-            <Text style={styles.listTitle}>
-              Vehicle Models
-            </Text>
-
-            <Text style={styles.listSubtitle}>
-              Showing {filteredModels.length} of{" "}
-              {models.length} model
-              {models.length !== 1 ? "s" : ""}
-            </Text>
-          </View>
+          <Text style={styles.heroText}>
+            Manage the models and Arena / Nexa categories used during Vehicle
+            Intake.
+          </Text>
         </View>
-
-        {/* LIST */}
-
-        {filteredModels.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <View style={styles.emptyIconContainer}>
-              <Ionicons
-                name="car-outline"
-                size={30}
-                color={colors.primary}
-              />
-            </View>
-
-            <Text style={styles.emptyTitle}>
-              No vehicle models found
-            </Text>
-
-            <Text style={styles.emptyText}>
-              {search.trim() ||
-              activeFilter !== "All"
-                ? "Try changing your search or filter."
-                : "Add your first vehicle model using the button above."}
-            </Text>
-
-            {(search.trim() ||
-              activeFilter !== "All") && (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.clearFilterButton,
-                  pressed &&
-                    styles.buttonPressed,
-                ]}
-                onPress={() => {
-                  setSearch("");
-                  setActiveFilter("All");
-                }}
-              >
-                <Text
-                  style={styles.clearFilterText}
-                >
-                  Clear Filters
-                </Text>
-              </Pressable>
-            )}
+        {loading && (
+          <View style={styles.inline}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.body}>Loading vehicle models…</Text>
           </View>
-        ) : (
-          filteredModels.map((model) => (
-            <View
-              key={model.id}
-              style={[
-                styles.modelCard,
-                !model.is_active &&
-                  styles.inactiveCard,
-              ]}
-            >
-              {/* MODEL TOP */}
-
-              <View style={styles.modelTop}>
-                <View style={styles.modelInfoRow}>
-                  <View style={styles.modelIconContainer}>
+        )}
+        {!!loadError && (
+          <View style={styles.card}>
+            <Text style={styles.title}>Unable to refresh models</Text>
+            <Text style={styles.body}>{loadError}</Text>
+            <Button
+              title="Try again"
+              onPress={() => void loadModels()}
+              disabled={saving || loading || refreshing}
+            />
+          </View>
+        )}
+        {!loading && !loadError && (
+          <>
+            <View style={styles.metrics}>
+              {(["All", "Active", "Inactive"] as Filter[]).map((key) => (
+                <Pressable
+                  key={key}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${key}: ${counts[key]} models`}
+                  accessibilityState={{ selected: filter === key }}
+                  onPress={() => setFilter(key)}
+                  style={[
+                    styles.metric,
+                    filter === key && styles.metricSelected,
+                  ]}
+                >
+                  <Text style={styles.metricCount}>{counts[key]}</Text>
+                  <Text style={styles.body}>
+                    {key === "All" ? "Total" : key}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.card}>
+              <View style={styles.heading}>
+                <View style={styles.grow}>
+                  <Text style={styles.title}>Model directory</Text>
+                  <Text style={styles.body}>
+                    {canManage
+                      ? "Add, edit or change a model’s active status."
+                      : "View only. An active CEO Admin can manage models."}
+                  </Text>
+                </View>
+                {canManage && (
+                  <Button
+                    title="Add model"
+                    icon="add-outline"
+                    onPress={() => openEditor()}
+                    disabled={disabled}
+                  />
+                )}
+              </View>
+              <View style={styles.searchBox}>
+                <Ionicons
+                  name="search-outline"
+                  size={20}
+                  color={colors.textSecondary}
+                />
+                <TextInput
+                  accessibilityLabel="Search vehicle models"
+                  style={styles.searchInput}
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Search model or category"
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {!!search && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search"
+                    onPress={() => setSearch("")}
+                    style={styles.iconButton}
+                  >
+                    <Ionicons
+                      name="close-circle-outline"
+                      size={22}
+                      color={colors.textSecondary}
+                    />
+                  </Pressable>
+                )}
+              </View>
+              <View style={styles.filters}>
+                {filters.map((key) => (
+                  <Pressable
+                    key={key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: filter === key }}
+                    onPress={() => setFilter(key)}
+                    style={[styles.chip, filter === key && styles.chipSelected]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        filter === key && styles.chipSelectedText,
+                      ]}
+                    >
+                      {key} · {counts[key]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.body}>
+                {visible.length} of {models.length} models · Category filters
+                include active and inactive entries.
+              </Text>
+            </View>
+            {!visible.length && (
+              <View style={styles.empty}>
+                <Ionicons name="car-outline" size={32} color={colors.primary} />
+                <Text style={styles.title}>
+                  {models.length
+                    ? "No matching models"
+                    : "No vehicle models yet"}
+                </Text>
+                <Text style={styles.body}>
+                  {models.length
+                    ? "Change your search or filter to see other models."
+                    : canManage
+                      ? "Add your first model to make it available during Intake."
+                      : "Models will appear here after CEO Admin adds them."}
+                </Text>
+                {!!models.length && (
+                  <Button
+                    secondary
+                    title="Clear search & filters"
+                    onPress={() => {
+                      setSearch("");
+                      setFilter("All");
+                    }}
+                  />
+                )}
+              </View>
+            )}
+            {visible.map((model) => (
+              <View key={model.id} style={styles.card}>
+                <View style={styles.modelHeading}>
+                  <View style={styles.modelIcon}>
                     <Ionicons
                       name="car-outline"
                       size={24}
                       color={colors.primary}
                     />
                   </View>
-
-                  <View style={styles.modelInfo}>
-                    <Text style={styles.modelName}>
-                      {model.name}
+                  <View style={styles.grow}>
+                    <Text style={styles.title}>{model.name}</Text>
+                    <Text style={styles.body}>{model.arena_nexa}</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.badge,
+                      model.is_active
+                        ? styles.activeBadge
+                        : styles.inactiveBadge,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.badgeText,
+                        {
+                          color: model.is_active
+                            ? "#217A50"
+                            : colors.textSecondary,
+                        },
+                      ]}
+                    >
+                      {model.is_active ? "Active" : "Inactive"}
                     </Text>
-
-                    <View style={styles.arenaRow}>
-                      <Ionicons
-                        name="business-outline"
-                        size={14}
-                        color={colors.textSecondary}
-                      />
-
-                      <Text style={styles.arenaNexa}>
-                        {model.arena_nexa}
-                      </Text>
-                    </View>
                   </View>
                 </View>
-
-                {/* STATUS */}
-
-                <View
-                  style={[
-                    styles.statusBadge,
-                    model.is_active
-                      ? styles.activeBadge
-                      : styles.inactiveBadge,
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      model.is_active
-                        ? "checkmark-circle-outline"
-                        : "close-circle-outline"
-                    }
-                    size={14}
-                    color={
-                      model.is_active
-                        ? colors.success
-                        : colors.textLight
-                    }
-                  />
-
-                  <Text
-                    style={[
-                      styles.statusText,
-                      model.is_active
-                        ? styles.activeText
-                        : styles.inactiveText,
-                    ]}
-                  >
-                    {model.is_active
-                      ? "Active"
-                      : "Inactive"}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.cardDivider} />
-
-              {/* ACTIONS */}
-
-              <View style={styles.actions}>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.editButton,
-                    pressed &&
-                      styles.buttonPressed,
-                  ]}
-                  onPress={() =>
-                    openEditModal(model)
-                  }
-                >
-                  <Ionicons
-                    name="create-outline"
-                    size={17}
-                    color={colors.text}
-                  />
-
-                  <Text style={styles.editButtonText}>
-                    Edit
-                  </Text>
-                </Pressable>
-
-                {model.is_active ? (
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.statusButton,
-                      styles.deactivateButton,
-                      pressed &&
-                        styles.buttonPressed,
-                    ]}
-                    onPress={() =>
-                      openDeactivateConfirmation(
-                        model
-                      )
-                    }
-                    disabled={changingStatus}
-                  >
-                    <Ionicons
-                      name="power-outline"
-                      size={17}
-                      color={colors.danger}
+                {canManage && (
+                  <View style={styles.actions}>
+                    <Button
+                      secondary
+                      title="Edit details"
+                      icon="create-outline"
+                      onPress={() => openEditor(model)}
+                      disabled={disabled}
                     />
-
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        styles.deactivateText,
-                      ]}
-                    >
-                      Deactivate
-                    </Text>
-                  </Pressable>
-                ) : (
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.statusButton,
-                      styles.activateButton,
-                      pressed &&
-                        styles.buttonPressed,
-                    ]}
-                    onPress={() =>
-                      activateModel(model)
-                    }
-                    disabled={changingStatus}
-                  >
-                    <Ionicons
-                      name="checkmark-outline"
-                      size={17}
-                      color={colors.success}
+                    <Button
+                      secondary
+                      title={model.is_active ? "Deactivate" : "Activate"}
+                      icon="power-outline"
+                      disabled={disabled}
+                      onPress={() => {
+                        setFormError("");
+                        setDialog({
+                          kind: "status",
+                          model,
+                          activate: !model.is_active,
+                        });
+                      }}
                     />
-
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        styles.activateText,
-                      ]}
-                    >
-                      Activate
-                    </Text>
-                  </Pressable>
+                  </View>
                 )}
               </View>
+            ))}
+            <View style={styles.note}>
+              <Ionicons
+                name="information-circle-outline"
+                size={20}
+                color={colors.textSecondary}
+              />
+              <Text style={[styles.body, styles.grow]}>
+                Deactivate unused models instead of deleting them. The same name
+                can exist under Arena and Nexa.
+              </Text>
             </View>
-          ))
+          </>
         )}
       </ScrollView>
 
-      {/* ADD / EDIT MODAL */}
-
       <Modal
-        visible={modalVisible}
+        visible={!!dialog}
         transparent
         animationType="fade"
-        onRequestClose={closeModal}
+        onRequestClose={closeDialog}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalIconContainer}>
-                <Ionicons
-                  name="car-outline"
-                  size={22}
-                  color={colors.primary}
-                />
-              </View>
-
-              <View style={styles.modalHeaderText}>
-                <Text style={styles.modalTitle}>
-                  {editingModel
-                    ? "Edit Vehicle Model"
-                    : "Add Vehicle Model"}
-                </Text>
-
-                <Text style={styles.modalSubtitle}>
-                  {editingModel
-                    ? "Update vehicle model details"
-                    : "Add a new vehicle model"}
-                </Text>
-              </View>
-
-              <Pressable
-                style={styles.modalCloseButton}
-                onPress={closeModal}
-                disabled={saving}
-              >
-                <Ionicons
-                  name="close-outline"
-                  size={21}
-                  color={colors.textSecondary}
-                />
-              </Pressable>
-            </View>
-
-            <Text style={styles.fieldLabel}>
-              Vehicle Model *
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              value={modelName}
-              onChangeText={setModelName}
-              placeholder="Enter vehicle model"
-              placeholderTextColor={colors.textLight}
-              autoCapitalize="words"
-              autoCorrect={false}
-              maxLength={100}
-              editable={!saving}
-            />
-
-            <Text style={styles.characterCount}>
-              {modelName.length}/100
-            </Text>
-
-            <Text style={styles.fieldLabel}>
-              Arena / Nexa *
-            </Text>
-
-            <View style={styles.optionRow}>
-              <Pressable
-                style={[
-                  styles.optionButton,
-                  arenaNexa === "Arena" &&
-                    styles.optionSelected,
-                ]}
-                onPress={() =>
-                  !saving && setArenaNexa("Arena")
-                }
-                disabled={saving}
-              >
-                <Ionicons
-                  name="business-outline"
-                  size={18}
-                  color={
-                    arenaNexa === "Arena"
-                      ? colors.white
-                      : colors.text
-                  }
-                />
-
-                <Text
-                  style={[
-                    styles.optionText,
-                    arenaNexa === "Arena" &&
-                      styles.optionSelectedText,
-                  ]}
-                >
-                  Arena
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.optionButton,
-                  arenaNexa === "Nexa" &&
-                    styles.optionSelected,
-                ]}
-                onPress={() =>
-                  !saving && setArenaNexa("Nexa")
-                }
-                disabled={saving}
-              >
-                <Ionicons
-                  name="business-outline"
-                  size={18}
-                  color={
-                    arenaNexa === "Nexa"
-                      ? colors.white
-                      : colors.text
-                  }
-                />
-
-                <Text
-                  style={[
-                    styles.optionText,
-                    arenaNexa === "Nexa" &&
-                      styles.optionSelectedText,
-                  ]}
-                >
-                  Nexa
-                </Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.modalActions}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.cancelButton,
-                  pressed && styles.buttonPressed,
-                ]}
-                onPress={closeModal}
-                disabled={saving}
-              >
-                <Text style={styles.cancelText}>
-                  Cancel
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.saveButton,
-                  pressed && styles.buttonPressed,
-                  saving &&
-                    styles.saveButtonDisabled,
-                ]}
-                onPress={saveModel}
-                disabled={saving}
-              >
-                {saving ? (
+        <SafeAreaView
+          style={styles.overlay}
+          edges={["top", "bottom", "left", "right"]}
+        >
+          <KeyboardAvoidingView
+            style={styles.modalFrame}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+          >
+            <ScrollView
+              contentContainerStyle={styles.modalScroll}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.dialog}>
+                {dialog?.kind === "editor" && (
                   <>
-                    <ActivityIndicator
-                      size="small"
-                      color={colors.white}
+                    <View style={styles.heading}>
+                      <View style={styles.grow}>
+                        <Text style={styles.title}>
+                          {dialog.model
+                            ? "Edit vehicle model"
+                            : "Add vehicle model"}
+                        </Text>
+                        <Text style={styles.body}>
+                          Enter the model name and select its category.
+                        </Text>
+                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Close model editor"
+                        disabled={saving}
+                        onPress={closeDialog}
+                        style={styles.iconButton}
+                      >
+                        <Ionicons
+                          name="close-outline"
+                          size={24}
+                          color={colors.textSecondary}
+                        />
+                      </Pressable>
+                    </View>
+                    <Text style={styles.label}>Vehicle model *</Text>
+                    <TextInput
+                      accessibilityLabel="Vehicle model name"
+                      value={modelName}
+                      onChangeText={(value) => {
+                        setModelName(value);
+                        setFormError("");
+                      }}
+                      placeholder="Enter vehicle model"
+                      placeholderTextColor={colors.textSecondary}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      maxLength={100}
+                      editable={!saving}
+                      style={styles.input}
                     />
-
-                    <Text style={styles.saveText}>
-                      Saving...
+                    <Text style={styles.hint}>
+                      {modelName.length} / 100 characters
                     </Text>
-                  </>
-                ) : (
-                  <>
-                    <Ionicons
-                      name={
-                        editingModel
-                          ? "checkmark-outline"
-                          : "add-outline"
-                      }
-                      size={19}
-                      color={colors.white}
-                    />
-
-                    <Text style={styles.saveText}>
-                      {editingModel
-                        ? "Update"
-                        : "Add"}
-                    </Text>
+                    <Text style={styles.label}>Arena / Nexa *</Text>
+                    <View style={styles.actions}>
+                      {(["Arena", "Nexa"] as Category[]).map((value) => (
+                        <Pressable
+                          key={value}
+                          accessibilityRole="radio"
+                          accessibilityState={{
+                            checked: category === value,
+                            disabled: saving,
+                          }}
+                          disabled={saving}
+                          onPress={() => {
+                            setCategory(value);
+                            setFormError("");
+                          }}
+                          style={[
+                            styles.option,
+                            category === value && styles.optionSelected,
+                          ]}
+                        >
+                          <Ionicons
+                            name={
+                              category === value
+                                ? "radio-button-on"
+                                : "radio-button-off"
+                            }
+                            size={20}
+                            color={colors.primaryDark}
+                          />
+                          <Text style={styles.optionText}>{value}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    {dialog.model && (
+                      <Text style={styles.hint}>
+                        This edits the master entry. Existing saved job
+                        snapshots are not rewritten.
+                      </Text>
+                    )}
+                    {!!formError && (
+                      <Text accessibilityRole="alert" style={styles.error}>
+                        {formError}
+                      </Text>
+                    )}
+                    <View style={styles.actions}>
+                      <Button
+                        secondary
+                        title="Cancel"
+                        onPress={closeDialog}
+                        disabled={saving}
+                      />
+                      <Button
+                        title={
+                          saving
+                            ? "Saving…"
+                            : dialog.model
+                              ? "Save changes"
+                              : "Add model"
+                        }
+                        onPress={() => void saveModel()}
+                        disabled={disabled}
+                        busy={saving}
+                      />
+                    </View>
                   </>
                 )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* DEACTIVATE CONFIRMATION */}
-
-      <Modal
-        visible={confirmModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeConfirmModal}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.confirmCard}>
-            <View style={styles.confirmIconContainer}>
-              <Ionicons
-                name="power-outline"
-                size={28}
-                color={colors.danger}
-              />
-            </View>
-
-            <Text style={styles.confirmTitle}>
-              Deactivate Vehicle Model?
-            </Text>
-
-            {modelToDeactivate && (
-              <View style={styles.modelPreview}>
-                <Ionicons
-                  name="car-outline"
-                  size={20}
-                  color={colors.primary}
-                />
-
-                <View style={styles.modelPreviewText}>
-                  <Text style={styles.modelPreviewName}>
-                    {modelToDeactivate.name}
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.modelPreviewCategory
-                    }
-                  >
-                    {modelToDeactivate.arena_nexa}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            <Text style={styles.confirmText}>
-              This model will no longer be available
-              when creating new vehicle entries.
-            </Text>
-
-            <Text style={styles.confirmNote}>
-              Historical records will not be affected.
-            </Text>
-
-            <View style={styles.confirmActions}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.confirmCancelButton,
-                  pressed &&
-                    styles.buttonPressed,
-                ]}
-                onPress={closeConfirmModal}
-                disabled={changingStatus}
-              >
-                <Text style={styles.confirmCancelText}>
-                  Cancel
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.confirmDeactivateButton,
-                  pressed &&
-                    styles.buttonPressed,
-                  changingStatus &&
-                    styles.saveButtonDisabled,
-                ]}
-                onPress={confirmDeactivate}
-                disabled={changingStatus}
-              >
-                {changingStatus ? (
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.white}
-                  />
-                ) : (
+                {dialog?.kind === "status" && (
                   <>
                     <Ionicons
                       name="power-outline"
-                      size={18}
-                      color={colors.white}
+                      size={30}
+                      color={colors.primary}
                     />
-
-                    <Text
-                      style={
-                        styles.confirmDeactivateText
-                      }
-                    >
-                      Deactivate
+                    <Text style={styles.title}>
+                      {dialog.activate ? "Activate" : "Deactivate"} model?
                     </Text>
+                    <Text style={styles.modelPreview}>
+                      {dialog.model.name} · {dialog.model.arena_nexa}
+                    </Text>
+                    <Text style={styles.body}>
+                      {dialog.activate
+                        ? "This model will become available for new Intake selections."
+                        : "This model will be hidden from new Intake selections. Saved records and model references are retained."}
+                    </Text>
+                    {!!formError && (
+                      <Text accessibilityRole="alert" style={styles.error}>
+                        {formError}
+                      </Text>
+                    )}
+                    <View style={styles.actions}>
+                      <Button
+                        secondary
+                        title="Cancel"
+                        onPress={closeDialog}
+                        disabled={saving}
+                      />
+                      <Button
+                        title={
+                          saving
+                            ? "Updating…"
+                            : dialog.activate
+                              ? "Activate model"
+                              : "Deactivate model"
+                        }
+                        onPress={() => void changeStatus()}
+                        disabled={disabled}
+                        busy={saving}
+                      />
+                    </View>
                   </>
                 )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* MESSAGE MODAL */}
-
-      <Modal
-        visible={messageModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() =>
-          setMessageModalVisible(false)
-        }
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.messageCard}>
-            <View style={styles.messageIconContainer}>
-              <Ionicons
-                name="information-circle-outline"
-                size={28}
-                color={colors.primary}
-              />
-            </View>
-
-            <Text style={styles.messageTitle}>
-              {messageTitle}
-            </Text>
-
-            <Text style={styles.messageText}>
-              {messageText}
-            </Text>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.messageButton,
-                pressed && styles.buttonPressed,
-              ]}
-              onPress={() =>
-                setMessageModalVisible(false)
-              }
-            >
-              <Text style={styles.messageButtonText}>
-                OK
-              </Text>
-            </Pressable>
-          </View>
-        </View>
+                {dialog?.kind === "discard" && (
+                  <>
+                    <Ionicons
+                      name="create-outline"
+                      size={30}
+                      color={colors.primary}
+                    />
+                    <Text style={styles.title}>Discard unsaved changes?</Text>
+                    <Text style={styles.body}>
+                      The changes in this form have not been saved.
+                    </Text>
+                    <Button
+                      title="Keep editing"
+                      onPress={() => setDialog(dialog.editor)}
+                    />
+                    <Button
+                      secondary
+                      title="Discard changes"
+                      onPress={() => {
+                        setDialog(null);
+                        setFormError("");
+                      }}
+                    />
+                  </>
+                )}
+                {dialog?.kind === "notice" && (
+                  <>
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={32}
+                      color={colors.success}
+                    />
+                    <Text style={styles.title}>{dialog.title}</Text>
+                    <Text style={styles.body}>{dialog.body}</Text>
+                    <Button title="OK" onPress={closeDialog} />
+                  </>
+                )}
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
 }
 
+function Button({
+  title,
+  onPress,
+  secondary = false,
+  disabled = false,
+  busy = false,
+  icon,
+}: {
+  title: string;
+  onPress: () => void;
+  secondary?: boolean;
+  disabled?: boolean;
+  busy?: boolean;
+  icon?: keyof typeof Ionicons.glyphMap;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.button,
+        secondary && styles.secondaryButton,
+        disabled && styles.disabled,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      {busy ? (
+        <ActivityIndicator
+          size="small"
+          color={secondary ? colors.primaryDark : colors.white}
+        />
+      ) : (
+        icon && (
+          <Ionicons
+            name={icon}
+            size={18}
+            color={secondary ? colors.primaryDark : colors.white}
+          />
+        )
+      )}
+      <Text style={[styles.buttonText, secondary && styles.secondaryText]}>
+        {title}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: colors.background,
-  },
-
-  loadingText: {
-    marginTop: spacing.md,
-    ...typography.body,
-    color: colors.textSecondary,
-  },
-
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
-  scrollContent: {
+  container: { flex: 1, backgroundColor: colors.background },
+  topBar: {
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.xxl,
-  },
-
-  header: {
+    paddingVertical: spacing.xs,
     flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.lg,
-  },
-
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.md,
-  },
-
-  pressed: {
-    opacity: 0.7,
-  },
-
-  headerText: {
-    flex: 1,
-  },
-
-  title: {
-    ...typography.title,
-    color: colors.text,
-  },
-
-  subtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
-
-  summaryRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-
-  summaryCard: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    alignItems: "center",
-  },
-
-  summaryIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.round,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-
-  summaryTotalIcon: {
-    backgroundColor: colors.primaryLight,
-  },
-
-  summaryActiveIcon: {
-    backgroundColor: colors.successLight,
-  },
-
-  summaryInactiveIcon: {
-    backgroundColor: colors.border,
-  },
-
-  summaryValue: {
-    ...typography.subheading,
-    color: colors.text,
-    fontSize: 19,
-  },
-
-  summaryLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-
-  searchContainer: {
-    height: 50,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    marginBottom: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  searchIcon: {
-    marginLeft: spacing.md,
-  },
-
-  searchInput: {
-    flex: 1,
-    height: 50,
-    paddingHorizontal: spacing.sm,
-    fontSize: 14,
-    color: colors.text,
-  },
-
-  clearSearch: {
-    paddingHorizontal: spacing.md,
-  },
-
-  filterRow: {
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingRight: spacing.md,
-    marginBottom: spacing.md,
-  },
-
-  filterChip: {
-    height: 36,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.round,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  filterChipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-
-  filterChipSelectedInactive: {
-    backgroundColor: colors.textSecondary,
-    borderColor: colors.textSecondary,
-  },
-
-  filterText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textSecondary,
-  },
-
-  filterTextSelected: {
-    color: colors.white,
-  },
-
-  filterTextSelectedInactive: {
-    color: colors.white,
-  },
-
-  addButton: {
-    minHeight: 54,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: spacing.xl,
-    flexDirection: "row",
-    paddingHorizontal: spacing.lg,
-  },
-
-  addIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.round,
-    backgroundColor: colors.white,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.sm,
-  },
-
-  addButtonText: {
-    ...typography.button,
-    color: colors.white,
-  },
-
-  buttonPressed: {
-    opacity: 0.75,
-  },
-
-  listHeader: {
-    marginBottom: spacing.md,
-  },
-
-  listTitle: {
-    ...typography.subheading,
-    color: colors.text,
-  },
-
-  listSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  modelCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-  },
-
-  inactiveCard: {
-    opacity: 0.72,
-  },
-
-  modelTop: {
-    flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: spacing.xs,
   },
-
-  modelInfoRow: {
+  back: {
+    minHeight: 48,
     flexDirection: "row",
     alignItems: "center",
-    flex: 1,
-    marginRight: spacing.sm,
+    paddingRight: spacing.sm,
   },
-
-  modelIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.md,
-  },
-
-  modelInfo: {
-    flex: 1,
-  },
-
-  modelName: {
-    ...typography.bodyMedium,
-    color: colors.text,
-    fontSize: 16,
-  },
-
-  arenaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: spacing.xs,
-  },
-
-  arenaNexa: {
+  backText: {
     ...typography.caption,
-    color: colors.textSecondary,
-    marginLeft: 5,
-  },
-
-  statusBadge: {
-    borderRadius: radius.round,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  activeBadge: {
-    backgroundColor: colors.successLight,
-  },
-
-  inactiveBadge: {
-    backgroundColor: colors.border,
-  },
-
-  statusText: {
-    fontSize: 12,
-    fontWeight: "600",
-    marginLeft: 4,
-  },
-
-  activeText: {
-    color: colors.success,
-  },
-
-  inactiveText: {
+    fontWeight: "700",
     color: colors.textSecondary,
   },
-
-  cardDivider: {
-    height: 1,
-    backgroundColor: colors.divider,
-    marginVertical: spacing.md,
-  },
-
-  actions: {
+  brand: {
     flexDirection: "row",
-    gap: spacing.sm,
-  },
-
-  editButton: {
-    flex: 1,
-    height: 42,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    justifyContent: "center",
     alignItems: "center",
-    flexDirection: "row",
-  },
-
-  editButtonText: {
-    ...typography.caption,
-    fontWeight: "600",
-    color: colors.text,
-    marginLeft: 5,
-  },
-
-  statusButton: {
-    flex: 1,
-    height: 42,
-    borderRadius: radius.sm,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-  },
-
-  deactivateButton: {
-    backgroundColor: colors.dangerLight,
-  },
-
-  activateButton: {
-    backgroundColor: colors.successLight,
-  },
-
-  statusButtonText: {
-    ...typography.caption,
-    fontWeight: "600",
-    marginLeft: 5,
-  },
-
-  deactivateText: {
-    color: colors.danger,
-  },
-
-  activateText: {
-    color: colors.success,
-  },
-
-  emptyCard: {
+    gap: 6,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    alignItems: "center",
+    borderRadius: 999,
+    padding: 10,
   },
-
-  emptyIconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: radius.lg,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: spacing.md,
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
   },
-
-  emptyTitle: {
-    ...typography.bodyMedium,
+  brandText: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
     color: colors.text,
-    textAlign: "center",
   },
-
-  emptyText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textAlign: "center",
-    marginTop: spacing.xs,
-    lineHeight: 19,
+  content: {
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.lg,
   },
-
-  clearFilterButton: {
-    height: 40,
-    paddingHorizontal: spacing.lg,
-    backgroundColor: colors.primaryLight,
-    borderRadius: radius.md,
-    justifyContent: "center",
+  hero: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  eyebrow: {
+    fontSize: 10,
+    letterSpacing: 0.7,
+    fontWeight: "800",
+    color: colors.white,
+  },
+  heroTitle: { ...typography.title, fontSize: 27, color: colors.white },
+  heroText: { ...typography.caption, color: colors.white, lineHeight: 21 },
+  inline: {
+    flexDirection: "row",
     alignItems: "center",
-    marginTop: spacing.lg,
-  },
-
-  clearFilterText: {
-    ...typography.caption,
-    fontWeight: "600",
-    color: colors.primary,
-  },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "center",
-    alignItems: "center",
+    gap: spacing.sm,
     padding: spacing.lg,
   },
-
-  modalCard: {
-    width: "100%",
-    maxWidth: 430,
+  card: {
+    padding: spacing.lg,
     backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.md,
   },
-
-  modalHeader: {
+  heading: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
-    marginBottom: spacing.xl,
+    gap: spacing.md,
   },
-
-  modalIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.md,
-  },
-
-  modalHeaderText: {
+  grow: { flex: 1, minWidth: 0 },
+  title: { ...typography.subheading, color: colors.text },
+  body: { ...typography.caption, lineHeight: 20, color: colors.textSecondary },
+  metrics: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  metric: {
     flex: 1,
-  },
-
-  modalTitle: {
-    ...typography.subheading,
-    fontSize: 18,
-    color: colors.text,
-  },
-
-  modalSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  modalCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.round,
-    backgroundColor: colors.background,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  fieldLabel: {
-    ...typography.caption,
-    fontWeight: "600",
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-
-  input: {
-    height: 50,
+    minWidth: 88,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
+    gap: spacing.xs,
+  },
+  metricSelected: { borderColor: colors.primary },
+  metricCount: { fontSize: 25, fontWeight: "800", color: colors.text },
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingLeft: spacing.md,
+    backgroundColor: colors.background,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 48,
+    paddingHorizontal: spacing.sm,
+    color: colors.text,
     fontSize: 14,
-    color: colors.text,
-    backgroundColor: colors.background,
   },
-
-  characterCount: {
-    ...typography.caption,
-    color: colors.textLight,
-    textAlign: "right",
-    marginBottom: spacing.lg,
-  },
-
-  optionRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.xl,
-  },
-
-  optionButton: {
-    flex: 1,
+  iconButton: {
+    width: 48,
     height: 48,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filters: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  chip: {
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
     justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-    backgroundColor: colors.surface,
   },
-
-  optionSelected: {
-    backgroundColor: colors.primary,
+  chipSelected: {
+    backgroundColor: colors.primaryLight,
     borderColor: colors.primary,
   },
-
-  optionText: {
-    ...typography.bodyMedium,
-    color: colors.text,
-    marginLeft: 6,
+  chipText: {
+    ...typography.caption,
+    fontWeight: "700",
+    color: colors.textSecondary,
   },
-
-  optionSelectedText: {
-    color: colors.white,
-  },
-
-  modalActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
-  },
-
-  cancelButton: {
-    flex: 1,
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  cancelText: {
-    ...typography.button,
-    color: colors.text,
-  },
-
-  saveButton: {
-    flex: 1,
-    height: 48,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-  },
-
-  saveButtonDisabled: {
-    opacity: 0.7,
-  },
-
-  saveText: {
-    ...typography.button,
-    color: colors.white,
-    marginLeft: 5,
-  },
-
-  confirmCard: {
-    width: "100%",
-    maxWidth: 400,
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
+  chipSelectedText: { color: colors.primaryDark },
+  empty: {
     padding: spacing.xl,
     alignItems: "center",
-  },
-
-  confirmIconContainer: {
-    width: 58,
-    height: 58,
+    gap: spacing.md,
     borderRadius: radius.lg,
-    backgroundColor: colors.dangerLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: spacing.md,
-  },
-
-  confirmTitle: {
-    ...typography.subheading,
-    fontSize: 19,
-    color: colors.text,
-    textAlign: "center",
-    marginBottom: spacing.lg,
-  },
-
-  modelPreview: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-  },
-
-  modelPreviewText: {
-    marginLeft: spacing.sm,
-    flex: 1,
-  },
-
-  modelPreviewName: {
-    ...typography.bodyMedium,
-    color: colors.text,
-  },
-
-  modelPreviewCategory: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  confirmText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: "center",
-    lineHeight: 21,
-  },
-
-  confirmNote: {
-    ...typography.caption,
-    color: colors.textLight,
-    textAlign: "center",
-    marginTop: spacing.sm,
-    marginBottom: spacing.xl,
-  },
-
-  confirmActions: {
-    width: "100%",
-    flexDirection: "row",
-    gap: spacing.sm,
-  },
-
-  confirmCancelButton: {
-    flex: 1,
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  confirmCancelText: {
-    ...typography.button,
-    color: colors.text,
-  },
-
-  confirmDeactivateButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: radius.md,
-    backgroundColor: colors.danger,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-  },
-
-  confirmDeactivateText: {
-    ...typography.button,
-    color: colors.white,
-    marginLeft: 5,
-  },
-
-  messageCard: {
-    width: "100%",
-    maxWidth: 380,
     backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
+  },
+  modelHeading: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
+    gap: spacing.md,
   },
-
-  messageIconContainer: {
-    width: 54,
-    height: 54,
-    borderRadius: radius.lg,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: spacing.md,
-  },
-
-  messageTitle: {
-    ...typography.subheading,
-    fontSize: 19,
-    color: colors.text,
-    marginBottom: spacing.sm,
-    textAlign: "center",
-  },
-
-  messageText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    lineHeight: 21,
-    marginBottom: spacing.lg,
-    textAlign: "center",
-  },
-
-  messageButton: {
-    width: "100%",
+  modelIcon: {
+    width: 46,
     height: 46,
-    backgroundColor: colors.primary,
     borderRadius: radius.md,
-    justifyContent: "center",
+    backgroundColor: colors.primaryLight,
     alignItems: "center",
+    justifyContent: "center",
   },
-
-  messageButtonText: {
+  badge: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.sm },
+  activeBadge: { backgroundColor: "#E8F5EE" },
+  inactiveBadge: { backgroundColor: colors.background },
+  badgeText: { fontSize: 12, fontWeight: "700" },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  button: {
+    minHeight: 48,
+    backgroundColor: colors.primaryDark,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+  },
+  buttonText: {
     ...typography.button,
     color: colors.white,
+    textAlign: "center",
+    flexShrink: 1,
+  },
+  secondaryButton: { backgroundColor: colors.primaryLight },
+  secondaryText: { color: colors.primaryDark },
+  disabled: { opacity: 0.5 },
+  pressed: { opacity: 0.75 },
+  note: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.sm,
+  },
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.48)" },
+  modalFrame: { flex: 1 },
+  modalScroll: { flexGrow: 1, justifyContent: "center", padding: spacing.lg },
+  dialog: {
+    width: "100%",
+    maxWidth: 520,
+    alignSelf: "center",
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    gap: spacing.md,
+  },
+  label: { ...typography.bodyMedium, color: colors.text },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    minHeight: 48,
+    padding: spacing.md,
+    color: colors.text,
+    fontSize: 15,
+    backgroundColor: colors.background,
+  },
+  hint: { ...typography.caption, color: colors.textSecondary, lineHeight: 19 },
+  option: {
+    flex: 1,
+    minHeight: 48,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  optionSelected: {
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primary,
+  },
+  optionText: { ...typography.bodyMedium, color: colors.primaryDark },
+  error: { ...typography.caption, color: colors.error, lineHeight: 20 },
+  modelPreview: {
+    ...typography.bodyMedium,
+    color: colors.text,
+    padding: spacing.md,
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
   },
 });

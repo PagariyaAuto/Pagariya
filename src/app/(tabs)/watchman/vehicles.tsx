@@ -1,3 +1,5 @@
+import BackButton from "../../../components/navigation/BackButton";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -78,6 +80,11 @@ type Advisor = {
 type PopupType = "success" | "error" | "info";
 
 export default function WatchmanVehiclesScreen() {
+  const handleNavigationBack = () => {
+    returnToRoute("/(tabs)/watchman");
+  };
+  useHardwareBack(handleNavigationBack);
+
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -830,6 +837,7 @@ export default function WatchmanVehiclesScreen() {
             HEADER
         ====================================================== */}
 
+        <BackButton accessibilityLabel="Back" onPress={handleNavigationBack} />
         <View style={styles.header}>
           <View
             style={styles.headerTextContainer}
@@ -960,9 +968,7 @@ export default function WatchmanVehiclesScreen() {
 
         <Pressable
           onPress={() =>
-            router.push(
-              "/(tabs)/watchman/assignment-history"
-            )
+            router.push({ pathname: "/(tabs)/watchman/assignment-history", params: { returnTo: "watchman-vehicles" } })
           }
           style={({ pressed }) => [
             styles.historyButton,
@@ -1343,6 +1349,7 @@ export default function WatchmanVehiclesScreen() {
           closeAssignModal
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.modalOverlay
@@ -1641,6 +1648,7 @@ export default function WatchmanVehiclesScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* ========================================================
@@ -1655,6 +1663,7 @@ export default function WatchmanVehiclesScreen() {
           cancelAssignmentConfirmation
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.popupOverlay
@@ -1798,6 +1807,7 @@ export default function WatchmanVehiclesScreen() {
             </View>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {/* ========================================================
@@ -1812,6 +1822,7 @@ export default function WatchmanVehiclesScreen() {
           closePopup
         }
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View
           style={
             styles.popupOverlay
@@ -1889,6 +1900,7 @@ export default function WatchmanVehiclesScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

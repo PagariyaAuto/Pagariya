@@ -1,3 +1,4 @@
+import BackButton from "../../../components/navigation/BackButton";
 import { Ionicons } from "@expo/vector-icons";
 import {
   router,
@@ -1215,32 +1216,9 @@ export default function VehicleDetailsScreen() {
               "This vehicle could not be loaded."}
           </Text>
 
-          <Pressable
-            onPress={
+          <BackButton onPress={
               goBackToVehicleManagement
-            }
-            style={({
-              pressed,
-            }) => [
-              styles.primaryButton,
-              pressed &&
-                styles.buttonPressed,
-            ]}
-          >
-            <Ionicons
-              name="arrow-back"
-              size={18}
-              color={COLORS.white}
-            />
-
-            <Text
-              style={
-                styles.primaryButtonText
-              }
-            >
-              Go Back
-            </Text>
-          </Pressable>
+            } />
         </View>
       </SafeAreaView>
     );

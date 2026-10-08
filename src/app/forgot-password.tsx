@@ -1,3 +1,4 @@
+import BackButton from "../components/navigation/BackButton";
 import { router } from "expo-router";
 import { useState } from "react";
 
@@ -269,22 +270,9 @@ Please check your email and open the link to create a new password.`,
 
             {/* BACK TO LOGIN */}
 
-            <Pressable
-              style={styles.backButton}
-              onPress={() =>
+            <BackButton onPress={() =>
                 router.replace("/login")
-              }
-            >
-              <Ionicons
-                name="arrow-back"
-                size={18}
-                color={colors.primary}
-              />
-
-              <Text style={styles.backText}>
-                Back to Login
-              </Text>
-            </Pressable>
+              } />
           </View>
 
           {/* FOOTER */}
@@ -306,6 +294,7 @@ Please check your email and open the link to create a new password.`,
             setPopupVisible(false)
           }
         >
+          <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
           <View style={styles.popupOverlay}>
             <View style={styles.popupContainer}>
               <View
@@ -368,6 +357,7 @@ Please check your email and open the link to create a new password.`,
               </Pressable>
             </View>
           </View>
+          </SafeAreaView>
         </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>

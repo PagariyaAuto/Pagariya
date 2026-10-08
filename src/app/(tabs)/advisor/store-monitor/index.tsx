@@ -1,4 +1,8 @@
-import { router, useFocusEffect } from "expo-router";
+import BackButton from "../../../../components/navigation/BackButton";
+import BrandPill from "../../../../components/navigation/BrandPill";
+import { returnToRoute, useHardwareBack, singleParam } from "../../../../lib/back-navigation";
+import { supplementaryRequirements, requirementView } from "../../../../lib/supplementary-store";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -65,6 +69,7 @@ type PartRequisition = {
   visit_id: string;
   vehicle_id: string;
   advisor_work_id: string | null;
+  supplementary_cycle_id: string | null;
   requisition_no: string;
   requisition_at: string;
   requested_by: string;
@@ -283,6 +288,7 @@ function CustomPopup({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View style={styles.popupOverlay}>
         <View style={styles.popupCard}>
           <View
@@ -313,6 +319,7 @@ function CustomPopup({
           </Pressable>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -328,6 +335,17 @@ function StatusPill({ item }: { item: StoreMonitoringItem }) {
 }
 
 export default function StoreMonitorScreen() {
+  const navigationParams = useLocalSearchParams<{ returnTo?: string | string[]; returnVisitId?: string | string[]; floor?: string | string[]; filter?: string | string[] }>();
+  const handleNavigationBack = () => {
+    const id = singleParam(navigationParams.returnVisitId);
+    if (singleParam(navigationParams.returnTo) === "supplementary-detail" && id) {
+      returnToRoute({ pathname: "/(tabs)/advisor/supplementary-detail", params: { visitId: id, floor: singleParam(navigationParams.floor) === "1" ? "1" : "0" } });
+    } else {
+      returnToRoute("/(tabs)/advisor");
+    }
+  };
+  useHardwareBack(handleNavigationBack);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -420,12 +438,19 @@ export default function StoreMonitorScreen() {
           );
         }
 
+        const assignedVehicleIds = new Set<string>();
+        if (currentProfile.role === "advisor") {
+          const { data: assignments, error: assignmentError } = await supabase.from("vehicle_assignments").select("vehicle_id").eq("assigned_to", user.id).eq("assignment_role", "ADVISOR").is("unassigned_at", null);
+          if (assignmentError) throw assignmentError;
+          assignments?.forEach(assignment => assignedVehicleIds.add(assignment.vehicle_id));
+        }
+
         const [requisitionsResult, ordersResult, advisorWorkResult] =
           await Promise.all([
             supabase
               .from("part_requisitions")
               .select(
-                "id,visit_id,vehicle_id,advisor_work_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
+                "id,visit_id,vehicle_id,advisor_work_id,supplementary_cycle_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
               )
               .order("created_at", {
                 ascending: false,
@@ -445,7 +470,7 @@ export default function StoreMonitorScreen() {
               .select(
                 "id,visit_id,vehicle_id,work_path,parts_required,denting_required,painting_required,advisor_requisition_no,requisition_at,assigned_by,remarks",
               )
-              .eq("parts_required", true),
+              ,
           ]);
 
         if (requisitionsResult.error) {
@@ -498,6 +523,7 @@ export default function StoreMonitorScreen() {
           }
         }
 
+        const cycleRequirements = await supplementaryRequirements(requisitions.filter(row => row.supplementary_cycle_id).map(row => row.id));
         const advisorWorkByVehicle = new Map<string, AdvisorWork>();
 
         for (const row of advisorWorks) {
@@ -524,9 +550,10 @@ export default function StoreMonitorScreen() {
         for (const vehicle of vehicles) {
           const requisition = requisitionByVehicle.get(vehicle.id) || null;
 
-          const order = orderByVehicle.get(vehicle.id) || null;
+          const latestOrder = orderByVehicle.get(vehicle.id) || null;
+          const order = !requisition || latestOrder?.part_requisition_id === requisition.id ? latestOrder : null;
 
-          const advisorWork = advisorWorkByVehicle.get(vehicle.id) || null;
+          const advisorWork = requirementView(advisorWorkByVehicle.get(vehicle.id) || null, requisition ? cycleRequirements.get(requisition.id) : undefined, requisition);
 
           if (!requisition && !order) {
             continue;
@@ -534,7 +561,7 @@ export default function StoreMonitorScreen() {
 
           if (
             currentProfile.role === "advisor" &&
-            vehicle.current_assigned_to !== user.id
+            !assignedVehicleIds.has(vehicle.id)
           ) {
             continue;
           }
@@ -678,19 +705,7 @@ export default function StoreMonitorScreen() {
    * Therefore Back must explicitly return to the correct dashboard
    * instead of relying on router.back().
    */
-  const goBackToDashboard = useCallback(() => {
-    if (profile?.role === "advisor") {
-      router.replace("/(tabs)/advisor" as never);
-      return;
-    }
 
-    if (profile?.role === "ceo_admin") {
-      router.replace("/(tabs)" as never);
-      return;
-    }
-
-    router.replace("/(tabs)" as never);
-  }, [profile?.role]);
 
   /**
    * Vehicle card → Store Monitoring Vehicle Details
@@ -700,6 +715,9 @@ export default function StoreMonitorScreen() {
       pathname: "/(tabs)/advisor/store-monitor/vehicle-details" as never,
       params: {
         vehicleId: item.vehicle.id,
+        returnTo: singleParam(navigationParams.returnTo) || "",
+        returnVisitId: singleParam(navigationParams.returnVisitId) || "",
+        floor: singleParam(navigationParams.floor) === "1" ? "1" : "0",
         visitId:
           item.order?.visit_id ||
           item.requisition?.visit_id ||
@@ -758,23 +776,9 @@ export default function StoreMonitorScreen() {
         contentContainerStyle={styles.content}
       >
         <View style={styles.topBar}>
-          <Pressable
-            onPress={goBackToDashboard}
-            style={({ pressed }) => [
-              styles.backButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={styles.backArrow}>‹</Text>
+          <BackButton onPress={handleNavigationBack} />
 
-            <Text style={styles.backText}>Back</Text>
-          </Pressable>
-
-          <View style={styles.brandBadge}>
-            <View style={styles.brandDot} />
-
-            <Text style={styles.brandText}>PAGARIYA</Text>
-          </View>
+          <BrandPill />
         </View>
 
         <View style={styles.heroCard}>

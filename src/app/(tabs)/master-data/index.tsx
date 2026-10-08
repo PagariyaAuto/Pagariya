@@ -1,399 +1,310 @@
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-
+import { useCallback } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import {
-  colors,
-  radius,
-  spacing,
-  typography,
-} from "../../../theme";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
+import { colors, radius, spacing, typography } from "../../../theme";
 
-type MasterCardProps = {
+type MasterItem = {
   title: string;
-  subtitle: string;
+  description: string;
   icon: keyof typeof Ionicons.glyphMap;
-  onPress: () => void;
+  route:
+    | "/(tabs)/master-data/vehicle-models"
+    | "/(tabs)/master-data/insurance-companies"
+    | "/(tabs)/master-data/business-types"
+    | "/(tabs)/master-data/mi-types"
+    | "/(tabs)/master-data/users"
+    | "/(tabs)/master-data/document-master";
 };
 
+type MasterSection = {
+  title: string;
+  description: string;
+  items: MasterItem[];
+};
+
+const sections: MasterSection[] = [
+  {
+    title: "Vehicle setup",
+    description: "Models and workshop classifications",
+    items: [
+      {
+        title: "Vehicle Models",
+        description: "Vehicle models and Arena / Nexa classification",
+        icon: "car-outline",
+        route: "/(tabs)/master-data/vehicle-models",
+      },
+      {
+        title: "MI / NON-MI",
+        description: "MI classifications used in vehicle intake",
+        icon: "construct-outline",
+        route: "/(tabs)/master-data/mi-types",
+      },
+    ],
+  },
+  {
+    title: "Insurance & claims",
+    description: "Reference information for insurance jobs",
+    items: [
+      {
+        title: "Insurance Companies",
+        description: "Insurance companies available for selection",
+        icon: "business-outline",
+        route: "/(tabs)/master-data/insurance-companies",
+      },
+      {
+        title: "Business / Claim Types",
+        description: "CNT, PNPL and other business or claim types",
+        icon: "document-text-outline",
+        route: "/(tabs)/master-data/business-types",
+      },
+    ],
+  },
+  {
+    title: "Users & documents",
+    description: "System roles and workflow requirements",
+    items: [
+      {
+        title: "Users",
+        description: "User accounts, system roles and active status",
+        icon: "people-outline",
+        route: "/(tabs)/master-data/users",
+      },
+      {
+        title: "Document Master",
+        description: "Document requirements for each workflow stage",
+        icon: "documents-outline",
+        route: "/(tabs)/master-data/document-master",
+      },
+    ],
+  },
+];
+
 export default function MasterData() {
+  const handleNavigationBack = useCallback(() => {
+    returnToRoute("/(tabs)/advisor");
+  }, []);
+  useHardwareBack(handleNavigationBack);
+
   return (
     <SafeAreaView
       style={styles.container}
       edges={["top", "left", "right", "bottom"]}
     >
-      <View style={styles.screen}>
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* HEADER */}
+      <View style={styles.topBar}>
+        <BackButton accessibilityLabel="Back to dashboard" onPress={handleNavigationBack} />
 
-          <View style={styles.header}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.backButton,
-                pressed && styles.pressed,
-              ]}
-              onPress={() => router.back()}
-            >
-              <Ionicons
-                name="arrow-back-outline"
-                size={22}
-                color={colors.text}
-              />
-            </Pressable>
+        <BrandPill />
+      </View>
 
-            <View style={styles.headerText}>
-              <Text style={styles.title}>Master Data</Text>
-
-              <Text style={styles.subtitle}>
-                Manage data used throughout Pagariya
-              </Text>
-            </View>
-          </View>
-
-          {/* INFO */}
-
-          <View style={styles.infoCard}>
-            <View style={styles.infoIconContainer}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.hero}>
+          <View style={styles.heroHeading}>
+            <View style={styles.heroIcon}>
               <Ionicons
                 name="settings-outline"
-                size={22}
-                color={colors.primary}
+                size={24}
+                color={colors.white}
               />
             </View>
+            <Text style={styles.eyebrow}>WORKSHOP SETTINGS</Text>
+          </View>
+          <Text accessibilityRole="header" style={styles.heroTitle}>
+            Master Data
+          </Text>
+          <Text style={styles.heroDescription}>
+            Manage the reference information, users and documents used across
+            Pagariya.
+          </Text>
+        </View>
 
-            <View style={styles.infoContent}>
-              <Text style={styles.infoTitle}>
-                Master Data Management
+        {sections.map((section) => (
+          <View key={section.title} style={styles.section}>
+            <View style={styles.sectionHeading}>
+              <Text accessibilityRole="header" style={styles.sectionTitle}>
+                {section.title}
               </Text>
-
-              <Text style={styles.infoText}>
-                Add and manage common information used when
-                creating job cards and handling workshop operations.
+              <Text style={styles.sectionDescription}>
+                {section.description}
               </Text>
             </View>
+
+            <View style={styles.sectionCard}>
+              {section.items.map((item, index) => (
+                <MasterRow key={item.route} item={item} divided={index > 0} />
+              ))}
+            </View>
           </View>
-
-          {/* SECTION */}
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>
-              Master Data
-            </Text>
-
-            <Text style={styles.sectionSubtitle}>
-              Select what you want to manage
-            </Text>
-          </View>
-
-          {/* VEHICLE MODELS */}
-
-          <MasterCard
-            icon="car-outline"
-            title="Vehicle Models"
-            subtitle="Manage vehicle models and Arena / Nexa"
-            onPress={() =>
-              router.push(
-                "/(tabs)/master-data/vehicle-models"
-              )
-            }
-          />
-
-          {/* INSURANCE COMPANIES */}
-
-          <MasterCard
-            icon="business-outline"
-            title="Insurance Companies"
-            subtitle="Manage insurance companies"
-            onPress={() =>
-              router.push(
-                "/(tabs)/master-data/insurance-companies"
-              )
-            }
-          />
-
-          {/* BUSINESS / CLAIM TYPES */}
-
-          <MasterCard
-            icon="document-text-outline"
-            title="Business / Claim Types"
-            subtitle="Manage CNT, PNPL and other types"
-            onPress={() =>
-              router.push(
-                "/(tabs)/master-data/business-types"
-              )
-            }
-          />
-
-          {/* MI / NON-MI */}
-
-          <MasterCard
-            icon="construct-outline"
-            title="MI / NON-MI"
-            subtitle="Manage MI classification"
-            onPress={() =>
-              router.push(
-                "/(tabs)/master-data/mi-types"
-              )
-            }
-          />
-
-          {/* USERS */}
-
-          <MasterCard
-            icon="people-outline"
-            title="Users"
-            subtitle="Manage users and their system roles"
-            onPress={() =>
-              router.push(
-                "/(tabs)/master-data/users"
-              )
-            }
-          />
-
-          {/* DOCUMENT MASTER */}
-
-          <MasterCard
-            icon="documents-outline"
-            title="Document Master"
-            subtitle="Manage document requirements by workflow stage"
-            onPress={() =>
-              router.push(
-                "/(tabs)/master-data/document-master"
-              )
-            }
-          />
-        </ScrollView>
-      </View>
+        ))}
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
-/* --------------------------------------------------
-   MASTER DATA CARD
--------------------------------------------------- */
-
-function MasterCard({
-  title,
-  subtitle,
-  icon,
-  onPress,
-}: MasterCardProps) {
+function MasterRow({ item, divided }: { item: MasterItem; divided: boolean }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={item.title}
+      accessibilityHint={`Opens ${item.title} management`}
+      onPress={() => router.push(item.route)}
       style={({ pressed }) => [
-        styles.masterCard,
-        pressed && styles.cardPressed,
+        styles.masterRow,
+        divided && styles.dividedRow,
+        pressed && styles.rowPressed,
       ]}
-      onPress={onPress}
     >
-      {/* ICON */}
-
       <View style={styles.iconContainer}>
-        <Ionicons
-          name={icon}
-          size={24}
-          color={colors.primary}
-        />
+        <Ionicons name={item.icon} size={23} color={colors.primary} />
       </View>
-
-      {/* CONTENT */}
-
-      <View style={styles.cardContent}>
-        <Text style={styles.cardTitle}>
-          {title}
-        </Text>
-
-        <Text style={styles.cardSubtitle}>
-          {subtitle}
-        </Text>
+      <View style={styles.rowContent}>
+        <Text style={styles.rowTitle}>{item.title}</Text>
+        <Text style={styles.rowDescription}>{item.description}</Text>
       </View>
-
-      {/* ARROW */}
-
-      <Ionicons
-        name="chevron-forward-outline"
-        size={21}
-        color={colors.textLight}
-      />
+      <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
     </Pressable>
   );
 }
 
-/* --------------------------------------------------
-   STYLES
--------------------------------------------------- */
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-
-  screen: {
-    flex: 1,
-  },
-
-  scrollView: {
-    flex: 1,
-  },
-
-  scrollContent: {
+  container: { flex: 1, backgroundColor: colors.background },
+  scrollView: { flex: 1 },
+  topBar: {
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xxl,
+    paddingVertical: spacing.xs,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.xs,
   },
-
-  /* HEADER */
-
-  header: {
+  backButton: {
+    minHeight: 48,
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: spacing.xl,
+    paddingRight: spacing.sm,
   },
-
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.md,
-  },
-
-  pressed: {
-    opacity: 0.7,
-  },
-
-  headerText: {
-    flex: 1,
-  },
-
-  title: {
-    ...typography.title,
-    color: colors.text,
-  },
-
-  subtitle: {
+  backText: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
+    fontWeight: "700",
   },
-
-  /* INFO */
-
-  infoCard: {
+  pressed: { opacity: 0.7 },
+  brand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.xl,
-    flexDirection: "row",
-    alignItems: "flex-start",
   },
-
-  infoIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryLight,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: spacing.md,
+  brandDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
   },
-
-  infoContent: {
-    flex: 1,
-  },
-
-  infoTitle: {
-    ...typography.subheading,
+  brandText: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
     color: colors.text,
-    marginBottom: spacing.xs,
   },
-
-  infoText: {
+  scrollContent: {
+    width: "100%",
+    maxWidth: 860,
+    alignSelf: "center",
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xxl,
+    gap: spacing.xl,
+  },
+  hero: {
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primaryDark,
+    gap: spacing.sm,
+  },
+  heroHeading: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  heroIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.15)",
+  },
+  eyebrow: {
+    flexShrink: 1,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+    color: colors.white,
+  },
+  heroTitle: {
+    ...typography.title,
+    fontSize: 28,
+    fontWeight: "800",
+    color: colors.white,
+  },
+  heroDescription: {
+    ...typography.caption,
+    lineHeight: 21,
+    color: colors.white,
+  },
+  section: { gap: spacing.md },
+  sectionHeading: { gap: spacing.xs },
+  sectionTitle: { ...typography.subheading, color: colors.text },
+  sectionDescription: {
     ...typography.caption,
     color: colors.textSecondary,
     lineHeight: 19,
   },
-
-  /* SECTION */
-
-  sectionHeader: {
-    marginBottom: spacing.md,
-  },
-
-  sectionTitle: {
-    ...typography.subheading,
-    color: colors.text,
-  },
-
-  sectionSubtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
-
-  /* CARD */
-
-  masterCard: {
-    flexDirection: "row",
-    alignItems: "center",
+  sectionCard: {
+    borderRadius: radius.lg,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.lg,
+    overflow: "hidden",
+  },
+  masterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
     padding: spacing.lg,
-    marginBottom: spacing.md,
-    minHeight: 82,
+    minHeight: 92,
   },
-
-  cardPressed: {
-    opacity: 0.75,
-    transform: [{ scale: 0.99 }],
-  },
-
+  dividedRow: { borderTopWidth: 1, borderTopColor: colors.border },
+  rowPressed: { backgroundColor: colors.primaryLight },
   iconContainer: {
-    width: 48,
-    height: 48,
+    width: 46,
+    height: 46,
     borderRadius: radius.md,
     backgroundColor: colors.primaryLight,
-    justifyContent: "center",
     alignItems: "center",
-    marginRight: spacing.md,
+    justifyContent: "center",
   },
-
-  cardContent: {
-    flex: 1,
-    paddingRight: spacing.sm,
-  },
-
-  cardTitle: {
-    ...typography.bodyMedium,
-    color: colors.text,
-  },
-
-  cardSubtitle: {
+  rowContent: { flex: 1, minWidth: 0, gap: spacing.xs },
+  rowTitle: { ...typography.bodyMedium, color: colors.text, fontWeight: "700" },
+  rowDescription: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
-    lineHeight: 17,
+    lineHeight: 19,
   },
 });

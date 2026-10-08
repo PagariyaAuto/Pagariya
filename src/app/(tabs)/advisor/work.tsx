@@ -1,3 +1,6 @@
+import BackButton from "../../../components/navigation/BackButton";
+import BrandPill from "../../../components/navigation/BrandPill";
+import { returnToRoute, useHardwareBack } from "../../../lib/back-navigation";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
@@ -16,6 +19,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabase } from "../../../../lib/supabase";
+import { getCurrentWorkflowRoute } from "../../../lib/workflow-route";
 import { colors, spacing } from "../../../theme";
 
 type Priority = "URGENT" | "HIGH" | "MEDIUM" | "LOW";
@@ -175,6 +179,11 @@ function getPriorityStyle(priority: Priority) {
 }
 
 export default function AdvisorWorkScreen() {
+  const handleNavigationBack = () => {
+    returnToRoute("/(tabs)/advisor");
+  };
+  useHardwareBack(handleNavigationBack);
+
   const [items, setItems] = useState<WorkItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -465,19 +474,12 @@ export default function AdvisorWorkScreen() {
     setPage(1);
   }, []);
 
-  const openVehicle = useCallback((item: WorkItem) => {
-    router.push({
-      pathname: "/(tabs)/advisor/advisor_work_form",
-      params: {
-        visitId: item.visit.id,
-        vehicleId: item.vehicle.id,
-      },
-    });
-  }, []);
+  const openVehicle = useCallback(async (item: WorkItem) => {
+    try { router.push(await getCurrentWorkflowRoute(item.vehicle.id)); }
+    catch (e: any) { showPopup("error", "Unable to Open Work", e.message || "Refresh and try again."); }
+  }, [showPopup]);
 
-  const goBack = useCallback(() => {
-    router.back();
-  }, []);
+  const goBack = handleNavigationBack;
 
   if (
     !loading &&
@@ -493,15 +495,9 @@ export default function AdvisorWorkScreen() {
         />
 
         <View style={styles.topBar}>
-          <Pressable onPress={goBack} style={styles.backButton} hitSlop={8}>
-            <Text style={styles.backText}>‹ Back</Text>
-          </Pressable>
+          <BackButton onPress={goBack} hitSlop={8} />
 
-          <View style={styles.brandPill}>
-            <View style={styles.brandDot} />
-
-            <Text style={styles.brandText}>PAGARIYA</Text>
-          </View>
+          <BrandPill />
         </View>
 
         <View style={styles.unavailableContainer}>
@@ -525,15 +521,9 @@ export default function AdvisorWorkScreen() {
 
       {/* TOP NAVIGATION */}
       <View style={styles.topBar}>
-        <Pressable onPress={goBack} style={styles.backButton} hitSlop={8}>
-          <Text style={styles.backText}>‹ Back</Text>
-        </Pressable>
+        <BackButton onPress={goBack} hitSlop={8} />
 
-        <View style={styles.brandPill}>
-          <View style={styles.brandDot} />
-
-          <Text style={styles.brandText}>PAGARIYA</Text>
-        </View>
+        <BrandPill />
       </View>
 
       <ScrollView
@@ -843,6 +833,7 @@ export default function AdvisorWorkScreen() {
         animationType="fade"
         onRequestClose={closePopup}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.modalOverlay}>
           <View style={styles.popupCard}>
             <View
@@ -875,6 +866,7 @@ export default function AdvisorWorkScreen() {
             </Pressable>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

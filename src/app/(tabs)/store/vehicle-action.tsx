@@ -1,3 +1,5 @@
+import BackButton from "../../../components/navigation/BackButton";
+import { returnToRoute } from "../../../lib/back-navigation";
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
@@ -56,6 +58,7 @@ type PartRequisition = {
   visit_id: string;
   vehicle_id: string;
   advisor_work_id: string | null;
+  supplementary_cycle_id: string | null;
   requisition_no: string;
   requisition_at: string;
   requested_by: string;
@@ -83,9 +86,11 @@ type PartOrder = {
 type FloorIncharge = {
   id: string;
   name: string | null;
-  phone: string | null;
+};
+
+type FloorInchargeRpcResponse = {
   role: string;
-  is_active: boolean;
+  items: FloorIncharge[];
 };
 
 type ActionMode =
@@ -294,6 +299,7 @@ function CustomPopup({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
       <View style={styles.popupOverlay}>
         <View style={styles.popupCard}>
           <View
@@ -341,6 +347,7 @@ function CustomPopup({
           </View>
         </View>
       </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -466,17 +473,11 @@ export default function StoreVehicleActionScreen() {
   ========================================================== */
 
   const goBack = useCallback(() => {
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
+    if (saving) return;
+    returnToRoute("/(tabs)/store");
+  }, [saving]);
 
-    router.replace({
-      pathname: "/(tabs)/store",
-    } as never);
-  }, []);
-
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     const subscription = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
@@ -488,7 +489,7 @@ export default function StoreVehicleActionScreen() {
     return () => {
       subscription.remove();
     };
-  }, [goBack]);
+  }, [goBack]));
 
   /* ==========================================================
      LOAD DATA
@@ -559,7 +560,7 @@ export default function StoreVehicleActionScreen() {
         const requisitionResult = await supabase
           .from("part_requisitions")
           .select(
-            "id,visit_id,vehicle_id,advisor_work_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
+            "id,visit_id,vehicle_id,advisor_work_id,supplementary_cycle_id,requisition_no,requisition_at,requested_by,status,remarks,created_at",
           )
           .eq("vehicle_id", vehicleId)
           .order("created_at", {
@@ -587,6 +588,10 @@ export default function StoreVehicleActionScreen() {
             "id,visit_id,vehicle_id,part_requisition_id,part_order_no,order_type,ordered_at,ordered_by,parts_received_at,parts_received_by,status,remarks,created_at",
           )
           .eq("vehicle_id", vehicleId)
+          .eq(
+            "part_requisition_id",
+            requisitionData?.id || "00000000-0000-0000-0000-000000000000",
+          )
           .order("created_at", {
             ascending: false,
           })
@@ -616,20 +621,21 @@ export default function StoreVehicleActionScreen() {
            FLOOR INCHARGES
         ------------------------------------------------------ */
 
-        const floorResult = await supabase
-          .from("profiles")
-          .select("id,name,phone,role,is_active")
-          .eq("role", "floor_incharge")
-          .eq("is_active", true)
-          .order("name", {
-            ascending: true,
-          });
+        const { data: floorResponse, error: floorError } = await supabase.rpc(
+          "new_workflow_active_floor_incharges",
+        );
 
-        if (floorResult.error) {
-          throw floorResult.error;
+        if (floorError) {
+          throw floorError;
         }
 
-        setFloorIncharges((floorResult.data || []) as FloorIncharge[]);
+        const parsedFloorResponse = floorResponse as FloorInchargeRpcResponse;
+
+        if (!parsedFloorResponse || !Array.isArray(parsedFloorResponse.items)) {
+          throw new Error("Floor Incharge list returned an invalid response.");
+        }
+
+        setFloorIncharges(parsedFloorResponse.items);
       } catch (error) {
         console.error("Store vehicle action load error:", error);
 
@@ -1454,8 +1460,9 @@ export default function StoreVehicleActionScreen() {
                 </Text>
 
                 <Text style={styles.selectorSubtitle}>
-                  {selectedFloorIncharge?.phone ||
-                    "Name and phone will be shown"}
+                  {selectedFloorIncharge
+                    ? "Active Floor Incharge"
+                    : "Select the Floor Incharge receiving this vehicle"}
                 </Text>
               </View>
 
@@ -1634,15 +1641,7 @@ export default function StoreVehicleActionScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.header}>
-          <Pressable
-            onPress={goBack}
-            style={({ pressed }) => [
-              styles.backButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={styles.backButtonText}>‹</Text>
-          </Pressable>
+          <BackButton onPress={goBack} />
 
           <View style={styles.headerCopy}>
             <Text style={styles.headerEyebrow}>STORE WORKSPACE</Text>
@@ -1869,6 +1868,7 @@ export default function StoreVehicleActionScreen() {
         animationType="slide"
         onRequestClose={() => setFloorSelectorVisible(false)}
       >
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "right", "bottom", "left"]}>
         <View style={styles.selectorOverlay}>
           <View style={styles.selectorModal}>
             <View style={styles.selectorModalHeader}>
@@ -1943,7 +1943,7 @@ export default function StoreVehicleActionScreen() {
                         </Text>
 
                         <Text style={styles.floorPhone}>
-                          {floor.phone || "Phone not available"}
+                          Active Floor Incharge
                         </Text>
                       </View>
 
@@ -1959,6 +1959,7 @@ export default function StoreVehicleActionScreen() {
             </ScrollView>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {pickerTarget ? (

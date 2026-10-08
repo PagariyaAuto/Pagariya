@@ -1,3 +1,4 @@
+import BackButton from "../navigation/BackButton";
 
 import { router } from "expo-router";
 import React from "react";
@@ -38,18 +39,7 @@ export default function AdminHeader({
   return (
     <View style={[styles.container, containerStyle]}>
       <View style={styles.leftSection}>
-        <Pressable
-          onPress={handleBack}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.backButton,
-            pressed && styles.backButtonPressed,
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Text style={styles.backIcon}>‹</Text>
-        </Pressable>
+        <BackButton onPress={handleBack} hitSlop={8} accessibilityLabel="Go back" />
 
         <View style={styles.titleContainer}>
           <Text style={styles.title} numberOfLines={1}>
